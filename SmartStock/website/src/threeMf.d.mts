@@ -1,0 +1,1 @@
+export function inspect3mf(buffer:ArrayBuffer):{supported:true;unit:string;triangles:number;dimensions:number[];center:number[];preview:number[][][];volume:number|null}|{supported:false;reason:string};

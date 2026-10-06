@@ -83,11 +83,14 @@ public class CustomOrderSlipRenderer {
             g.setFont(new Font("SansSerif", Font.BOLD, 12));
             g.drawString("Details:", left, currentY);
             currentY += 8;
+            g.setFont(new Font("SansSerif", Font.BOLD, 10));
+            List<String> footerLines = wrap(g, slipSettings.footerNote(), right - left);
             int footerRows = (slipSettings.showTakenBy() ? 1 : 0)
                     + (slipSettings.showPaymentSummary() ? 2 : 0)
                     + (slipSettings.showPaymentReference() && data.paymentReference() != null && !data.paymentReference().isBlank() ? 1 : 0)
-                    + (slipSettings.showSignatures() ? 1 : 0);
-            int footerStart = y + height - 24 - (footerRows * 18);
+                    + (slipSettings.showTeamMemberSignature() ? 1 : 0)
+                    + (slipSettings.showCustomerSignature() ? 1 : 0);
+            int footerStart = y + height - 24 - (footerRows * 18) - (footerLines.size() * 12) - 12;
             currentY = drawDetails(g, left, right, currentY, footerStart - 10, data, slipSettings);
 
             currentY = Math.max(currentY + 8, footerStart);
@@ -102,12 +105,18 @@ public class CustomOrderSlipRenderer {
             if (slipSettings.showPaymentReference() && data.paymentReference() != null && !data.paymentReference().isBlank()) {
                 currentY = drawFullLine(g, left, right, currentY, "PAYMENT REF:", data.paymentReference());
             }
-            if (slipSettings.showSignatures()) {
-                currentY = drawLabelLine(g, left, right, currentY, "TEAM MEMBER SIGNATURE:", "", "CUSTOMER'S SIGNATURE:", "");
+            if (slipSettings.showTeamMemberSignature()) {
+                currentY = drawFullLine(g, left, right, currentY, "TEAM MEMBER SIGNATURE:", "");
             }
 
             g.setFont(new Font("SansSerif", Font.BOLD, 10));
-            g.drawString(slipSettings.footerNote(), left, Math.min(y + height - 12, currentY + 12));
+            for (String line : footerLines) {
+                g.drawString(line, left, currentY + 12);
+                currentY += 12;
+            }
+            if (slipSettings.showCustomerSignature()) {
+                drawFullLine(g, left, right, currentY + 24, "CUSTOMER'S SIGNATURE:", "");
+            }
         } finally {
             g.dispose();
         }

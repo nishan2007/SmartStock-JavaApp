@@ -101,28 +101,52 @@ try {
 }
 
 $jarName = Split-Path -Leaf $jar.FullName
-$bundledJava = Join-Path $AppDir "runtime\bin\javaw.exe"
+$bundledJava = Join-Path $AppDir "runtime\bin\java.exe"
 $java = if (Test-Path -LiteralPath $bundledJava -PathType Leaf) {
     $bundledJava
 } else {
-    (Get-Command javaw -ErrorAction Stop).Source
+    (Get-Command java -ErrorAction Stop).Source
 }
-$serviceArguments = "-Duser.home=`"$serviceHome`" -jar `"$jarName`" --sync-service"
+$launcher = Join-Path $serviceDir 'run-smartstock-sync-service.cmd'
+$serviceLog = Join-Path $serviceDir 'sync-service.log'
+$batchJava = $java.Replace('%','%%')
+$batchHome = $serviceHome.Replace('%','%%')
+$batchApp = $serviceAppDir.Replace('%','%%')
+$batchLog = $serviceLog.Replace('%','%%')
+$serviceEnvironment = if ($Environment -eq 'test') { 'development' } else { $Environment }
+Set-Content -LiteralPath $launcher -Encoding Default -Value @"
+@echo off
+setlocal
+cd /d "$batchApp"
+set "SMARTSTOCK_SERVER_JAR="
+for %%F in (inventory-management-*.jar) do if exist "%%F" set "SMARTSTOCK_SERVER_JAR=%%F"
+if not defined SMARTSTOCK_SERVER_JAR exit /b 2
+echo [%date% %time%] Starting SmartStock background server using "$batchJava" and %SMARTSTOCK_SERVER_JAR% >> "$batchLog"
+"$batchJava" -Duser.home="$batchHome" -Dsmartstock.environment=$serviceEnvironment -jar "%SMARTSTOCK_SERVER_JAR%" --sync-service >> "$batchLog" 2>&1
+set "SMARTSTOCK_EXIT=%errorlevel%"
+echo [%date% %time%] Server exited with code %SMARTSTOCK_EXIT% >> "$batchLog"
+exit /b %SMARTSTOCK_EXIT%
+"@
+$serviceExecutable = Join-Path $env:SystemRoot 'System32\cmd.exe'
+$serviceArguments = "/d /s /c `"`"$launcher`"`""
 $serviceShortcut = Join-Path $serviceDir "SmartStockServer.lnk"
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($serviceShortcut)
-$shortcut.TargetPath = $java
+$shortcut.TargetPath = $serviceExecutable
 $shortcut.Arguments = $serviceArguments
 $shortcut.WorkingDirectory = $serviceAppDir
 $shortcut.WindowStyle = 7
 $shortcut.Save()
 
-$taskAction = New-ScheduledTaskAction -Execute $java -Argument $serviceArguments `
+$taskAction = New-ScheduledTaskAction -Execute $serviceExecutable -Argument $serviceArguments `
     -WorkingDirectory $serviceAppDir
 $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $ServiceUser
 $taskPrincipal = New-ScheduledTaskPrincipal -UserId $ServiceUser `
     -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger $taskTrigger `
+$taskSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 `
+    -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName $TaskName -Action $taskAction -Trigger $taskTrigger -Settings $taskSettings `
     -Principal $taskPrincipal -Description "SmartStock HTTPS LAN and synchronization service" `
     -Force -ErrorAction Stop | Out-Null
 Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop

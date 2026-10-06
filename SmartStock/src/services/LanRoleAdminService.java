@@ -25,13 +25,14 @@ final class LanRoleAdminService {
         require(c,actor);int role=b.get("roleId").getAsInt();Set<String>desktop=jsonSet(b,"permissionKeys"),mobile=jsonSet(b,"mobilePermissionKeys");
         ensureRole(c,role);replace(c,role,desktop,"role_permissions","permissions","permission_id");
         if(table(c,"role_mobile_permissions"))replaceMobile(c,role,mobile);
+        CrossStoreRoleSyncService.record(c, role, locationId);
         SyncOutboxService.recordEvent(c,"ROLE_PERMISSIONS_UPDATED",Map.of("role_id",role,"permission_count",desktop.size(),"mobile_permission_count",mobile.size(),"actor_user_id",actor),locationId,deviceId.toString(),actor);
         return map("saved",true);
     }
 
     static Map<String,Object> add(Connection c,JsonObject b,int actor,int locationId,UUID deviceId)throws Exception {
         require(c,actor);String name=b.has("name")?b.get("name").getAsString().trim().toUpperCase(Locale.ROOT):"";if(name.isBlank()||name.length()>100)throw new RuleViolation(400,"VALIDATION_ERROR","Enter a valid role name.");
-        try(PreparedStatement p=c.prepareStatement("INSERT INTO roles(role_name,description) VALUES(?,'Custom role') RETURNING role_id")){p.setString(1,name);try(ResultSet r=p.executeQuery()){r.next();int roleId=r.getInt(1);SyncOutboxService.recordEvent(c,"ROLE_CREATED",Map.of("role_id",roleId,"role_name",name,"actor_user_id",actor),locationId,deviceId.toString(),actor);return map("roleId",roleId,"name",name);}}
+        try(PreparedStatement p=c.prepareStatement("INSERT INTO roles(role_name,description) VALUES(?,'Custom role') RETURNING role_id")){p.setString(1,name);try(ResultSet r=p.executeQuery()){r.next();int roleId=r.getInt(1);CrossStoreRoleSyncService.record(c,roleId,locationId);SyncOutboxService.recordEvent(c,"ROLE_CREATED",Map.of("role_id",roleId,"role_name",name,"actor_user_id",actor),locationId,deviceId.toString(),actor);return map("roleId",roleId,"name",name);}}
     }
 
     private static void replace(Connection c,int role,Set<String>keys,String join,String defs,String id)throws Exception {

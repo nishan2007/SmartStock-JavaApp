@@ -8,6 +8,7 @@ import Receipt.ReceiptData;
 import Receipt.ReceiptItem;
 import Receipt.CustomOrderSlipData;
 import data.DatabaseConfig;
+import data.DatabaseMode;
 import data.EnvironmentProfile;
 import models.DeviceInfo;
 import models.CashDrawer;
@@ -91,10 +92,30 @@ public final class LanApiClient {
                 savedHost == null ? config.serverHost() : savedHost);
         int savedPort = parsePort(SecureCredentialStore.read(API_PORT_SECRET), LanApiServer.DEFAULT_PORT);
         int port = Integer.getInteger("smartstock.lan.api.port", savedPort);
+        host = resolvableServerHost(host);
         URI resolved = URI.create("https://" + host + ":" + port);
         cachedBaseUri = resolved;
         SessionDataCache.setEndpoint(resolved.toString());
         return resolved;
+    }
+
+    private static String resolvableServerHost(String host) {
+        return resolvableServerHost(host, name -> {
+            try { InetAddress.getAllByName(name); return true; }
+            catch (java.net.UnknownHostException ex) { return false; }
+        });
+    }
+
+    static String resolvableServerHost(String host, java.util.function.Predicate<String> resolves) {
+        if (host == null) return null;
+        String clean = host.trim();
+        // Generated server certificates cover both the computer name and its .local alias.
+        // Windows networks do not always provide multicast DNS for the latter.
+        if (clean.toLowerCase(Locale.ROOT).endsWith(".local") && !resolves.test(clean)) {
+            String computerName = clean.substring(0, clean.length() - 6);
+            if (!computerName.isBlank() && resolves.test(computerName)) return computerName;
+        }
+        return clean;
     }
 
     /** Saves the administrator-selected LAN service endpoint without storing any database credential. */
@@ -186,7 +207,7 @@ public final class LanApiClient {
 
     public static boolean isServerReachable(String host,int port,String expectedFingerprint){
         try{
-            Probe probe=probeUntrusted(URI.create("https://"+host+":"+port));
+            Probe probe=probeUntrusted(URI.create("https://"+resolvableServerHost(host)+":"+port));
             return expectedFingerprint!=null&&LanSecurity.constantTimeEquals(expectedFingerprint,probe.certificateFingerprint());
         }catch(Exception ex){return false;}
     }
@@ -238,7 +259,7 @@ public final class LanApiClient {
         request.addProperty("accessMode", DatabaseConfig.load().mode().name());
         request.addProperty("publicKey", publicKey);
         if(emergencyReason!=null&&!emergencyReason.isBlank())request.addProperty("emergencyReason",emergencyReason.trim());
-        JsonObject data = post("/v1/devices/enroll", request, false, false);
+        JsonObject data = post(studioClient()?"/v1/studio/devices/enroll":"/v1/devices/enroll", request, false, false);
         saveServerAssignedLocation(data.has("locationId") ? data.get("locationId").getAsInt() : null);
         String challenge = DeviceCredentialService.decryptLanEnvelope(
                 data.get("pairingChallengeEnvelope").getAsString());
@@ -249,7 +270,41 @@ public final class LanApiClient {
             clearTransferState();
             return new PairingResult("PAIRED", false);
         }
+        if(studioClient()) {
+            SecureCredentialStore.delete(DeviceCredentialService.LAN_API_TOKEN_SECRET);
+            SecureCredentialStore.delete(API_TOKEN_EXPIRES_SECRET);
+            SecureCredentialStore.delete(API_SESSION_SECRET);
+            resetTransport(false,true);
+        }
         return new PairingResult(status, false);
+    }
+
+    /** Exchange register trust for a separate, restricted Studio identity. */
+    public static boolean reuseRegisterPairing(java.nio.file.Path registerHome) throws Exception {
+        if (!studioClient() || isPaired()
+                || SecureCredentialStore.read(DeviceCredentialService.LAN_API_PAIRING_CHALLENGE_SECRET) != null) return false;
+        String token = SecureCredentialStore.readRegisterPairing(registerHome, DeviceCredentialService.LAN_API_TOKEN_SECRET);
+        String pin = SecureCredentialStore.readRegisterPairing(registerHome, DeviceCredentialService.LAN_API_FINGERPRINT_SECRET);
+        String host = SecureCredentialStore.readRegisterPairing(registerHome, API_HOST_SECRET);
+        String port = SecureCredentialStore.readRegisterPairing(registerHome, API_PORT_SECRET);
+        if (token == null || pin == null || host == null || port == null) return false;
+        configureEndpoint(host, Integer.parseInt(port));
+        SecureCredentialStore.write(DeviceCredentialService.LAN_API_FINGERPRINT_SECRET, pin);
+        resetTransport(false, false);
+        DeviceInfo device = DeviceUtils.collectDeviceInfo();
+        JsonObject request = new JsonObject();
+        request.addProperty("installationId", device.getInstallationId());
+        request.addProperty("deviceFingerprint", device.getFingerprint());
+        addDeviceMetadata(request, device);
+        request.addProperty("publicKey", DeviceCredentialService.pairingPublicKey());
+        JsonObject data = post("/v1/studio/devices/from-register", request, false, false,
+                Map.of("X-SmartStock-Device", token));
+        new DatabaseConfig(DatabaseMode.CLIENT, "", "", "", host, Integer.parseInt(port),
+                data.get("locationId").getAsInt(), 60).save();
+        saveServerAssignedLocation(data.get("locationId").getAsInt());
+        SecureCredentialStore.write(DeviceCredentialService.LAN_API_PAIRING_CHALLENGE_SECRET,
+                DeviceCredentialService.decryptLanEnvelope(data.get("pairingChallengeEnvelope").getAsString()));
+        return claimApprovedCredential();
     }
 
     /** Physical-server bootstrap; the endpoint accepts only loopback traffic in SERVER mode. */
@@ -320,7 +375,7 @@ public final class LanApiClient {
         request.addProperty("pairingChallenge", challenge);
         JsonObject data;
         try {
-            data = post("/v1/devices/claim", request, false, false);
+            data = post(studioClient()?"/v1/studio/devices/claim":"/v1/devices/claim", request, false, false);
         } catch (LanApiException ex) {
             if ("PAIRING_PENDING".equals(ex.code())) return false;
             throw ex;
@@ -694,6 +749,59 @@ public final class LanApiClient {
         return rows == null ? List.of() : List.of(rows);
     }
 
+    public static List<StudioProduct> studioProducts(long afterId) throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("afterId",afterId);
+        StudioProduct[] rows=GSON.fromJson(post("/v1/products/studio-list",request,true,true).getAsJsonArray("products"),StudioProduct[].class);
+        return rows==null?List.of():List.of(rows);
+    }
+
+    public static StudioSource studioSource(long productId) throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("productId",productId);
+        JsonObject data=post("/v1/products/studio-source",request,true,true);
+        return new StudioSource(data.get("imageUrl").getAsString(),data.get("sha256").getAsString(),
+                java.util.Base64.getDecoder().decode(data.get("bytesBase64").getAsString()));
+    }
+
+    public static StudioImportResult importStudioPhoto(long productId,String sourceImageUrl,String sourceSha256,byte[] jpeg) throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("productId",productId);
+        request.addProperty("sourceImageUrl",sourceImageUrl);request.addProperty("sourceSha256",sourceSha256);
+        request.addProperty("bytesBase64",java.util.Base64.getEncoder().encodeToString(jpeg));
+        String key="studio-"+productId+"-"+sourceSha256.substring(0,16)+"-"+LanSecurity.sha256(java.util.Base64.getEncoder().encodeToString(jpeg)).substring(0,16);
+        return GSON.fromJson(post("/v1/products/studio-import",request,true,true,Map.of("Idempotency-Key",key)),StudioImportResult.class);
+    }
+
+    public static List<StudioReview> studioReviews() throws Exception {
+        StudioReview[] rows=GSON.fromJson(post("/v1/products/studio-reviews",new JsonObject(),true,true)
+                .getAsJsonArray("reviews"),StudioReview[].class);
+        return rows==null?List.of():List.of(rows);
+    }
+
+    public static byte[] studioReviewPhoto(long productId,String kind) throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("productId",productId);request.addProperty("kind",kind);
+        return java.util.Base64.getDecoder().decode(post("/v1/products/studio-review-photo",request,true,true)
+                .get("bytesBase64").getAsString());
+    }
+
+    public static boolean uploadStudioReview(StudioReview review,byte[] original,byte[] preview) throws Exception {
+        JsonObject request=GSON.toJsonTree(review).getAsJsonObject();
+        request.addProperty("originalBase64",java.util.Base64.getEncoder().encodeToString(original));
+        request.addProperty("previewBase64",java.util.Base64.getEncoder().encodeToString(preview));
+        return post("/v1/products/studio-review-upload",request,true,true).get("created").getAsBoolean();
+    }
+
+    public static long decideStudioReview(long productId,long revision,String decision,String error) throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("productId",productId);
+        request.addProperty("revision",revision);request.addProperty("decision",decision);
+        request.addProperty("error",error==null?"":error);
+        return post("/v1/products/studio-review-decision",request,true,true).get("revision").getAsLong();
+    }
+
+    public record StudioProduct(long productId,String name,String imageUrl,List<String> additionalImageUrls) { }
+    public record StudioSource(String imageUrl,String sha256,byte[] bytes) { }
+    public record StudioImportResult(String status,String reference) { }
+    public record StudioReview(long productId,String name,String imageUrl,String sha256,String decision,
+                               String reference,String error,String generator,boolean generatedForReview,long revision) { }
+
     public static List<EditableProduct> searchArchivedProducts(String search)throws Exception{
         JsonObject request=new JsonObject();request.addProperty("search",search==null?"":search);
         JsonObject data=post("/v1/products/archived-search",request,true,true);
@@ -944,6 +1052,11 @@ public final class LanApiClient {
     public static List<CustomOrderDataService.CustomerOption> searchCustomOrderCustomers(String search)throws Exception{JsonObject r=new JsonObject();r.addProperty("search",search==null?"":search);JsonObject d=customOrderQuery("CUSTOMERS",r);CustomOrderDataService.CustomerOption[]a=GSON.fromJson(d.getAsJsonArray("customers"),CustomOrderDataService.CustomerOption[].class);return a==null?List.of():List.of(a);}
     public static List<CustomOrderDataService.EmployeeOption> loadCustomOrderEmployees()throws Exception{JsonObject d=customOrderQuery("EMPLOYEES",new JsonObject());CustomOrderDataService.EmployeeOption[]a=GSON.fromJson(d.getAsJsonArray("employees"),CustomOrderDataService.EmployeeOption[].class);return a==null?List.of():List.of(a);}
     public static CustomOrderDataService.LookupResult lookupCustomOrderItem(String search)throws Exception{JsonObject r=new JsonObject();r.addProperty("search",search==null?"":search);JsonObject d=customOrderQuery("LOOKUP",r);return d.has("match")&&!d.get("match").isJsonNull()?GSON.fromJson(d.get("match"),CustomOrderDataService.LookupResult.class):null;}
+    public static List<CustomOrderDataService.ItemSearchOption> searchCustomOrderItems(String search)throws Exception{
+        JsonObject r=new JsonObject();r.addProperty("search",search==null?"":search);
+        JsonObject d=customOrderQuery("SEARCH_ITEMS",r);
+        return java.util.Arrays.asList(GSON.fromJson(d.get("items"),CustomOrderDataService.ItemSearchOption[].class));
+    }
     private static JsonObject customOrderQuery(String action,JsonObject request)throws Exception{request.addProperty("action",action);return post("/v1/custom-orders/catalog",request,true,true);}
     public static String saveCustomOrder(CustomOrderDataService.OrderSaveRequest request,String key)throws Exception{JsonObject body=GSON.toJsonTree(request).getAsJsonObject();return post("/v1/custom-orders/create",body,true,true,Map.of("Idempotency-Key",key)).get("orderNumber").getAsString();}
     public static LanOrdersDashboardService.Dashboard loadCustomOrderDashboard()throws Exception{return GSON.fromJson(post("/v1/custom-orders/dashboard",new JsonObject(),true,true).get("dashboard"),LanOrdersDashboardService.Dashboard.class);}
@@ -955,6 +1068,21 @@ public final class LanApiClient {
     public static TimeClockAutoCloseService.EmployeeAutoCloseNotice loadLatestTimeClockNotice()throws Exception{JsonObject d=post("/v1/time-clock/auto-close/notice",new JsonObject(),true,true);return d.has("notice")&&!d.get("notice").isJsonNull()?GSON.fromJson(d.get("notice"),TimeClockAutoCloseService.EmployeeAutoCloseNotice.class):null;}
     public static void confirmTimeClockAutoClose(long clockId,String reason,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("clockId",clockId);r.addProperty("reason",reason);post("/v1/time-clock/auto-close/confirm",r,true,true,Map.of("Idempotency-Key",key));}
     public static void correctTimeClockAutoClose(long clockId,java.time.ZoneId zone,TimeClockAutoCloseService.Correction correction,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("clockId",clockId);r.addProperty("zoneId",zone.getId());r.add("correction",GSON.toJsonTree(correction));post("/v1/time-clock/auto-close/correct",r,true,true,Map.of("Idempotency-Key",key));}
+    public static java.util.List<ManualTimeClockService.Employee> loadManualTimeClockEmployees() throws Exception {
+        JsonObject response=post("/v1/time-clock/manual/employees",new JsonObject(),true,true);
+        ManualTimeClockService.Employee[] employees=GSON.fromJson(response.get("employees"),ManualTimeClockService.Employee[].class);
+        return employees==null?java.util.List.of():java.util.Arrays.asList(employees);
+    }
+
+    public static void setSyncBillingPeriod(long startEpochMillis)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("startEpochMillis",startEpochMillis);
+        post("/v1/sync/billing-period",body,true,true);
+    }
+    public static long createManualTimeClock(int employeeId,TimeClockAutoCloseService.Correction entry,String key) throws Exception {
+        JsonObject request=new JsonObject();
+        request.addProperty("employeeId",employeeId); request.add("entry",GSON.toJsonTree(entry));
+        return post("/v1/time-clock/manual/create",request,true,true,Map.of("Idempotency-Key",key)).get("clockId").getAsLong();
+    }
     public static void correctTimeClockSession(long clockId,TimeClockAutoCloseService.Correction correction,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("clockId",clockId);r.add("correction",GSON.toJsonTree(correction));post("/v1/time-clock/correct",r,true,true,Map.of("Idempotency-Key",key));}
     public static managers.TimeClockManager.TimeClockDashboard loadTimeClockDashboard()throws Exception{return GSON.fromJson(post("/v1/time-clock/dashboard",new JsonObject(),true,true).get("dashboard"),managers.TimeClockManager.TimeClockDashboard.class);}
     public static TimeClockPunchState loadTimeClockPunchState()throws Exception{return GSON.fromJson(post("/v1/time-clock/punch-state",new JsonObject(),true,true),TimeClockPunchState.class);}
@@ -982,17 +1110,26 @@ public final class LanApiClient {
     }
     public static JsonObject quotationRead(String action,JsonObject body)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/quotations/read",r,true,true);}
     public static JsonObject quotationMutation(String action,JsonObject body,String key)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/quotations/update",r,true,true,Map.of("Idempotency-Key",key));}
-    public static String loadQuotationDocument(String type,long id)throws Exception{JsonObject r=new JsonObject();r.addProperty("type",type);r.addProperty("documentId",id);return post("/v1/documents/quotation-invoice",r,true,true).get("text").getAsString();}
+    public static String loadQuotationDocument(String type,long id)throws Exception{return loadQuotationDocument(type,id,false);}
+    public static String loadQuotationDocument(String type,long id,boolean compact)throws Exception{JsonObject r=new JsonObject();r.addProperty("compact",compact);r.addProperty("type",type);r.addProperty("documentId",id);return post("/v1/documents/quotation-invoice",r,true,true).get("text").getAsString();}
     public static LanCustomOrderCatalogAdminService.State loadCustomCatalogAdmin()throws Exception{return GSON.fromJson(post("/v1/custom-orders/admin/state",new JsonObject(),true,true).get("state"),LanCustomOrderCatalogAdminService.State.class);}
     public static long updateCustomCatalogAdmin(String action,JsonObject body,String key)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/custom-orders/admin/update",r,true,true,Map.of("Idempotency-Key",key)).get("recordId").getAsLong();}
     public static JsonObject customOrderWorkflowRead(String action,Long orderId,String search)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);if(orderId!=null)r.addProperty("orderId",orderId);if(search!=null)r.addProperty("search",search);return post("/v1/custom-orders/workflow/read",r,true,true);}
     public static JsonObject customOrderWorkflowMutation(JsonObject request,String key)throws Exception{return post("/v1/custom-orders/workflow/update",request,true,true,Map.of("Idempotency-Key",key));}
+    public static JsonObject customOrderMediaRead(JsonObject request)throws Exception{return post("/v1/custom-orders/media/read",request,true,true);}
+    public static JsonObject customOrderMediaMutation(JsonObject request)throws Exception{return post("/v1/custom-orders/media/update",request,true,true,Map.of("Idempotency-Key",UUID.randomUUID().toString()));}
+    public static JsonObject customOrderMediaMutation(JsonObject request,String key)throws Exception{return post("/v1/custom-orders/media/update",request,true,true,Map.of("Idempotency-Key",key));}
     public static JsonObject companyCustomizationRead(String action,Integer locationId)throws Exception{
         JsonObject r=new JsonObject();r.addProperty("action",action);if(locationId!=null)r.addProperty("locationId",locationId);
         return post("/v1/configuration/read",r,true,true);
     }
     public static AppUpdateService.AppRelease loadLatestAppRelease(String platform)throws Exception{JsonObject r=new JsonObject();r.addProperty("platform",platform);JsonObject d=post("/v1/cloud/update/latest",r,true,true);return !d.has("release")||d.get("release").isJsonNull()?null:GSON.fromJson(d.get("release"),AppUpdateService.AppRelease.class);}
     public static String createUpdateDownloadUrl(String bucket,String path)throws Exception{JsonObject r=new JsonObject();r.addProperty("bucket",bucket);r.addProperty("path",path);return post("/v1/cloud/update/sign",r,true,true).get("url").getAsString();}
+    public static AppUpdateService.AppRelease loadLatestStudioRelease() throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("platform","windows");request.addProperty("application","smartstudio");
+        JsonObject reply=post("/v1/cloud/update/latest",request,true,true);
+        return !reply.has("release")||reply.get("release").isJsonNull()?null:GSON.fromJson(reply.get("release"),AppUpdateService.AppRelease.class);
+    }
     public static String uploadCloudFile(String bucket,String path,String contentType,byte[]bytes)throws Exception{JsonObject r=new JsonObject();r.addProperty("bucket",bucket);r.addProperty("path",path);r.addProperty("contentType",contentType);r.addProperty("bytesBase64",java.util.Base64.getEncoder().encodeToString(bytes));return post("/v1/cloud/storage/upload",r,true,true).get("url").getAsString();}
     public static String uploadManagedImage(String category,String bucket,String path,String contentType,byte[]bytes)throws Exception{JsonObject r=new JsonObject();r.addProperty("category",category);r.addProperty("bucket",bucket);r.addProperty("path",path);r.addProperty("contentType",contentType);r.addProperty("bytesBase64",java.util.Base64.getEncoder().encodeToString(bytes));return post("/v1/cloud/storage/upload",r,true,true).get("url").getAsString();}
     public static byte[] downloadEmployeeCloudFile(String url)throws Exception{JsonObject r=new JsonObject();r.addProperty("url",url);return java.util.Base64.getDecoder().decode(post("/v1/cloud/storage/download",r,true,true).get("bytesBase64").getAsString());}
@@ -1245,6 +1382,11 @@ public final class LanApiClient {
     private static Probe probeUntrusted(URI endpoint) throws Exception {
         BlockingCallGuard.check("LAN health probe");
         long started = System.nanoTime();
+        String reachableHost = resolvableServerHost(endpoint.getHost());
+        if (!java.util.Objects.equals(reachableHost, endpoint.getHost())) {
+            endpoint = new URI(endpoint.getScheme(), endpoint.getUserInfo(), reachableHost,
+                    endpoint.getPort(), endpoint.getPath(), endpoint.getQuery(), endpoint.getFragment());
+        }
         HttpRequest request = HttpRequest.newBuilder(endpoint.resolve("/v1/health"))
                 .timeout(TIMEOUT).GET().build();
         HttpResponse<String> response;
@@ -1275,6 +1417,58 @@ public final class LanApiClient {
                 data.has("localSchemaReady") && data.get("localSchemaReady").getAsBoolean());
     }
 
+    public static JsonObject storefrontStatus() throws Exception {return post("/v1/storefront/status",new JsonObject(),true,true);}
+    public static JsonObject webStatus() throws Exception {return post("/v1/web/status",new JsonObject(),true,true);}
+    public static JsonObject webControl(String service,String action,String key) throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("service",service);body.addProperty("action",action);
+        return post("/v1/web/mutation",body,true,true,Map.of("Idempotency-Key",key));
+    }
+    public static JsonObject storefrontAdmin(JsonObject body,String key) throws Exception {
+        return post("/v1/storefront/mutation",body,true,true,Map.of("Idempotency-Key",key));
+    }
+    public static JsonObject storefrontQuoteFile(UUID fileId)throws Exception{
+        JsonObject body=new JsonObject();body.addProperty("fileId",fileId.toString());
+        return post("/v1/storefront/quote-file",body,true,true);
+    }
+
+    public static JsonObject studioBranding() throws Exception {
+        return post("/v1/studio/branding", new JsonObject(), true, RemoteAdminPolicy.isRemoteAdminClient());
+    }
+
+    private static boolean studioClient() {return "smartstudio".equals(System.getProperty("smartstock.client.application"));}
+    public static void verifyStudioPairing() throws Exception {post("/v1/studio/device-status",new JsonObject(),true,false);}
+
+    public static JsonObject studioModels(boolean refresh) throws Exception {
+        return post(refresh ? "/v1/studio/models/refresh" : "/v1/studio/models/status", new JsonObject(), true, true);
+    }
+
+    public static void installStudioModel(StudioQuality quality) throws Exception {
+        JsonObject body = new JsonObject(); body.addProperty("quality", quality.name());
+        post("/v1/studio/models/install", body, true, true);
+    }
+
+    public static byte[] removeStudioBackground(byte[] bytes) throws Exception {
+        return removeStudioBackground(bytes, StudioQuality.FAST, false);
+    }
+
+    public static byte[] removeStudioBackground(byte[] bytes, StudioQuality quality, boolean cleanEdges) throws Exception {
+        return processStudioPhoto(bytes, quality, cleanEdges, false);
+    }
+
+    public static byte[] createStudioReviewJpeg(byte[] bytes) throws Exception {
+        return processStudioPhoto(bytes, StudioQuality.FAST, false, true);
+    }
+
+    private static byte[] processStudioPhoto(byte[] bytes, StudioQuality quality, boolean cleanEdges, boolean review) throws Exception {
+        StudioBackgroundService.validate(bytes);
+        JsonObject body = new JsonObject();
+        body.addProperty("bytesBase64", java.util.Base64.getEncoder().encodeToString(bytes));
+        body.addProperty("quality", quality.name());
+        body.addProperty("cleanEdges", cleanEdges);
+        if (review) body.addProperty("output", "review-jpeg");
+        return java.util.Base64.getDecoder().decode(post("/v1/studio/remove-background", body, true, true).get("bytesBase64").getAsString());
+    }
+
     private static JsonObject post(String path, JsonObject body, boolean deviceAuth, boolean employeeAuth) throws Exception {
         return post(path, body, deviceAuth, employeeAuth, Map.of());
     }
@@ -1284,9 +1478,11 @@ public final class LanApiClient {
         RemoteAdminPolicy.requireClientOperationAllowed(path);
         BlockingCallGuard.check("LAN " + path);
         long started = System.nanoTime();
-        boolean imageUpload = "/v1/cloud/storage/upload".equals(path);
+        boolean imageUpload = "/v1/cloud/storage/upload".equals(path) || "/v1/products/studio-import".equals(path)
+                || "/v1/products/studio-source".equals(path) || "/v1/studio/remove-background".equals(path);
         HttpRequest.Builder builder = HttpRequest.newBuilder(baseUri().resolve(path))
-                .timeout(imageUpload ? IMAGE_UPLOAD_TIMEOUT : TIMEOUT)
+                .timeout("/v1/studio/remove-background".equals(path) ? Duration.ofMinutes(5)
+                        : "/v1/studio/models/refresh".equals(path) ? Duration.ofSeconds(75) : imageUpload ? IMAGE_UPLOAD_TIMEOUT : TIMEOUT)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body), StandardCharsets.UTF_8));
@@ -1313,23 +1509,71 @@ public final class LanApiClient {
         } catch (Exception ex) {
             PerformanceDiagnostics.record("lan", path, started, false, -1);
             if (isConnectionFailure(ex)) {
+                ConnectionProbe probe = confirmServerReachable();
+                PerformanceDiagnostics.recordLanConnectionFailure(path, started, ex, probe.failureType());
                 if (imageUpload) {
                     throw new LanApiException("IMAGE_UPLOAD_UNAVAILABLE",
                             "The image upload did not finish. Check the server connection and try the photo again.", true);
                 }
-                reportConnectionLoss();
+                if (!probe.reachable()) reportConnectionLoss();
                 throw new LanApiException("SERVER_UNREACHABLE",
-                        "Connection to the SmartStock server was lost. Return to the welcome screen and wait for it to reconnect.",
+                        probe.reachable() ? "The server is reachable, but this request was interrupted. Try again."
+                                : "Connection to the SmartStock server was lost. Return to the welcome screen and wait for it to reconnect.",
                         true);
             }
             throw ex;
         }
     }
 
+    /** A separate pinned request confirms an outage without replaying a possible mutation. */
+    private static ConnectionProbe confirmServerReachable() {
+        return confirmServerReachable(LanApiClient::probeServerReachable);
+    }
+
+    @FunctionalInterface
+    interface HealthProbe { void check(int attempt) throws Exception; }
+
+    static ConnectionProbe confirmServerReachable(HealthProbe probe) {
+        Exception failure = null;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                probe.check(attempt);
+                return new ConnectionProbe(true, "none");
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return new ConnectionProbe(false, ex.getClass().getSimpleName());
+            } catch (Exception ex) {
+                failure = ex;
+                // Never recover around certificate rejection or configuration errors.
+                if (!isConnectionFailure(ex) || ex instanceof javax.net.ssl.SSLException) break;
+            }
+        }
+        return new ConnectionProbe(false, failure.getClass().getSimpleName());
+    }
+
+    private static void probeServerReachable(int attempt) throws Exception {
+        // Each check uses a new pinned connection. The second check also tries
+        // the certificate-covered computer name even if stale .local DNS resolves.
+        resetTransport(true, false);
+        URI endpoint = baseUri();
+        if (attempt > 0 && endpoint.getHost().toLowerCase(Locale.ROOT).endsWith(".local")) {
+            String alias = endpoint.getHost().substring(0, endpoint.getHost().length() - 6);
+            if (!alias.isBlank()) endpoint = URI.create("https://" + alias + ":" + endpoint.getPort());
+        }
+        HttpRequest request = HttpRequest.newBuilder(endpoint.resolve("/v1/health"))
+                .timeout(Duration.ofSeconds(5)).GET().build();
+        pinnedClient().send(request, HttpResponse.BodyHandlers.discarding());
+        cachedBaseUri = endpoint;
+        SessionDataCache.setEndpoint(endpoint.toString());
+    }
+
+
+    record ConnectionProbe(boolean reachable, String failureType) { }
+
     static boolean isConnectionFailure(Throwable failure) {
         Throwable current = failure;
         while (current != null) {
-            if (current instanceof IOException) {
+            if (current instanceof IOException || current instanceof java.nio.channels.UnresolvedAddressException) {
                 return true;
             }
             current = current.getCause();
@@ -1708,7 +1952,7 @@ public final class LanApiClient {
                                    String department,String itemType,String brand,String shelf,String storageShelf,
                                    String vendor,BigDecimal costPrice,BigDecimal price,int quantityOnHand,
                                    int reorderLevel,String createdBy,VariantInfo variant,String color,String flavor) { }
-    public record InventoryDetails(Map<String,String> fields,List<InventoryActivity> activities) { }
+    public record InventoryDetails(Map<String,String> fields,List<InventoryActivity> activities,List<String> imageUrls) { }
     public record CrossStoreInventoryResult(List<CrossStoreStoreOption> stores,List<CrossStoreInventoryItem> items) { }
     public record CrossStoreStoreOption(int locationId,String name,String status,long refreshedAtEpochMillis) { }
     public record CrossStoreInventoryItem(int locationId,String storeName,int productId,String sku,String barcode,
@@ -1751,16 +1995,17 @@ public final class LanApiClient {
                                   BigDecimal costPrice,BigDecimal price,String productType,int quantity,int reorderLevel,
                                   Integer categoryId,String categoryName,Integer vendorId,String vendorName,String imageUrl,
                                   String itemTypeName,String brandName,String shelfName,String storageShelfName,
-                                  List<String> additionalBarcodes,boolean active,VariantInfo variant,String color,String flavor) { }
-    public record PriceTagCatalogItem(String itemType,String name,String size,String description,String code,
-                                      BigDecimal price,long itemId) { }
+                                  List<String> additionalBarcodes,boolean active,VariantInfo variant,String color,String flavor,
+                                  List<String> additionalImageUrls) { }
+    public record PriceTagCatalogItem(String itemType,String name,String variantName,String size,String color,String brand,String description,String code,
+                                      BigDecimal price,BigDecimal quantity,long itemId) { }
     public record PriceTagSettings(String encodedTemplates,boolean showCompany,boolean showSku,boolean showBarcode,
                                    double widthInches,double heightInches) { }
     public record ProductSaveRequest(Integer productId,String name,String size,String sku,String barcode,String description,
                                      BigDecimal costPrice,BigDecimal price,String productType,Integer categoryId,Integer vendorId,
                                      String imageUrl,String itemTypeName,String brandName,String shelfName,String storageShelfName,
                                      List<String> additionalBarcodes,int quantity,int reorderLevel,Integer expectedQuantity,
-                                     boolean adjustQuantity,String color,String flavor) { }
+                                     boolean adjustQuantity,String color,String flavor,List<String> additionalImageUrls) { }
     public record SavedProduct(int productId,String sku,int quantity) { }
     public record ProductLifecycleResult(int productId,String name,boolean active) { }
     public record NonRoundedPriceItem(int productId,String sku,String name,String size,
@@ -1774,7 +2019,12 @@ public final class LanApiClient {
                                      long serviceLastSeenEpochMillis,boolean serverWorkerStarted,
                                      int imagePendingUploads,int imageMissingLocal,int imageMissingCloud,
                                      int imageUnused,int imageFailedPurges,
-                                     List<SyncConflict> conflicts,List<SyncAudit> audits) { }
+                                     List<SyncConflict> conflicts,List<SyncAudit> audits,
+                                     String transferMeasurementLabel,long transferTodayRequestBytes,long transferTodayResponseBytes,
+                                     long transferBillingStartEpochMillis,long transferBillingRequestBytes,long transferBillingResponseBytes,
+                                     long transferMeasuredSinceEpochMillis,List<CrossStoreRefreshStatus> crossStoreRefreshes) { }
+    public record CrossStoreRefreshStatus(int locationId,String storeName,long sourceCompletedEpochMillis,
+                                         long lastCheckedEpochMillis,long nextRefreshEpochMillis,String lastError) { }
     public record SyncConflict(long conflictId,String eventType,String conflictType,String status,
                                long createdAtEpochMillis) { }
     public record SyncAudit(long createdAtEpochMillis,String actionType,String tableName,
@@ -1861,7 +2111,11 @@ public final class LanApiClient {
     public record DeviceAdminUpdate(String action,String deviceId,boolean approved,
                                     boolean persistentLoginAllowed,boolean autoLogoutEnabled,
                                     int autoLogoutMinutes,boolean allowSales,boolean allowOrders,
-                                    String notes,String deviceName,String receiptCode) { }
+                                    String notes,String deviceName,String receiptCode,Boolean allowStudio) {
+        public DeviceAdminUpdate(String action,String deviceId,boolean approved,boolean persistentLoginAllowed,boolean autoLogoutEnabled,int autoLogoutMinutes,boolean allowSales,boolean allowOrders,String notes,String deviceName,String receiptCode) {
+            this(action,deviceId,approved,persistentLoginAllowed,autoLogoutEnabled,autoLogoutMinutes,allowSales,allowOrders,notes,deviceName,receiptCode,null);
+        }
+    }
     public record SchedulerBrowserDevice(String deviceId,String deviceName,String employeeName,String username,
                                          boolean staySignedIn,String expiresAt,String createdAt,String lastSeenAt,boolean revoked) { }
     public record ServerAdminState(List<ServerRecord> servers,List<ServerEvent> events,String currentServerInstanceId,String localRole) { }

@@ -1,0 +1,6 @@
+SmartStock 1.0.236
+- Adds offline Best quality background removal using BiRefNet General, optional edge cleanup and original-size transparent PNG exports for SmartStudio.
+- Adds a separate verified SmartStudio update feed while keeping SmartStock updates separate.
+- Includes the current register connection, shared display/readability, custom order attachment and other completed improvements present in the release snapshot.
+- Preserves existing device-row Allow Studio approval and secure staff login.
+- Excludes the in-progress custom order spoils workflow, its permissions, database migration, services and phone routes.

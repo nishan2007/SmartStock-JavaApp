@@ -95,6 +95,7 @@ public class CompanyCustomization extends JFrame {
     private static final String NAV_PRICE_TAG_TEMPLATE = "Price Tag Template";
     private static final String NAV_IMAGE_STORAGE = "Image Storage";
     private static final String NAV_EMPLOYMENT_PORTAL = "Employment Portal";
+    private static final String NAV_STOREFRONT = "Online Store";
     private static final int BADGE_CARD_WIDTH = 638;
     private static final int BADGE_CARD_HEIGHT = 1013;
 
@@ -171,6 +172,7 @@ public class CompanyCustomization extends JFrame {
     private final JSpinner accountSignatureRetentionYearsSpinner=new JSpinner(new SpinnerNumberModel(3,1,25,1));
     private final JTextField customOrderMinimumDepositPercentField = new JTextField("0", 8);
     private final JTextField customOrderRefundApprovalLimitField = new JTextField("0", 8);
+    private final JTextField customOrderFileLimitMbField = new JTextField("100", 8);
     private final JCheckBox roundCustomOrdersToNearestTwentyBox = new JCheckBox("Round custom-order line prices to nearest $20", true);
     private final JCheckBox slipEnabledBox = new JCheckBox("Enable custom order slips");
     private final JCheckBox slipAutoPrintBox = new JCheckBox("Always print order slip");
@@ -192,7 +194,8 @@ public class CompanyCustomization extends JFrame {
     private final JCheckBox slipShowPaymentSummaryBox = new JCheckBox("Payment summary");
     private final JCheckBox slipShowPaymentReferenceBox = new JCheckBox("Payment reference");
     private final JCheckBox slipShowTakenByBox = new JCheckBox("Taken/delivered by");
-    private final JCheckBox slipShowSignaturesBox = new JCheckBox("Signature lines");
+    private final JCheckBox slipShowTeamMemberSignatureBox = new JCheckBox("Team member signature");
+    private final JCheckBox slipShowCustomerSignatureBox = new JCheckBox("Customer signature");
     private final JTextField quotationPrintTitleField = new JTextField("QUOTE / NOT FINAL SALE");
     private final JTextField quotationValidityNoteField = new JTextField("This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled.");
     private final JTextField invoicePrintTitleField = new JTextField("INVOICE");
@@ -409,6 +412,7 @@ public class CompanyCustomization extends JFrame {
         addNodeIfPermitted(root, NAV_BACKUPS);
         addNodeIfPermitted(root, NAV_IMAGE_STORAGE);
         addNodeIfPermitted(root, NAV_EMPLOYMENT_PORTAL);
+        addNodeIfPermitted(root,NAV_STOREFRONT);
         addNodeIfPermitted(root, NAV_TIME_CLOCK_SAFETY);
         addNodeIfPermitted(root, NAV_SCHEDULER_LINK_EMAIL);
 
@@ -533,6 +537,7 @@ public class CompanyCustomization extends JFrame {
             case NAV_BACKUPS -> buildBackupSchedulerScreen();
             case NAV_IMAGE_STORAGE -> new ImageStoragePanel();
             case NAV_EMPLOYMENT_PORTAL -> new EmploymentPortalPanel();
+            case NAV_STOREFRONT -> new ui.screens.companyprefs.StorefrontPanel();
             case NAV_TIME_CLOCK_SAFETY -> buildTimeClockSafetyScreen();
             case NAV_SCHEDULER_LINK_EMAIL -> buildSchedulerLinkEmailScreen();
             case NAV_SALE_RECEIPT_FORMATTING -> buildSaleReceiptPreferencesScreen();
@@ -701,7 +706,7 @@ public class CompanyCustomization extends JFrame {
                 NAV_LOCATIONS, NAV_CASH_DRAWER_MANAGER, NAV_BACKUPS, NAV_TIME_CLOCK_SAFETY,
                 NAV_SCHEDULER_LINK_EMAIL,
                 NAV_IMAGE_STORAGE,
-                NAV_EMPLOYMENT_PORTAL,
+                NAV_EMPLOYMENT_PORTAL, NAV_STOREFRONT,
                 NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_SALE_ITEM_TYPE_BUTTONS, NAV_ACCOUNT_PAYMENT_RECEIPTS,
                 NAV_CUSTOM_ORDERS, NAV_CUSTOM_ORDER_DEPOSIT_REFUND,
                 NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING
@@ -730,7 +735,7 @@ public class CompanyCustomization extends JFrame {
             case NAV_LOCATIONS -> PermissionManager.hasPermission("LOCATION_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_CASH_DRAWER_MANAGER -> PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_BACKUPS -> isPhysicalServerMode() && canEditCompanyPreferences();
-            case NAV_IMAGE_STORAGE, NAV_EMPLOYMENT_PORTAL -> canEditCompanyPreferences();
+            case NAV_IMAGE_STORAGE, NAV_EMPLOYMENT_PORTAL, NAV_STOREFRONT -> canEditCompanyPreferences();
             case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE, NAV_TIME_CLOCK_SAFETY, NAV_SCHEDULER_LINK_EMAIL, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_SALE_ITEM_TYPE_BUTTONS, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_CUSTOM_ORDERS,
                  NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING -> canEditCompanyPreferences();
             default -> false;
@@ -1106,7 +1111,7 @@ public class CompanyCustomization extends JFrame {
         return selectedItemTypeQuickPickIds().stream().filter(quickPickPhotoItemTypeIds::contains).toList();
     }
     private void loadPriceTagTemplateFields() { if (priceTagTemplates.size() != 5) return; activePriceTagTemplateSlot = priceTagTemplateSlotBox.getSelectedIndex(); CompanyCustomizationManager.PriceTagTemplateSettings s = priceTagTemplates.get(activePriceTagTemplateSlot); priceTagTemplateNameField.setText(s.name()); priceTagShowCompanyBox.setSelected(s.showCompany()); priceTagShowNameBox.setSelected(s.showName()); priceTagShowPriceBox.setSelected(s.showPrice()); priceTagShowSkuBox.setSelected(s.showSku()); priceTagShowBarcodeBox.setSelected(s.showBarcode()); priceTagShowSizeBox.setSelected(s.showSize()); priceTagShowDescriptionBox.setSelected(s.showDescription()); priceTagWidthSpinner.setValue(s.widthInches()); priceTagHeightSpinner.setValue(s.heightInches()); priceTagLabelsAcrossSpinner.setValue(s.labelsAcross()); priceTagColumnGapSpinner.setValue(s.columnGapInches()); priceTagRowGapSpinner.setValue(s.rowGapInches()); refreshPriceTagPreview(); }
-    private void refreshPriceTagPreview() { try { priceTagPreviewLabel.setText(""); priceTagPreviewLabel.setIcon(new ImageIcon(PriceTagPrintService.renderStockPreview(new PriceTagPrintService.PriceTagItem("Sample Inventory Item", "Large", "A sample product description", "061-0001", "061-0001", java.math.BigDecimal.valueOf(2500)), priceTagSettingsFromFields()))); } catch (IllegalArgumentException ex) {priceTagPreviewLabel.setIcon(null);priceTagPreviewLabel.setText(ex.getMessage());} }
+    private void refreshPriceTagPreview() { try { priceTagPreviewLabel.setText(""); priceTagPreviewLabel.setIcon(new ImageIcon(PriceTagPrintService.renderStockPreview(new PriceTagPrintService.PriceTagItem("Sample Inventory Item", "Large", "Blue", "A sample product description", "061-0001", "061-0001", java.math.BigDecimal.valueOf(2500)), priceTagSettingsFromFields()))); } catch (IllegalArgumentException ex) {priceTagPreviewLabel.setIcon(null);priceTagPreviewLabel.setText(ex.getMessage());} }
     private void openPriceTagTemplateEditor() {
         savePriceTagFieldsToSlot(); int slot = priceTagTemplateSlotBox.getSelectedIndex();
         JDialog dialog = new JDialog(this, "Price Tag Template Editor — " + priceTagTemplates.get(slot).name(), Dialog.ModalityType.APPLICATION_MODAL);
@@ -2493,6 +2498,7 @@ public class CompanyCustomization extends JFrame {
                 || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES");
         customOrderMinimumDepositPercentField.setEnabled(canEditDeposit);
         customOrderRefundApprovalLimitField.setEnabled(canEditRefundLimit);
+        customOrderFileLimitMbField.setEnabled(PermissionManager.hasPermission("COMPANY_CUSTOMIZATION") || PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES"));
         customOrderMinimumDepositPercentField.setToolTipText(canEditDeposit
                 ? "Default percentage required upfront for custom orders."
                 : "Requires Custom Order Deposit Settings permission.");
@@ -2502,7 +2508,7 @@ public class CompanyCustomization extends JFrame {
 
         roundCustomOrdersToNearestTwentyBox.setEnabled(canEditDeposit || canEditRefundLimit);
         return new CustomOrderDepositPanel(customOrderMinimumDepositPercentField,
-                customOrderRefundApprovalLimitField, roundCustomOrdersToNearestTwentyBox);
+                customOrderRefundApprovalLimitField, roundCustomOrdersToNearestTwentyBox, customOrderFileLimitMbField);
     }
 
     private JPanel buildReceiptFormattingPanel() {
@@ -2582,7 +2588,7 @@ public class CompanyCustomization extends JFrame {
                 slipShowPaymentSummaryBox,
                 slipShowPaymentReferenceBox,
                 slipShowTakenByBox,
-                slipShowSignaturesBox
+                slipShowTeamMemberSignatureBox, slipShowCustomerSignatureBox
         );
     }
 
@@ -2836,6 +2842,7 @@ public class CompanyCustomization extends JFrame {
         customOrderMinimumDepositPercentField.setText(customOrderSettings.minimumDepositPercent().stripTrailingZeros().toPlainString());
         customOrderRefundApprovalLimitField.setText(utils.CurrencyFormatter.normalize(customOrderSettings.refundApprovalLimit()).toPlainString());
         roundCustomOrdersToNearestTwentyBox.setSelected(customOrderSettings.roundToNearestTwenty());
+        customOrderFileLimitMbField.setText(String.valueOf(customOrderSettings.fileLimitBytes() / 1048576L));
         CompanyCustomizationManager.CustomOrderSlipSettings slipSettings = all.customOrderSlip();
         loadSlipFields(slipSettings);
         CompanyCustomizationManager.QuotationInvoicePrintSettings salesPrintSettings = all.quotationInvoice();
@@ -2877,7 +2884,7 @@ public class CompanyCustomization extends JFrame {
             CompanyCustomizationManager.clearPreviewOverrideSettings();
             var receipt=getSettingsFromFields();
             var sale=(saleDiscountLimitPercentField.isEnabled()||saleReturnApprovalLimitField.isEnabled()||requireCostPriceOnNewItemBox.isEnabled()||roundSalesToNearestTwentyBox.isEnabled())?getSaleSafetySettingsFromFields(loadedSaleSafetySettings):null;
-            var custom=(customOrderMinimumDepositPercentField.isEnabled()||customOrderRefundApprovalLimitField.isEnabled()||roundCustomOrdersToNearestTwentyBox.isEnabled())?getCustomOrderSettingsFromFields(loadedCustomOrderSettings):null;
+            var custom=(customOrderMinimumDepositPercentField.isEnabled()||customOrderRefundApprovalLimitField.isEnabled()||roundCustomOrdersToNearestTwentyBox.isEnabled()||customOrderFileLimitMbField.isEnabled())?getCustomOrderSettingsFromFields(loadedCustomOrderSettings):null;
             var slip=getSlipSettingsFromFields();var print=getQuotationInvoicePrintSettingsFromFields();var badge=getBadgeTemplateSettingsForSave();
             var badgeSecurity=new CompanyCustomizationManager.BadgeSecuritySettings(requireBadgePinLoginBox.isSelected());
             String schedulerRecipient=schedulerLinkNotificationEmailField.getText().trim();
@@ -3079,7 +3086,12 @@ public class CompanyCustomization extends JFrame {
         BigDecimal savedRefundLimit = customOrderRefundApprovalLimitField.isEnabled() ? refundApprovalLimit : existingSettings.refundApprovalLimit();
         boolean roundToTwenty = roundCustomOrdersToNearestTwentyBox.isEnabled()
                 ? roundCustomOrdersToNearestTwentyBox.isSelected() : existingSettings.roundToNearestTwenty();
-        return new CompanyCustomizationManager.CustomOrderSettings(savedPercent, savedRefundLimit, roundToTwenty);
+        long fileBytes=existingSettings.fileLimitBytes();
+        if(customOrderFileLimitMbField.isEnabled()){
+            try{long mb=Long.parseLong(customOrderFileLimitMbField.getText().trim());if(mb<1||mb>1000000)throw new NumberFormatException();fileBytes=Math.multiplyExact(mb,1048576L);}
+            catch(Exception e){throw new IllegalArgumentException("Enter a custom order file limit from 1 to 1,000,000 MB.");}
+        }
+        return new CompanyCustomizationManager.CustomOrderSettings(savedPercent, savedRefundLimit, roundToTwenty,fileBytes);
     }
 
     private CompanyCustomizationManager.SaleSafetySettings getSaleSafetySettingsFromFields(CompanyCustomizationManager.SaleSafetySettings existingSettings) {
@@ -3210,7 +3222,8 @@ public class CompanyCustomization extends JFrame {
         slipShowPaymentSummaryBox.setSelected(settings.showPaymentSummary());
         slipShowPaymentReferenceBox.setSelected(settings.showPaymentReference());
         slipShowTakenByBox.setSelected(settings.showTakenBy());
-        slipShowSignaturesBox.setSelected(settings.showSignatures());
+        slipShowTeamMemberSignatureBox.setSelected(settings.showTeamMemberSignature());
+        slipShowCustomerSignatureBox.setSelected(settings.showCustomerSignature());
     }
 
     private CompanyCustomizationManager.CustomOrderSlipSettings getSlipSettingsFromFields() {
@@ -3246,7 +3259,7 @@ public class CompanyCustomization extends JFrame {
                 slipShowPaymentSummaryBox.isSelected(),
                 slipShowPaymentReferenceBox.isSelected(),
                 slipShowTakenByBox.isSelected(),
-                slipShowSignaturesBox.isSelected()
+                true, slipShowTeamMemberSignatureBox.isSelected(), slipShowCustomerSignatureBox.isSelected()
         );
     }
 
@@ -3708,7 +3721,8 @@ public class CompanyCustomization extends JFrame {
         slipShowPaymentSummaryBox.addActionListener(e -> refreshSlipPreview());
         slipShowPaymentReferenceBox.addActionListener(e -> refreshSlipPreview());
         slipShowTakenByBox.addActionListener(e -> refreshSlipPreview());
-        slipShowSignaturesBox.addActionListener(e -> refreshSlipPreview());
+        slipShowTeamMemberSignatureBox.addActionListener(e -> refreshSlipPreview());
+        slipShowCustomerSignatureBox.addActionListener(e -> refreshSlipPreview());
         slipTitleField.getDocument().addDocumentListener(previewDocumentListener);
         slipContactLineField.getDocument().addDocumentListener(previewDocumentListener);
         slipEmailLineField.getDocument().addDocumentListener(previewDocumentListener);
@@ -3861,7 +3875,7 @@ public class CompanyCustomization extends JFrame {
                     slipShowPaymentSummaryBox.isSelected(),
                     slipShowPaymentReferenceBox.isSelected(),
                     slipShowTakenByBox.isSelected(),
-                    slipShowSignaturesBox.isSelected()
+                    true, slipShowTeamMemberSignatureBox.isSelected(), slipShowCustomerSignatureBox.isSelected()
             );
         }
     }

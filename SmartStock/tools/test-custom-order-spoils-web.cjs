@@ -1,0 +1,32 @@
+const {chromium}=require(process.env.SMARTSTOCK_PLAYWRIGHT_MODULE || 'playwright');
+const fs=require('fs'),http=require('http'),assert=require('assert');
+const root=require('path').resolve(__dirname,'../src/mobile-web');
+let permissions=['RECORD_CUSTOM_ORDER_SPOILS','REVERSE_CUSTOM_ORDER_SPOILS'],failed=true,requests=[],reports=[];
+const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0e0AAAAASUVORK5CYII=','base64');
+const order={orderId:1,number:'CO-1001',customer:'Test Customer',status:'IN_PROGRESS'};
+const server=http.createServer(async(req,res)=>{if(req.url.startsWith('/api/v1/')){let body='';for await(const chunk of req)body+=chunk;const data=JSON.parse(body||'{}');let result={};
+ switch(req.url.slice(7)){
+ case '/session':result={csrfToken:'test',permissions};break;
+ case '/bootstrap':result={permissions,departments:[],vendors:[],itemTypes:[],brands:[],shelves:[]};break;
+ case '/spoils/search':result={orders:[order]};break;
+ case '/spoils/state':result={order,lines:[{lineId:11,item:'Water bottle',variant:'Black',notes:'Logo on front',production:'PRINTED',productType:'INVENTORY',stock:0,eligible:true}],reports};break;
+ case '/spoils/submit':requests.push({body:data,key:req.headers['idempotency-key']});if(failed){failed=false;res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:false,error:{message:'Simulated lost response'}}));return}reports=[{id:data.reportId,lineId:11,employee:'Employee',createdAt:'2026-10-01',reason:data.reason,stockDeducted:true,photos:[{id:'photo-1'}]}];result={id:data.reportId,shortage:true};break;
+ case '/spoils/photo':result={contentType:'image/png',bytesBase64:png.toString('base64')};break;
+ case '/spoils/reverse':reports[0].reversedAt='2026-10-01';reports[0].reversedBy='Manager';reports[0].reversalReason=data.reason;result={reversed:true};break;
+ default:throw Error('Unexpected API '+req.url);
+ }res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({ok:true,data:result}));return}
+ const pathname=new URL(req.url,'http://localhost').pathname;const file=root+(pathname==='/'?'/index.html':pathname);if(!fs.existsSync(file)){res.writeHead(404);res.end();return}res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');res.end(fs.readFileSync(file));});
+(async()=>{await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
+try{browser=await chromium.launch({headless:true,...(process.env.SMARTSTOCK_BROWSER_CHANNEL?{channel:process.env.SMARTSTOCK_BROWSER_CHANNEL}:{})});const page=await browser.newPage({viewport:{width:390,height:844}});let errors=[];page.on('pageerror',e=>errors.push(e.message));
+page.on('dialog',async d=>d.type()==='prompt'?d.accept('Wrong report'):d.accept());
+await page.goto(`http://127.0.0.1:${server.address().port}/?spoils=1`);await page.locator('#spoilOrders button').click();
+await page.locator('#spoilReason').fill('Print smudged');await page.locator('#spoilSubmit').click();await page.waitForFunction(()=>document.querySelector('#message').textContent.includes('photo'));assert.equal(requests.length,0);
+await page.locator('#spoilPhotos').setInputFiles({name:'spoil.png',mimeType:'image/png',buffer:png});await page.locator('#spoilPreviews img').waitFor();
+await page.locator('#spoilSubmit').click();await page.waitForFunction(()=>document.querySelector('#spoilSubmit').textContent.includes('Retry'));
+await page.reload();await page.locator('#spoilSubmit').click();await page.waitForFunction(()=>document.querySelector('#message').textContent.includes('below zero'));
+assert.equal(requests.length,2);assert.deepEqual(requests[0],requests[1]);
+await page.locator('#spoilHistory button',{hasText:'View spoil photo'}).click();await page.locator('#spoilHistory img').waitFor();
+if(process.env.SMARTSTOCK_SPOIL_SCREENSHOT)await page.screenshot({path:process.env.SMARTSTOCK_SPOIL_SCREENSHOT,fullPage:true});
+await page.locator('#spoilHistory button',{hasText:'Reverse spoil'}).click();await page.waitForFunction(()=>document.querySelector('#spoilHistory').textContent.includes('Wrong report'));
+assert.equal(errors.length,0,errors.join('\n'));console.log('Phone browser checks passed: mandatory photo, preview, shortage, persistent retry ID, internal viewing, manager reversal.');
+}finally{if(browser)await browser.close();server.close()}})().catch(e=>{console.error(e);server.close();process.exitCode=1});

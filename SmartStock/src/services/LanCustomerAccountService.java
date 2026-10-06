@@ -93,6 +93,8 @@ final class LanCustomerAccountService {
     static Map<String,Object> save(Connection c,JsonObject body,UUID deviceId,int userId)throws Exception{
         require(c,userId,"CUSTOMER_ACCOUNTS");Request r=parsed(body);String name=required(r.name(),200,"Customer name is required.");
         String phone=clean(r.phone(),100),email=clean(r.email(),320),notes=clean(r.accountNotes(),4000),photo=r.customerPhotoUrl()==null?null:clean(r.customerPhotoUrl(),2000);
+        try { phone=utils.CustomerPhoneNumber.normalize(phone); }
+        catch(IllegalArgumentException ex){throw rule(400,"VALIDATION_ERROR",ex.getMessage());}
         if(r.whatsappOptIn())try{ServerWhatsAppService.normalizePhone(phone);}catch(ServerWhatsAppService.Rule ex){throw rule(400,ex.code,ex.getMessage());}
         int currentYear=java.time.Year.now().getValue();Integer since=r.customerSince();if(r.customerId()==null&&since==null)since=currentYear;
         if(since!=null&&(since<1900||since>currentYear))throw rule(400,"VALIDATION_ERROR","Customer Since must be a four-digit year from 1900 through "+currentYear+".");

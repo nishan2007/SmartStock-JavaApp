@@ -38,9 +38,12 @@ public final class PriceTagPrintService {
     public static final int LAYOUT_HEIGHT = 500;
     private PriceTagPrintService() { }
 
-    public record PriceTagItem(String name, String size, String description, String sku, String barcode, BigDecimal price) {
+    public record PriceTagItem(String name, String size, String color, String description, String sku, String barcode, BigDecimal price) {
+        public PriceTagItem(String name, String size, String description, String sku, String barcode, BigDecimal price) {
+            this(name, size, "", description, sku, barcode, price);
+        }
         public PriceTagItem {
-            name = name == null ? "Item" : name.trim(); size = size == null ? "" : size.trim(); description = description == null ? "" : description.trim(); sku = sku == null ? "" : sku.trim(); barcode = barcode == null ? "" : barcode.trim();
+            name = name == null ? "Item" : name.trim(); size = size == null ? "" : size.trim(); color = color == null ? "" : color.trim(); description = description == null ? "" : description.trim(); sku = sku == null ? "" : sku.trim(); barcode = barcode == null ? "" : barcode.trim();
             price = price == null ? BigDecimal.ZERO : price;
         }
     }
@@ -78,12 +81,12 @@ public final class PriceTagPrintService {
                         if (!barcodeValue.isBlank()) element.drawImage(barcodeImage(barcodeValue, w, h), 0, 0, null);
                     } else {
                         String value = switch (id) {
-                            case "name" -> item.name(); case "size" -> item.size();
+                            case "name" -> item.name(); case "size" -> item.size(); case "color" -> item.color();
                             case "description" -> item.description();
                             case "price" -> formatPriceTagPrice(item.price(), Locale.getDefault());
                             case "sku" -> item.sku(); default -> "";
                         };
-                        drawText(element, value, area, id.equals("price") || id.equals("name") ? Font.BOLD : Font.PLAIN, false);
+                        drawText(element, value, area, id.equals("price") || id.equals("name") ? Font.BOLD : Font.PLAIN, !id.equals("price"));
                     }
                 } finally { element.dispose(); }
             }
@@ -95,7 +98,7 @@ public final class PriceTagPrintService {
     public static String encodeLayout(Map<String,Rectangle> layout){StringBuilder out=new StringBuilder();for(var e:layout.entrySet()){if(!out.isEmpty())out.append(';');Rectangle r=e.getValue();out.append(e.getKey()).append(':').append(r.x).append(',').append(r.y).append(',').append(r.width).append(',').append(r.height);}return out.toString();}
     public static boolean elementVisible(CompanyCustomizationManager.PriceTagTemplateSettings s, String id) {
         return switch (id) {
-            case "company" -> s.showCompany(); case "name" -> s.showName(); case "size" -> s.showSize();
+            case "company" -> s.showCompany(); case "name" -> s.showName(); case "size", "color" -> s.showSize();
             case "description" -> s.showDescription(); case "price" -> s.showPrice();
             case "barcode" -> s.showBarcode(); case "sku" -> s.showSku(); default -> false;
         };
@@ -119,9 +122,44 @@ public final class PriceTagPrintService {
                 "name:60,20,880,55,0;price:60,80,880,60,0;barcode:80,150,840,310,90;sku:60,465,880,25,0",
                 2, 0, rowGap);
     }
-    public static LinkedHashMap<String,Rectangle> defaultLayout(){LinkedHashMap<String,Rectangle> r=new LinkedHashMap<>();r.put("company",new Rectangle(45,25,350,65));r.put("name",new Rectangle(45,105,600,100));r.put("size",new Rectangle(45,215,260,45));r.put("description",new Rectangle(45,265,600,55));r.put("price",new Rectangle(720,80,235,130));r.put("barcode",new Rectangle(45,340,700,120));r.put("sku",new Rectangle(760,365,195,65));return r;}
+    public static LinkedHashMap<String,Rectangle> defaultLayout(){LinkedHashMap<String,Rectangle> r=new LinkedHashMap<>();r.put("company",new Rectangle(45,25,350,65));r.put("name",new Rectangle(45,105,600,100));r.put("size",new Rectangle(45,215,260,45));r.put("color",new Rectangle(325,215,320,45));r.put("description",new Rectangle(45,265,600,55));r.put("price",new Rectangle(720,80,235,130));r.put("barcode",new Rectangle(45,340,700,120));r.put("sku",new Rectangle(760,365,195,65));return r;}
     private static Rectangle scale(Rectangle r,int w,int h){return new Rectangle(r.x*w/LAYOUT_WIDTH,r.y*h/LAYOUT_HEIGHT,Math.max(1,r.width*w/LAYOUT_WIDTH),Math.max(1,r.height*h/LAYOUT_HEIGHT));}
-    private static void drawText(Graphics2D g,String value,Rectangle r,int style,boolean wrap){int size=Math.max(8,r.height);Font font=new Font("SansSerif",style,size);if(!wrap){while(size>8){font=new Font("SansSerif",style,size);if(g.getFontMetrics(font).stringWidth(value)<=r.width)break;size--;}}else{size=Math.max(8,Math.min(size,r.width/Math.max(1,value.length()/2)));font=new Font("SansSerif",style,size);}g.setFont(font);g.setColor(Color.BLACK);if(wrap)drawWrapped(g,value,r.x,r.y,r.width,Math.max(1,r.height/g.getFontMetrics().getHeight()));else g.drawString(value,r.x,r.y+Math.min(r.height,g.getFontMetrics().getAscent()));}
+    private static void drawText(Graphics2D g,String value,Rectangle r,int style,boolean wrap){
+        TextFit fit=fitText(g,value,r,style,wrap);g.setFont(new Font("SansSerif",style,fit.fontSize()));g.setColor(Color.BLACK);
+        FontMetrics fm=g.getFontMetrics();int y=r.y+fm.getAscent();
+        for(String line:fit.lines()){g.drawString(line,r.x,y);y+=fm.getHeight();}
+    }
+    static TextFit fitText(Graphics2D g,String value,Rectangle r,int style,boolean wrap){
+        String text=value==null?"":value.strip();
+        for(int size=Math.max(8,Math.min(96,r.height));size>=8;size--){
+            Font font=new Font("SansSerif",style,size);FontMetrics fm=g.getFontMetrics(font);
+            int maxLines=wrap?Math.max(1,r.height/fm.getHeight()):1;
+            List<String> lines=wrapText(text,fm,r.width,maxLines);
+            if(lines!=null)return new TextFit(size,lines);
+        }
+        Font font=new Font("SansSerif",style,8);FontMetrics fm=g.getFontMetrics(font);
+        List<String> clipped=wrapText(text,fm,r.width,Math.max(1,r.height/fm.getHeight()),true);
+        return new TextFit(8,clipped==null?List.of(""):clipped);
+    }
+    private static List<String> wrapText(String text,FontMetrics fm,int width,int maxLines){return wrapText(text,fm,width,maxLines,false);}
+    private static List<String> wrapText(String text,FontMetrics fm,int width,int maxLines,boolean clip){
+        if(text.isEmpty())return List.of("");List<String> lines=new ArrayList<>();int start=0;
+        while(start<text.length()&&lines.size()<maxLines){
+            while(start<text.length()&&Character.isWhitespace(text.charAt(start)))start++;
+            if(start>=text.length())break;
+            int end=start,best=start,lastSpace=-1;
+            while(end<text.length()){
+                int next=end+1;if(fm.stringWidth(text.substring(start,next))>width)break;
+                best=next;if(Character.isWhitespace(text.charAt(end)))lastSpace=end;end=next;
+            }
+            if(best==start)best=Math.min(text.length(),start+1);
+            int lineEnd=best<text.length()&&lastSpace>=start?lastSpace:best;
+            lines.add(text.substring(start,lineEnd).stripTrailing());start=lineEnd;
+        }
+        if(start<text.length()&&!clip)return null;
+        return lines.isEmpty()?List.of(""):lines;
+    }
+    static record TextFit(int fontSize,List<String> lines){}
     private static void drawLogo(Graphics2D g, BufferedImage logo, Rectangle r){if(logo==null)return;double scale=Math.min((double)r.width/logo.getWidth(),(double)r.height/logo.getHeight());int w=(int)(logo.getWidth()*scale),h=(int)(logo.getHeight()*scale);g.drawImage(logo,r.x+(r.width-w)/2,r.y+(r.height-h)/2,w,h,null);}
 
     public static void preview(Component parent, PriceTagItem item, CompanyCustomizationManager.PriceTagTemplateSettings settings) {
@@ -150,6 +188,12 @@ public final class PriceTagPrintService {
         PageFormat page = pageFormat(job, settings); setTagPages(job, images, settings, page);
         PrintRequestAttributeSet attrs = new HashPrintRequestAttributeSet(); attrs.add(new MediaPrintableArea(0, 0, (float) settings.rowWidthInches(), (float) settings.rowPitchInches(), MediaPrintableArea.INCH));
         if (job.printDialog(attrs)) {
+            PrintService selected = job.getPrintService();
+            if (selected != null && isCt221b(selected.getName())) {
+                byte[] jobBytes = formatCt221bGapJob(arrangeRawRows(images, settings), settings);
+                selected.createPrintJob().print(new SimpleDoc(jobBytes, DocFlavor.BYTE_ARRAY.AUTOSENSE, null), null);
+                return;
+            }
             page = pageFormat(job, settings);
             setTagPages(job, images, settings, page);
             job.print();
@@ -169,7 +213,7 @@ public final class PriceTagPrintService {
         List<BufferedImage> images = new ArrayList<>();
         for (PriceTagItem item : items) images.add(render(item, settings));
         if (isCt221b(labelPrinter.systemName()) || isCt221b(service.getName())) {
-            byte[] jobBytes = formatCt221bGapJob(arrangeRows(images, settings), settings);
+            byte[] jobBytes = formatCt221bGapJob(arrangeRawRows(images, settings), settings);
             service.createPrintJob().print(new SimpleDoc(jobBytes, DocFlavor.BYTE_ARRAY.AUTOSENSE, null), null);
             return "Price tags submitted to CT221B label printer " + service.getName()
                     + " with gap-hole calibration.";
@@ -315,13 +359,20 @@ public final class PriceTagPrintService {
     }
 
     static List<BufferedImage> arrangeRows(List<BufferedImage> labels, CompanyCustomizationManager.PriceTagTemplateSettings settings) {
+        return arrangeRows(labels, settings, true);
+    }
+    static List<BufferedImage> arrangeRawRows(List<BufferedImage> labels, CompanyCustomizationManager.PriceTagTemplateSettings settings) {
+        return arrangeRows(labels, settings, false);
+    }
+    private static List<BufferedImage> arrangeRows(List<BufferedImage> labels, CompanyCustomizationManager.PriceTagTemplateSettings settings, boolean includeRowGap) {
         List<BufferedImage> rows = new ArrayList<>();
         int labelWidth = Math.max(1, (int) Math.round(settings.widthInches() * RENDER_SCALE));
         int height = Math.max(1, (int) Math.round(settings.heightInches() * RENDER_SCALE));
         int gap = (int) Math.round(settings.columnGapInches() * RENDER_SCALE);
         int rowWidth = labelWidth * settings.labelsAcross() + gap * (settings.labelsAcross() - 1);
         for (int first = 0; first < labels.size(); first += settings.labelsAcross()) {
-            BufferedImage row = new BufferedImage(rowWidth, height + (int) Math.round(settings.rowGapInches() * RENDER_SCALE), BufferedImage.TYPE_INT_RGB);
+            int rowGap = includeRowGap ? (int) Math.round(settings.rowGapInches() * RENDER_SCALE) : 0;
+            BufferedImage row = new BufferedImage(rowWidth, height + rowGap, BufferedImage.TYPE_INT_RGB);
             Graphics2D g = row.createGraphics();
             try {
                 g.setColor(Color.WHITE); g.fillRect(0, 0, rowWidth, row.getHeight());

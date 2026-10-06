@@ -1,0 +1,24 @@
+// Local UI rehearsal only. Synthetic data, no real accounts, email, payments or store writes.
+import http from 'node:http';import {readFile} from 'node:fs/promises';import path from 'node:path';import {fileURLToPath} from 'node:url';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../src/storefront-web');
+const stores=[{id:1,name:'Deckers · Preview store',address:'Local demonstration — synthetic products',timezone:'America/Guyana'},{id:2,name:'Deckers · Second preview store',address:'Local demonstration — second location',timezone:'America/Guyana'}];
+const products=[['Everyday cotton tee','Clothing',2400,'A comfortable everyday staple.','M','Sand'],['Everyday notebook','Stationery',950,'Room for your next good idea.','A5','Ivory'],['Cotton tote','Accessories',1800,'For the things that come along.','One size','Natural'],['Daily essentials set','Home',3200,'A small refresh for the everyday.','Set','']].map(([name,category,price,description,size,color],i)=>({id:i+1,name,category,price,description,size,color,image:'',available:12,featured:i<2}));
+const browseOnly=process.env.STOREFRONT_PREVIEW_BROWSE_ONLY==='true';
+let orders=[];
+const server=http.createServer(async(req,res)=>{try{
+ const url=new URL(req.url,'http://127.0.0.1');if(url.pathname==='/shop/image'&&url.searchParams.get('kind')==='logo'){res.writeHead(200,{'Content-Type':'image/png','Cache-Control':'no-store'});res.end(await readFile(path.resolve(root,'../Images/Deckers.png')));return;}if(url.pathname.startsWith('/shop/api/v1/')){
+ let raw='';for await(const chunk of req)raw+=chunk;const body=raw?JSON.parse(raw):{},route=url.pathname.split('/v1/')[1];let result={};
+ const catalog={locationId:body.storeId||1,capturedAt:new Date().toISOString(),browseOnly,branding:{name:"Deckers",logo:"preview-bundled-logo",mottoLine1:"Company motto preview",mottoLine2:"Your saved company details appear here.",phoneLine1:"Preview contact — not a real number"},store:stores.find(s=>s.id===body.storeId)||stores[0],products:products.map(p=>({...p,canOrder:!browseOnly})),settings:{enabled:!browseOnly,currency:'GYD',pickup_hours:48}};
+ if(browseOnly&&!['stores','catalog'].includes(route)){res.writeHead(503,{'Content-Type':'application/json'});res.end(JSON.stringify({message:'Online accounts and requests are not available yet.'}));return;}
+ if(route==='stores')result={stores};else if(route==='catalog')result=catalog;else if(route==='auth/session'||route==='auth/login')result={email:'preview@example.test',csrf:'local-preview-only'};
+ else if(route==='quote'){const subtotal=body.lines.reduce((s,l)=>s+products.find(p=>p.id===l.id).price*l.quantity,0);result={subtotal,discount:0,vat:subtotal*.14,total:subtotal*1.14,currency:'GYD',capturedAt:catalog.capturedAt};}
+ else if(route==='checkout'){result=orders.find(o=>o.order_id===body.orderId)||{order_id:body.orderId,status:'CONFIRMED',total:body.expectedTotal,created_at:new Date().toISOString(),location_id:body.storeId,quote:{currency:'GYD',lines:body.lines.map(l=>({...l,name:products.find(p=>p.id===l.id).name,price:products.find(p=>p.id===l.id).price}))}};if(!orders.includes(result))orders.push(result);}
+ else if(route==='account')result={customer:{name:'Preview Customer',email:'preview@example.test',balance:0},capturedAt:catalog.capturedAt,orders,stores:stores.map(s=>({locationId:s.id,name:s.name,currency:'GYD',capturedAt:catalog.capturedAt,balance:0})),receipts:[{id:1,number:'PREVIEW-0001',locationId:1,storeName:stores[0].name,currency:'GYD',capturedAt:catalog.capturedAt,date:catalog.capturedAt,total:2736,subtotal:2400,discount:0,vat:336,paid:2736,returned:0,status:'PAID',saleStatus:'COMPLETED',method:'CARD',lines:[{name:'Everyday cotton tee',quantity:1,price:2400,discount:0}]}]};
+ else if(route==='auth/logout')result={ok:true};else{res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({message:'This preview does not send email or create accounts.'}));return;}
+ res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(result));return;
+ }
+ const publicImages=new Set(['/shop/hero-3d.jpg','/shop/new-3d.jpg','/shop/new-apparel.jpg','/shop/services-editorial.jpg']);
+ const relative=url.pathname.startsWith('/shop/assets/')?url.pathname.slice(6):publicImages.has(url.pathname)?url.pathname.slice('/shop/'.length):'index.html';const file=path.resolve(root,relative);if(!file.startsWith(root+path.sep))throw Error('Invalid path');let bytes=await readFile(file);
+ res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.jpg')?'image/jpeg':'text/html','Cache-Control':'no-store'});res.end(bytes);
+ }catch{res.writeHead(500);res.end('Preview unavailable');}});
+server.listen(5180,'127.0.0.1',()=>console.log('Synthetic storefront preview: http://127.0.0.1:5180/shop/'));

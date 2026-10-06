@@ -38,6 +38,17 @@ public class CustomOrderSlipPrinter {
             return;
         }
 
+        try {
+            if (HardwareSettingsManager.getDefaultOrderSlipPrinterDestination() == HardwareSettingsManager.ReceiptPrinterDestination.ETHERNET) {
+                var ethernet = HardwareSettingsManager.getNativeEthernetPrinterSettings();
+                if (!ethernet.enabled()) throw new PrintException("Enable Native Ethernet ESC/POS in Hardware Settings to print order slips.");
+                NativeEscPosTransport.send(CustomOrderSlipFormatter.formatEscPos40Column(data,
+                        CompanyCustomizationManager.loadReceiptSettings(), slipSettings), ethernet);
+                return;
+            }
+        } catch (java.io.IOException | IllegalArgumentException ex) {
+            throw new PrintException(ex);
+        }
         PrinterSelection printerSelection = resolvePrinterSelection();
         PrintService service = printerSelection.service();
         if (service == null) {

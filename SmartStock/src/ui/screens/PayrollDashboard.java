@@ -59,6 +59,7 @@ public class PayrollDashboard extends JFrame {
     private final List<TimeClockRow> renderedRows = new ArrayList<>();
     private boolean updatingPayPeriodOptions;
     private boolean updatingEmployeeOptions;
+    private long pendingManualClockId;
 
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("MM/dd/yyyy");
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("MM/dd/yyyy h:mm a");
@@ -92,6 +93,7 @@ public class PayrollDashboard extends JFrame {
         JButton markPaidButton = new JButton("Mark Selected Paid");
         JButton reviewsButton = new JButton("Review Automatic Clock-Outs");
         JButton correctSessionButton = new JButton("Correct Selected Session");
+        JButton manualHoursButton = new JButton("Add Manual Hours");
         JButton refreshButton = new JButton("Refresh");
         JPanel leftFilterPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         leftFilterPanel.setOpaque(false);
@@ -111,7 +113,7 @@ public class PayrollDashboard extends JFrame {
         searchPanel.setOpaque(false);
         searchPanel.add(createFilterLabel("Search:"), BorderLayout.WEST);
         searchPanel.add(searchField, BorderLayout.CENTER);
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        JPanel buttonPanel = new JPanel(new GridLayout(0, 4, 8, 8));
         buttonPanel.setOpaque(false);
         DeckersSwing.styleUtilityButton(generateCurrentButton, DeckersPalette.LIME);
         DeckersSwing.styleUtilityButton(bonusSelectedButton, DeckersPalette.YELLOW);
@@ -119,6 +121,7 @@ public class PayrollDashboard extends JFrame {
         DeckersSwing.styleUtilityButton(markPaidButton, DeckersPalette.CORAL);
         DeckersSwing.styleUtilityButton(reviewsButton, DeckersPalette.ORANGE);
         DeckersSwing.styleUtilityButton(correctSessionButton, DeckersPalette.MAGENTA);
+        DeckersSwing.styleUtilityButton(manualHoursButton, DeckersPalette.LIME);
         DeckersSwing.styleUtilityButton(refreshButton, DeckersPalette.PURPLE);
         buttonPanel.add(generateCurrentButton);
         buttonPanel.add(bonusSelectedButton);
@@ -127,6 +130,7 @@ public class PayrollDashboard extends JFrame {
         if (PermissionManager.hasPermission("TIME_CLOCK_MANAGEMENT")) {
             buttonPanel.add(reviewsButton);
             buttonPanel.add(correctSessionButton);
+            buttonPanel.add(manualHoursButton);
         }
         buttonPanel.add(refreshButton);
 
@@ -141,11 +145,12 @@ public class PayrollDashboard extends JFrame {
         gbc.fill = GridBagConstraints.HORIZONTAL;
         filterPanel.add(searchPanel, gbc);
 
-        gbc.gridx = 2;
-        gbc.weightx = 0;
-        gbc.fill = GridBagConstraints.NONE;
-        gbc.insets = new Insets(0, 0, 0, 0);
-        gbc.anchor = GridBagConstraints.EAST;
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        gbc.gridwidth = 2;
+        gbc.weightx = 1;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.insets = new Insets(12, 0, 0, 0);
         filterPanel.add(buttonPanel, gbc);
 
         JPanel headerPanel = new JPanel(new BorderLayout(0, 14));
@@ -234,6 +239,7 @@ public class PayrollDashboard extends JFrame {
         markPaidButton.addActionListener(e -> markSelectedPayrollPaid());
         reviewsButton.addActionListener(e -> showAutomaticReviews());
         correctSessionButton.addActionListener(e -> correctSelectedSession());
+        manualHoursButton.addActionListener(e -> loadManualHoursEmployees(manualHoursButton));
         refreshButton.addActionListener(e -> { SessionDataCache.invalidate("payroll:"); loadPayroll(); });
         searchField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             @Override
@@ -288,6 +294,19 @@ public class PayrollDashboard extends JFrame {
         populatePayPeriods();
         populateEmployees();
         renderTables();
+        if (pendingManualClockId != 0) {
+            for (int i = 0; i < renderedRows.size(); i++) {
+                if (renderedRows.get(i).clockId() == pendingManualClockId) {
+                    int viewRow = detailTable.convertRowIndexToView(i);
+                    if (viewRow >= 0) {
+                        detailTable.setRowSelectionInterval(viewRow, viewRow);
+                        detailTable.scrollRectToVisible(detailTable.getCellRect(viewRow, 0, true));
+                        pendingManualClockId = 0;
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     private void populatePayPeriods() {
@@ -534,6 +553,113 @@ public class PayrollDashboard extends JFrame {
         }
     }
 
+    private void loadManualHoursEmployees(JButton trigger) {
+        if (!PermissionManager.requirePermission("TIME_CLOCK_MANAGEMENT", this, "Add Manual Hours")) return;
+        trigger.setEnabled(false);
+        new SwingWorker<List<services.ManualTimeClockService.Employee>, Void>() {
+            @Override protected List<services.ManualTimeClockService.Employee> doInBackground() throws Exception {
+                return services.LanApiClient.loadManualTimeClockEmployees();
+            }
+            @Override protected void done() {
+                trigger.setEnabled(true);
+                try {
+                    List<services.ManualTimeClockService.Employee> employees=get();
+                    if(employees.isEmpty()) { JOptionPane.showMessageDialog(PayrollDashboard.this,"No eligible employees were found for this store."); return; }
+                    showManualHoursDialog(employees);
+                } catch(Exception ex) {
+                    JOptionPane.showMessageDialog(PayrollDashboard.this,manualHoursError(ex),"Unable to Load Employees",JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }.execute();
+    }
+
+    private void showManualHoursDialog(List<services.ManualTimeClockService.Employee> employees) {
+        JDialog dialog=new JDialog(this,"Add Manual Hours",true);
+        JComboBox<services.ManualTimeClockService.Employee> employee=new JComboBox<>(employees.toArray(services.ManualTimeClockService.Employee[]::new));
+        styleComboBox(employee);
+        EmployeeOption selected=(EmployeeOption)employeeBox.getSelectedItem();
+        if(selected!=null) for(var option:employees) if(option.userId()==selected.userId()) employee.setSelectedItem(option);
+        JTextField[] fields=new JTextField[6];
+        String[] labels={"Clock in (yyyy-MM-dd HH:mm)","Lunch start (optional)","Lunch end (optional)","Break start (optional)","Break end (optional)","Clock out (yyyy-MM-dd HH:mm)"};
+        JPanel form=new JPanel(new GridLayout(0,2,8,8));
+        form.setBorder(new EmptyBorder(16,16,8,16));
+        form.add(new JLabel("Employee")); form.add(employee);
+        for(int i=0;i<fields.length;i++) { fields[i]=correctionField(null); form.add(new JLabel(labels[i])); form.add(fields[i]); }
+        JTextArea reason=new JTextArea("Work away from store",3,28);
+        reason.setLineWrap(true); reason.setWrapStyleWord(true);
+        form.add(new JLabel("Required reason")); form.add(new JScrollPane(reason));
+        JLabel hint=new JLabel("Use yyyy-MM-dd HH:mm for every entered time. Store timezone: "+managers.SessionManager.getCurrentLocationTimezone());
+        hint.setBorder(new EmptyBorder(4,16,4,16));
+        JButton save=new JButton("Save"), cancel=new JButton("Cancel");
+        DeckersSwing.styleUtilityButton(save,DeckersPalette.LIME);
+        DeckersSwing.styleUtilityButton(cancel,DeckersPalette.CORAL);
+        JPanel actions=new JPanel(new FlowLayout(FlowLayout.RIGHT)); actions.add(save); actions.add(cancel);
+        JPanel lower=new JPanel(new BorderLayout()); lower.add(hint,BorderLayout.NORTH); lower.add(actions,BorderLayout.SOUTH);
+        dialog.add(form,BorderLayout.CENTER); dialog.add(lower,BorderLayout.SOUTH);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        cancel.addActionListener(e->dialog.dispose());
+        final Object[] previousPayload={null};
+        final String[] retryKey={null};
+        save.addActionListener(e->{
+            TimeClockAutoCloseService.Correction entry;
+            var chosen=(services.ManualTimeClockService.Employee)employee.getSelectedItem();
+            try {
+                LocalDateTime[] values=new LocalDateTime[6];
+                for(int i=0;i<fields.length;i++) {
+                    values[i]=parseManualHoursTime(fields[i].getText());
+                }
+                entry=new TimeClockAutoCloseService.Correction(values[0],values[1],values[2],values[3],values[4],values[5],reason.getText());
+                services.ManualTimeClockService.validate(entry);
+            } catch(java.time.format.DateTimeParseException ex) {
+                JOptionPane.showMessageDialog(dialog,"Use a valid date and time in yyyy-MM-dd HH:mm format for every populated field.","Check Hours",JOptionPane.ERROR_MESSAGE); return;
+            } catch(SQLException ex) {
+                JOptionPane.showMessageDialog(dialog,ex.getMessage(),"Check Hours",JOptionPane.ERROR_MESSAGE); return;
+            }
+            Object payload=List.of(chosen.userId(),entry);
+            if(!payload.equals(previousPayload[0])) { previousPayload[0]=payload; retryKey[0]=java.util.UUID.randomUUID().toString(); }
+            String key=retryKey[0];
+            save.setEnabled(false); cancel.setEnabled(false); employee.setEnabled(false); reason.setEditable(false);
+            for(var field:fields) field.setEditable(false);
+            dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+            new SwingWorker<Long,Void>() {
+                @Override protected Long doInBackground() throws Exception { return services.LanApiClient.createManualTimeClock(chosen.userId(),entry,key); }
+                @Override protected void done() {
+                    try {
+                        long clockId=get();
+                        pendingManualClockId=clockId;
+                        dialog.dispose();
+                        searchField.setText("");
+                        if(payPeriodBox.getItemCount()>0) payPeriodBox.setSelectedIndex(0);
+                        if(employeeBox.getItemCount()>0) employeeBox.setSelectedIndex(0);
+                        tabbedPane.setSelectedIndex(1);
+                        SessionDataCache.invalidate("payroll:"); SessionDataCache.invalidate("time-clock");
+                        loadPayroll();
+                        JOptionPane.showMessageDialog(PayrollDashboard.this,"Manual hours saved for "+chosen.name()+". The new session will be selected in Time Records.");
+                    } catch(Exception ex) {
+                        JOptionPane.showMessageDialog(dialog,manualHoursError(ex),"Unable to Save Hours",JOptionPane.ERROR_MESSAGE);
+                    } finally {
+                        save.setEnabled(true); cancel.setEnabled(true); employee.setEnabled(true); reason.setEditable(true);
+                        for(var field:fields) field.setEditable(true);
+                        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+                    }
+                }
+            }.execute();
+        });
+        dialog.getRootPane().setDefaultButton(save);
+        ui.helpers.ThemeManager.applyToWindow(dialog);
+        dialog.pack(); dialog.setLocationRelativeTo(this); dialog.setVisible(true);
+    }
+
+    private static String manualHoursError(Exception error) {
+        Throwable cause=error instanceof java.util.concurrent.ExecutionException && error.getCause()!=null?error.getCause():error;
+        return cause.getMessage()==null?"The request could not be completed. Please try again.":cause.getMessage();
+    }
+
+    static LocalDateTime parseManualHoursTime(String text) {
+        String value=text==null?"":text.trim();
+        return value.isEmpty()?null:LocalDateTime.parse(value,DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm")
+                .withResolverStyle(java.time.format.ResolverStyle.STRICT));
+    }
     private void correctSelectedSession() {
         if (!PermissionManager.requirePermission("TIME_CLOCK_MANAGEMENT", this, "Correct Time-Clock Session")) return;
         if (tabbedPane.getSelectedIndex() != 1) {

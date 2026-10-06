@@ -1,0 +1,3 @@
+Quotation and invoice descriptions now use 57% of the line table. Quantity uses 4%; unit price, original total, discount, and final amount share the remaining space.
+
+Bill To and signature labels now have independent widths so they remain readable with the narrower quantity column. Subtotal and cash-rounded Grand Total remain stacked. Includes the changes shipped in 1.0.248.

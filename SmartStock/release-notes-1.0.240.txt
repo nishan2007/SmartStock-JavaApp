@@ -1,0 +1,6 @@
+SmartStock 1.0.240
+- Shows a separate Updating SmartStock window while the application is closed for installation.
+- Displays measured percentages for individual files during extraction and copying, and animated progress during service operations and other installation steps.
+- Shows readable update failures, recovery details and the updater log location.
+- Includes the 1.0.239 register connection fixes and current application improvements.
+Update store servers before registers. Live server/service, register connection, printer, cash drawer and NFC checks remain separate deployment checks. This release contains only the Windows application update; the full installer is unchanged.

@@ -1,0 +1,9 @@
+Permanent authenticated installer downloads
+
+- Add a dedicated installer authenticator on the loopback website server.
+- Verify the SmartStock account password and active store membership for users from every participating store.
+- Keep installer authentication separate from register sessions and the register API.
+- Publish verified installer packages to the permanent Deckers download portal through the release workflow.
+
+Includes the current register connection and network server discovery fixes.
+Portal activation requires configured store origins and dedicated installer authentication secrets.

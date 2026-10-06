@@ -1,0 +1,7 @@
+SmartStock 1.0.230
+
+Custom orders now support customer-supplied items. Select Customer Item to enter the item type, color, size, and brand, then add the requested print add-ons. Only item type is required.
+
+Customer items have a zero base price and do not deduct store inventory. Edit Details lets staff revise the description before adding the line. Item details appear in the order review, saved order, and order slip.
+
+The store server validates customer-item pricing and requires at least one add-on. Update both the server and registers to use this workflow.

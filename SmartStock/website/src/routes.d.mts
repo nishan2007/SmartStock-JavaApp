@@ -1,0 +1,10 @@
+export type Route='home'|'services'|'business'|'about'|'create'|'made'|'project'|'product'|'shop'|'bag'|'checkout'|'account'|'login'|'stores'|'confirmation'|'help';
+export function routeFromHash(hash:string,transient?:boolean):Route;
+export function routeFromLocation(pathname:string,hash:string,transient?:boolean):Route;
+export function projectFromPath(pathname:string):{storeId:number;id:string}|null;
+export function productFromPath(pathname:string):{storeId:number;id:number}|null;
+export function editorialFromPath(pathname:string):'services'|'business'|'about'|'';
+export function serviceFromPath(pathname:string):string;
+export function topicFromHash(hash:string):string;
+export function projectFromHash(hash:string):string;
+export function createProjectFromHash(hash:string):string;

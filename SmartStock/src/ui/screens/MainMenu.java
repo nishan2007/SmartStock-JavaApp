@@ -70,6 +70,7 @@ public class MainMenu extends JFrame {
     private final JButton departmentListButton;
     private final JButton vendorListButton;
     private final JButton viewSalesButton;
+    private final JButton onlineOrdersButton;
     private final JButton customerAccountsButton;
     private final JButton customerTransactionHistoryButton;
     private final JButton invoicesButton;
@@ -90,6 +91,7 @@ public class MainMenu extends JFrame {
     private final JButton maintenanceManagementButton;
     private final JButton companyCustomizationButton;
     private final JButton workstationPreferencesButton;
+    private final JButton webStatusButton;
     private final JButton logoutButton;
     private final Set<String> urgentPopupKeysShown = new HashSet<>();
     private final List<MenuIconRequest> pendingMenuIcons = new ArrayList<>();
@@ -146,6 +148,7 @@ public class MainMenu extends JFrame {
         customOrderItemsButton = createMenuButtonLazy("Custom Order Items", "Manage printable items and stock levels", "src/ICONS/MainMenuCustomOrderItems.png");
         departmentListButton = createMenuButtonLazy("Departments", "Manage item departments", "src/ICONS/MainMenuDepartments.png");
         vendorListButton = createMenuButtonLazy("Vendors", "Manage product vendors", "src/ICONS/MainMenuVendors.png");
+        onlineOrdersButton = createMenuButtonLazy("Online pickup orders", "Prepare and collect website orders", "src/ICONS/MainMenuOrders.png");
         viewSalesButton = createMenuButtonLazy("View Sales", "Review previous transactions", "src/ICONS/MainMenuViewSales.png");
         customerAccountsButton = createMenuButtonLazy("Customers", "Manage customer credit accounts", "src/ICONS/MainMenuCustomers.png");
         customerTransactionHistoryButton = createMenuButtonLazy("Customer History", "Open full transaction history for a customer", "src/ICONS/MainMenuCustomerHistory.png");
@@ -167,6 +170,7 @@ public class MainMenu extends JFrame {
         maintenanceManagementButton = createMenuButtonLazy("Maintenance", "Manage machines, parts, service logs, and problem tickets", "src/ICONS/MainMenuMaintenance.png");
         companyCustomizationButton = createMenuButtonLazy("Company Preferences", "Company identity and receipts", "src/ICONS/MainMenuCompanyPreferences.png");
         workstationPreferencesButton = createMenuButtonLazy("Workstation Preferences", "Device-level workstation and printing behavior", "src/ICONS/MainMenuWorkstationPreferences.png");
+        webStatusButton = createMenuButtonLazy("Web Status", "Website health, tunnels, uptime and service controls", "src/ICONS/MainMenuWebStatus.png");
         logoutButton = new JButton("Logout");
         logoutButton.setFont(new Font("SansSerif", Font.BOLD, 14));
         logoutButton.setFocusPainted(false);
@@ -202,7 +206,7 @@ public class MainMenu extends JFrame {
                 makeSaleButton,
                 returnSaleButton,
                 invoicesButton,
-                viewSalesButton
+                viewSalesButton, onlineOrdersButton
         ));
         leftSectionStackPanel.add(Box.createVerticalStrut(18));
         leftSectionStackPanel.add(createSectionPanel(
@@ -245,7 +249,8 @@ public class MainMenu extends JFrame {
                 machineManagementButton,
                 partsManagementButton,
                 companyCustomizationButton,
-                workstationPreferencesButton
+                workstationPreferencesButton,
+                webStatusButton
         ));
 
         JPanel operationsColumnPanel = new JPanel(new BorderLayout());
@@ -1218,6 +1223,7 @@ public class MainMenu extends JFrame {
         setMenuButtonAuthorized(departmentListButton, canDepartmentManagement);
         setMenuButtonAuthorized(vendorListButton, canVendorManagement);
         setMenuButtonAuthorized(viewSalesButton, canViewSales);
+        setMenuButtonAuthorized(onlineOrdersButton, PermissionManager.hasPermission("MAKE_SALE"));
         setMenuButtonAuthorized(customerAccountsButton, canCustomerAccounts);
         setMenuButtonAuthorized(customerTransactionHistoryButton, canCustomerAccounts);
         setMenuButtonAuthorized(invoicesButton, canQuotationsInvoices);
@@ -1238,6 +1244,7 @@ public class MainMenu extends JFrame {
         setMenuButtonAuthorized(maintenanceManagementButton, canMaintenanceManagement);
         setMenuButtonAuthorized(companyCustomizationButton, canCompanyCustomization);
         setMenuButtonAuthorized(workstationPreferencesButton, canWorkstationPreferences);
+        setMenuButtonAuthorized(webStatusButton, canDeviceManagement);
 
         if (navigationInProgress) {
             for (JButton button : menuButtons()) {
@@ -1275,13 +1282,13 @@ public class MainMenu extends JFrame {
                 balanceSheetButton, ordersManagerDashboardButton, reportsButton,
                 enterInventoryButton, receivingHistoryButton, storeTransferButton,
                 customOrderItemsButton, departmentListButton, vendorListButton,
-                viewSalesButton, customerAccountsButton, customerTransactionHistoryButton,
+                viewSalesButton, onlineOrdersButton, customerAccountsButton, customerTransactionHistoryButton,
                 invoicesButton, customOrdersButton, ordersButton, viewInventoryButton,
                 priceTagPrintingButton, addItemButton, editItemsButton, timeClockButton,
                 payrollDashboardButton, weeklyScheduleButton, employeeManagementButton,
                 rolesPermissionsButton, deviceManagementButton, machineManagementButton,
                 partsManagementButton, maintenanceManagementButton,
-                companyCustomizationButton, workstationPreferencesButton
+                companyCustomizationButton, workstationPreferencesButton, webStatusButton
         };
     }
 
@@ -1379,6 +1386,7 @@ public class MainMenu extends JFrame {
             }
             NavigationManager.openVendorList(this);
         });
+        onlineOrdersButton.addActionListener(e -> ui.screens.companyprefs.StorefrontPanel.openOrders(this));
         viewSalesButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("VIEW_SALES", this, "View Sales")) {
                 return;
@@ -1507,6 +1515,10 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openCompanyCustomization(this);
+        });
+        webStatusButton.addActionListener(e -> {
+            if (PermissionManager.requirePermission("DEVICE_MANAGEMENT",this,"Web Status"))
+                new WebStatusDialog(this).setVisible(true);
         });
         workstationPreferencesButton.addActionListener(e -> {
             if (!requireWorkstationPreferencesPermission()) {

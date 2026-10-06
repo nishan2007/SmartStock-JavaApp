@@ -1,0 +1,9 @@
+SmartStudio 0.1.3
+
+- Drop a PNG or JPEG into Original image to load it, including connected network-drive files.
+- Accept image drags from other applications within the existing image limits.
+- Copy result to paste into applications that accept images, with transparent PNG data available to compatible editors.
+- Keep original result dimensions and exclude preview background colours from copied images.
+- Keep image loading in the background and disable result actions until processing finishes.
+
+Requires the existing SmartStock Studio server connection. This release contains only SmartStudio changes.

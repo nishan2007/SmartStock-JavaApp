@@ -2063,6 +2063,8 @@ CREATE TABLE public.company_customization (
     custom_order_slip_show_payment_summary boolean DEFAULT true CONSTRAINT company_customization_custom_order_slip_show_payment_s_not_null NOT NULL,
     custom_order_slip_show_payment_reference boolean DEFAULT true CONSTRAINT company_customization_custom_order_slip_show_payment_r_not_null NOT NULL,
     custom_order_slip_show_taken_by boolean DEFAULT true NOT NULL,
+    custom_order_slip_show_team_member_signature boolean,
+    custom_order_slip_show_customer_signature boolean,
     custom_order_slip_show_signatures boolean DEFAULT true CONSTRAINT company_customization_custom_order_slip_show_signature_not_null NOT NULL,
     badge_template_company_name text DEFAULT 'SmartStock'::text NOT NULL,
     badge_template_logo_url text DEFAULT ''::text NOT NULL,
@@ -2454,6 +2456,7 @@ CREATE TABLE public.custom_order_item_variants (
     brand_id integer,
     barcode text,
     image_url text,
+    additional_image_urls jsonb DEFAULT '[]'::jsonb NOT NULL,
     fixed_price numeric(12,2),
     quantity_on_hand numeric(12,2) DEFAULT 0 NOT NULL,
     sold_quantity numeric(12,2) DEFAULT 0 NOT NULL,
@@ -2496,6 +2499,7 @@ CREATE TABLE public.custom_order_items (
     barcode text,
     description text,
     image_url text,
+    additional_image_urls jsonb DEFAULT '[]'::jsonb NOT NULL,
     category_id integer,
     item_type_id integer,
     brand_id integer,
@@ -3310,6 +3314,7 @@ CREATE TABLE public.devices (
     receipt_device_code text DEFAULT '0001'::text NOT NULL,
     allow_sales boolean DEFAULT true NOT NULL,
     allow_orders boolean DEFAULT true NOT NULL,
+    allow_studio boolean DEFAULT false NOT NULL,
     access_mode text DEFAULT 'CLIENT'::text NOT NULL,
     session_count bigint DEFAULT 0 NOT NULL,
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -4402,6 +4407,7 @@ CREATE TABLE public.lan_api_sessions (
     last_seen_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     revoked_at timestamp with time zone,
     auth_source text NOT NULL,
+    client_application text DEFAULT 'smartstock' NOT NULL,
     CONSTRAINT lan_api_sessions_auth_source_check CHECK ((auth_source = ANY (ARRAY['SUPABASE'::text, 'SUPABASE_PASSWORD'::text, 'LOCAL_CACHE'::text, 'LOCAL_PASSWORD_CACHE'::text, 'BADGE_PIN'::text, 'EMPLOYEE_PIN'::text, 'BADGE_ONLY'::text, 'BADGE_PIN_SETUP'::text, 'WALLET_BARCODE'::text, 'WALLET_BARCODE_PIN'::text, 'WALLET_NFC'::text, 'WALLET_NFC_PIN'::text])))
 );
 
@@ -5023,6 +5029,7 @@ CREATE TABLE public.products (
     category_id integer,
     vendor_id integer,
     image_url text,
+    additional_image_urls jsonb DEFAULT '[]'::jsonb NOT NULL,
     created_by_user_id integer,
     created_by_name text,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -14523,3 +14530,231 @@ ALTER TABLE public.company_customization ADD COLUMN IF NOT EXISTS sale_receipt_v
 ALTER TABLE public.company_customization ADD COLUMN IF NOT EXISTS sale_quick_pick_item_type_ids jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(sale_quick_pick_item_type_ids)='array');
 ALTER TABLE public.company_customization ADD COLUMN IF NOT EXISTS sale_quick_pick_size_item_type_ids jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(sale_quick_pick_size_item_type_ids)='array');
 ALTER TABLE public.company_customization ADD COLUMN IF NOT EXISTS sale_quick_pick_photo_item_type_ids jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(sale_quick_pick_photo_item_type_ids)='array');
+
+-- Custom order media baseline; post-v1 migration is idempotent.
+ALTER TABLE public.company_customization
+ ADD COLUMN IF NOT EXISTS custom_order_file_limit_bytes bigint NOT NULL DEFAULT 104857600
+ CHECK (custom_order_file_limit_bytes > 0);
+
+CREATE TABLE IF NOT EXISTS public.custom_order_files (
+ file_id uuid PRIMARY KEY,
+ custom_order_id bigint NOT NULL REFERENCES public.custom_orders(custom_order_id),
+ custom_order_line_id bigint NOT NULL REFERENCES public.custom_order_lines(custom_order_line_id),
+ filename text NOT NULL,
+ content_type text NOT NULL,
+ byte_size bigint NOT NULL CHECK (byte_size > 0),
+ sha256 text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+ storage_key text NOT NULL UNIQUE,
+ cloud_status text NOT NULL DEFAULT 'PENDING' CHECK (cloud_status IN ('PENDING','PRESENT','ERROR')),
+ cloud_error text,
+ uploaded_by_user_id integer,
+ uploaded_by_customer boolean NOT NULL DEFAULT false,
+ override_by_user_id integer,
+ override_reason text,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ removed_at timestamptz,
+ removed_by_user_id integer,
+ deleted_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS custom_order_files_active_line
+ ON public.custom_order_files(custom_order_line_id,created_at)
+ WHERE removed_at IS NULL AND deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS public.custom_order_access_links (
+ link_id uuid PRIMARY KEY,
+ custom_order_id bigint NOT NULL REFERENCES public.custom_orders(custom_order_id),
+ token_sha256 text NOT NULL UNIQUE,
+ created_by_user_id integer NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ revoked_at timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS public.custom_order_design_proofs (
+ proof_id uuid PRIMARY KEY,
+ custom_order_id bigint NOT NULL REFERENCES public.custom_orders(custom_order_id),
+ custom_order_line_id bigint NOT NULL REFERENCES public.custom_order_lines(custom_order_line_id),
+ revision integer NOT NULL CHECK (revision > 0),
+ filename text NOT NULL,
+ content_type text NOT NULL CHECK (content_type IN ('image/jpeg','image/png','application/pdf')),
+ byte_size bigint NOT NULL CHECK (byte_size > 0),
+ sha256 text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+ storage_key text NOT NULL UNIQUE,
+ cloud_status text NOT NULL DEFAULT 'PENDING' CHECK (cloud_status IN ('PENDING','PRESENT','ERROR')),
+ cloud_error text,
+ token_sha256 text NOT NULL UNIQUE,
+ status text NOT NULL DEFAULT 'AWAITING_APPROVAL'
+   CHECK (status IN ('AWAITING_APPROVAL','APPROVED','CHANGES_REQUESTED','SUPERSEDED')),
+ created_by_user_id integer NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ decided_at timestamptz,
+ feedback text,
+ revoked_at timestamptz,
+ deleted_at timestamptz,
+ UNIQUE(custom_order_line_id,revision)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS custom_order_design_proofs_pending
+ ON public.custom_order_design_proofs(custom_order_line_id)
+ WHERE status='AWAITING_APPROVAL';
+CREATE INDEX IF NOT EXISTS custom_order_design_proofs_order
+ ON public.custom_order_design_proofs(custom_order_id,custom_order_line_id,revision DESC);
+
+CREATE TABLE IF NOT EXISTS public.custom_order_file_uploads (
+ upload_id uuid PRIMARY KEY,
+ custom_order_id bigint NOT NULL REFERENCES public.custom_orders(custom_order_id),
+ custom_order_line_id bigint NOT NULL REFERENCES public.custom_order_lines(custom_order_line_id),
+ kind text NOT NULL CHECK (kind IN ('ATTACHMENT','PROOF')),
+ filename text NOT NULL,
+ content_type text NOT NULL,
+ expected_bytes bigint NOT NULL CHECK (expected_bytes > 0),
+ received_bytes bigint NOT NULL DEFAULT 0,
+ sha256 text NOT NULL,
+ customer_link_id uuid REFERENCES public.custom_order_access_links(link_id),
+ staff_user_id integer,
+ override_by_user_id integer,
+ override_reason text,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ expires_at timestamptz NOT NULL DEFAULT (now()+interval '24 hours')
+);
+ALTER TABLE public.custom_order_items
+ ADD COLUMN IF NOT EXISTS template_width numeric(12,3),
+ ADD COLUMN IF NOT EXISTS template_height numeric(12,3),
+ ADD COLUMN IF NOT EXISTS template_unit text NOT NULL DEFAULT 'IN',
+ ADD COLUMN IF NOT EXISTS template_uses_order_area boolean NOT NULL DEFAULT false;
+ALTER TABLE public.custom_order_items
+ ADD CONSTRAINT custom_order_items_template_dimensions_chk
+ CHECK ((template_width IS NULL AND template_height IS NULL) OR
+        (template_width > 0 AND template_height > 0 AND template_width <= 10000 AND template_height <= 10000));
+ALTER TABLE public.custom_order_items
+ ADD CONSTRAINT custom_order_items_template_unit_chk CHECK (template_unit IN ('IN','FT','YD','CM','M'));
+
+ALTER TABLE public.custom_order_item_variants
+ ADD COLUMN IF NOT EXISTS template_width numeric(12,3),
+ ADD COLUMN IF NOT EXISTS template_height numeric(12,3),
+ ADD COLUMN IF NOT EXISTS template_unit text,
+ ADD COLUMN IF NOT EXISTS template_uses_order_area boolean;
+ALTER TABLE public.custom_order_item_variants
+ ADD CONSTRAINT custom_order_item_variants_template_dimensions_chk
+ CHECK ((template_width IS NULL AND template_height IS NULL AND template_unit IS NULL) OR
+        (template_width > 0 AND template_height > 0 AND template_width <= 10000 AND template_height <= 10000
+         AND template_unit IN ('IN','FT','YD','CM','M')));
+
+ALTER TABLE public.custom_order_lines
+ ADD COLUMN IF NOT EXISTS template_width numeric(12,3),
+ ADD COLUMN IF NOT EXISTS template_height numeric(12,3),
+ ADD COLUMN IF NOT EXISTS template_unit text;
+
+CREATE TABLE IF NOT EXISTS public.custom_order_design_documents (
+ document_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ custom_order_id bigint NOT NULL REFERENCES public.custom_orders(custom_order_id),
+ custom_order_line_id bigint REFERENCES public.custom_order_lines(custom_order_line_id),
+ width numeric(12,3) NOT NULL CHECK(width > 0 AND width <= 10000),
+ height numeric(12,3) NOT NULL CHECK(height > 0 AND height <= 10000),
+ unit text NOT NULL CHECK(unit IN ('IN','FT','YD','CM','M')),
+ revision integer NOT NULL DEFAULT 0 CHECK(revision >= 0),
+ document_json jsonb NOT NULL DEFAULT '{"version":1,"background":"#ffffff","objects":[]}'::jsonb,
+ updated_by_user_id integer,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(custom_order_line_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS custom_order_design_documents_overview
+ ON public.custom_order_design_documents(custom_order_id) WHERE custom_order_line_id IS NULL;
+CREATE TABLE IF NOT EXISTS public.custom_order_design_document_revisions (
+ document_id uuid NOT NULL REFERENCES public.custom_order_design_documents(document_id),
+ revision integer NOT NULL,
+ document_json jsonb NOT NULL,
+ saved_by_user_id integer,
+ saved_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(document_id,revision)
+);
+ALTER TABLE public.custom_order_design_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.custom_order_design_document_revisions ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.custom_order_design_documents,public.custom_order_design_document_revisions FROM PUBLIC;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+  REVOKE ALL ON public.custom_order_design_documents,public.custom_order_design_document_revisions FROM anon;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+  REVOKE ALL ON public.custom_order_design_documents,public.custom_order_design_document_revisions FROM authenticated;
+ END IF;
+END $$;
+ALTER TABLE public.custom_order_design_proofs ADD COLUMN IF NOT EXISTS document_revision integer;
+
+-- Internal evidence only; never shared with custom order customer links.
+CREATE TABLE IF NOT EXISTS public.custom_order_spoils (
+ spoil_id uuid PRIMARY KEY,
+ location_id integer NOT NULL,
+ custom_order_id bigint NOT NULL REFERENCES public.custom_orders(custom_order_id),
+ custom_order_line_id bigint NOT NULL REFERENCES public.custom_order_lines(custom_order_line_id),
+ custom_item_id bigint,
+ custom_variant_id bigint,
+ stock_deducted boolean NOT NULL,
+ stock_after numeric(12,2),
+ reason text NOT NULL CHECK(length(trim(reason)) BETWEEN 1 AND 2000),
+ created_by_user_id integer NOT NULL,
+ created_by_name text NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ reversed_at timestamptz,
+ reversed_by_user_id integer,
+ reversed_by_name text,
+ reversal_reason text,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ CHECK ((reversed_at IS NULL AND reversal_reason IS NULL) OR
+        (reversed_at IS NOT NULL AND length(trim(reversal_reason)) BETWEEN 1 AND 2000))
+);
+CREATE TABLE IF NOT EXISTS public.custom_order_spoil_photos (
+ photo_id uuid PRIMARY KEY,
+ location_id integer NOT NULL,
+ spoil_id uuid NOT NULL REFERENCES public.custom_order_spoils(spoil_id),
+ content_type text NOT NULL DEFAULT 'image/jpeg' CHECK(content_type='image/jpeg'),
+ bytes_base64 text NOT NULL CHECK(length(bytes_base64) BETWEEN 1 AND 2796204),
+ sha256 text NOT NULL CHECK(length(sha256)=64),
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS custom_order_spoils_order_idx ON public.custom_order_spoils(location_id,custom_order_id,created_at);
+CREATE INDEX IF NOT EXISTS custom_order_spoils_line_idx ON public.custom_order_spoils(custom_order_line_id,created_at);
+CREATE INDEX IF NOT EXISTS custom_order_spoil_photos_report_idx ON public.custom_order_spoil_photos(spoil_id);
+ALTER TABLE public.custom_order_spoils ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.custom_order_spoil_photos ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.custom_order_spoils,public.custom_order_spoil_photos FROM PUBLIC;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+  REVOKE ALL ON public.custom_order_spoils,public.custom_order_spoil_photos FROM anon;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+  REVOKE ALL ON public.custom_order_spoils,public.custom_order_spoil_photos FROM authenticated;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+  GRANT ALL ON public.custom_order_spoils,public.custom_order_spoil_photos TO service_role;
+ END IF;
+END $$;
+CREATE TABLE IF NOT EXISTS public.catalog_studio_reviews (
+    product_id bigint PRIMARY KEY,
+    name text NOT NULL,
+    source_image_url text,
+    source_sha256 varchar(64),
+    decision varchar(20) NOT NULL DEFAULT 'review',
+    reference text,
+    error text,
+    generator text,
+    generated_for_review boolean NOT NULL DEFAULT false,
+    original_bytes bytea,
+    preview_jpeg bytea,
+    revision bigint NOT NULL DEFAULT 1,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT catalog_studio_reviews_decision_check
+        CHECK (decision IN ('review','approved','rejected','imported','failed','import_failed'))
+);
+ALTER TABLE public.catalog_studio_reviews ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.catalog_studio_reviews FROM PUBLIC;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+  REVOKE ALL ON public.catalog_studio_reviews FROM anon;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+  REVOKE ALL ON public.catalog_studio_reviews FROM authenticated;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+  GRANT ALL ON public.catalog_studio_reviews TO service_role;
+ END IF;
+END $$;

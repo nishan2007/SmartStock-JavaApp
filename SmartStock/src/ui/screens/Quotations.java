@@ -452,7 +452,12 @@ public class Quotations extends JFrame {
         String clean = value == null ? "" : value.replace("$", "").replace(",", "").trim();
         return clean.isBlank() || "null".equalsIgnoreCase(clean)
                 ? BigDecimal.ZERO
-                : utils.CurrencyFormatter.normalize(new BigDecimal(clean));
+                : new BigDecimal(clean).setScale(2, RoundingMode.UNNECESSARY);
+    }
+
+    static BigDecimal parsePercent(String value) {
+        String clean=value==null?"":value.trim();
+        return clean.isBlank() || "null".equalsIgnoreCase(clean)?BigDecimal.ZERO:new BigDecimal(clean);
     }
 
     private static boolean canChangeSaleItemPrice() {
@@ -789,7 +794,7 @@ public class Quotations extends JFrame {
                     Integer.parseInt(String.valueOf(lineModel.getValueAt(row, 3))),
                     unitPrice,
                     originalUnitPrice,
-                    parseMoney(String.valueOf(lineModel.getValueAt(row, 5))),
+                    parsePercent(String.valueOf(lineModel.getValueAt(row, 5))),
                     String.valueOf(lineModel.getValueAt(row, 6)),
                     String.valueOf(lineModel.getValueAt(row, 7)),
                     blankToNull(String.valueOf(lineModel.getValueAt(row, 9))),
@@ -853,7 +858,7 @@ public class Quotations extends JFrame {
                         Integer.parseInt(String.valueOf(lineModel.getValueAt(i, 3))),
                         parseMoney(String.valueOf(lineModel.getValueAt(i, 4))),
                         parseMoney(String.valueOf(lineModel.getValueAt(i, 8))),
-                        parseMoney(String.valueOf(lineModel.getValueAt(i, 5))),
+                        parsePercent(String.valueOf(lineModel.getValueAt(i, 5))),
                         String.valueOf(lineModel.getValueAt(i, 6)),
                         String.valueOf(lineModel.getValueAt(i, 7)),
                         blankToNull(String.valueOf(lineModel.getValueAt(i, 9))),
@@ -1081,6 +1086,8 @@ public class Quotations extends JFrame {
         private final JTextField qtyField = new JTextField("1");
         private final JTextField unitField = new JTextField("0");
         private final JTextField discountField = new JTextField("0");
+        private final JTextField discountedPriceField = new JTextField("0");
+        private ui.helpers.DiscountPriceFields discountPrices;
         private final JComboBox<String> deliveryBox = new JComboBox<>(new String[]{"PICKUP", "LOCAL_DELIVERY", "SHIP", "INSTALLATION"});
         private final JTextField notesField = new JTextField();
         private final Timer productSearchTimer;
@@ -1101,7 +1108,7 @@ public class Quotations extends JFrame {
             this.manualOnly = manualOnly;
             productSearchTimer = new Timer(300, e -> refreshProductResults(editorText(productBox)));
             productSearchTimer.setRepeats(false);
-            setSize(520, 360);
+            setSize(560, 410);
             setLocationRelativeTo(owner);
             setLayout(new BorderLayout(8, 8));
             productBox.setEditable(true);
@@ -1113,12 +1120,14 @@ public class Quotations extends JFrame {
             if (existingLine != null) {
                 loadExistingLine(existingLine);
             }
+            discountPrices=new ui.helpers.DiscountPriceFields(()->parseMoney(unitField.getText()),discountField,discountedPriceField);
+            ui.helpers.DiscountPriceFields.listen(unitField,discountPrices::refresh);
             productBox.addActionListener(e -> fillProduct());
             JPanel panel = manualOnly
-                    ? formPanel(new String[]{"Item", "SKU", "Qty", "Unit Price", "Discount %", "Delivery", "Notes"},
-                    new JComponent[]{itemField, skuField, qtyField, unitField, discountField, deliveryBox, notesField})
-                    : formPanel(new String[]{"Product", "Item", "SKU", "Qty", "Unit Price", "Discount %", "Delivery", "Notes"},
-                    new JComponent[]{productBox, itemField, skuField, qtyField, unitField, discountField, deliveryBox, notesField});
+                    ? formPanel(new String[]{"Item", "SKU", "Qty", "Original Unit Price", "Discounted Unit Price", "Discount %", "Delivery", "Notes"},
+                    new JComponent[]{itemField, skuField, qtyField, unitField, discountedPriceField, discountField, deliveryBox, notesField})
+                    : formPanel(new String[]{"Product", "Item", "SKU", "Qty", "Original Unit Price", "Discounted Unit Price", "Discount %", "Delivery", "Notes"},
+                    new JComponent[]{productBox, itemField, skuField, qtyField, unitField, discountedPriceField, discountField, deliveryBox, notesField});
             panel.setBorder(new EmptyBorder(12, 12, 12, 12));
             add(panel, BorderLayout.CENTER);
             JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
@@ -1208,7 +1217,7 @@ public class Quotations extends JFrame {
                 }
                 QuotationInvoiceService.CustomLineInput existingCustom=line==null?null:line.custom();
                 line = new LineInput(product, itemName, skuField.getText(), Integer.parseInt(qtyField.getText().trim()),
-                        enteredPrice, originalUnitPrice, parseMoney(discountField.getText()),
+                        enteredPrice, originalUnitPrice, discountPrices.validatedPercent(),
                         String.valueOf(deliveryBox.getSelectedItem()), notesField.getText(),
                         overrideReason, overrideByUserId, overrideByName, overrideApprovalToken,existingCustom);
                 dispose();
@@ -1383,23 +1392,37 @@ public class Quotations extends JFrame {
         private final JComboBox<CustomOrderDataService.CustomItemOption>itemBox=new JComboBox<>();
         private final JComboBox<CustomOrderDataService.VariantOption>variantBox=new JComboBox<>();
         private final JTextField qty=new JTextField("1"),price=new JTextField("0"),width=new JTextField(),length=new JTextField(),discount=new JTextField("0"),design=new JTextField(),instructions=new JTextField();
+        private final JTextField discountedPrice=new JTextField("0");
+        private ui.helpers.DiscountPriceFields discountPrices;
         private final JComboBox<String>delivery=new JComboBox<>(new String[]{"PICKUP","LOCAL_DELIVERY","SHIP","INSTALLATION"});
         private final DefaultTableModel addons=new DefaultTableModel(new String[]{"Material ID","Material","Preset ID","Size","Mode","Description","Lines","Charge"},0);
         private LineInput line;
         CustomQuotationLineEditor(JDialog owner){this(owner,null);}
         CustomQuotationLineEditor(JDialog owner,LineInput existing){super(owner,existing==null?"Add Custom Item to Quotation":"Edit Quotation Custom Item",true);setSize(760,650);setLocationRelativeTo(owner);setLayout(new BorderLayout(8,8));
-            JPanel form=formPanel(new String[]{"Custom Item","Variant","Quantity","Rate / Unit Price","Width","Length","Discount %","Delivery","Design / Placement","Instructions"},new JComponent[]{itemBox,variantBox,qty,price,width,length,discount,delivery,design,instructions});
+            JPanel form=formPanel(new String[]{"Custom Item","Variant","Quantity","Rate / Unit Price","Width","Length","Discounted Unit Price","Discount %","Delivery","Design / Placement","Instructions"},new JComponent[]{itemBox,variantBox,qty,price,width,length,discountedPrice,discount,delivery,design,instructions});
             JTable addonTable=new JTable(addons);hideAddonIds(addonTable);JPanel center=new JPanel(new BorderLayout(8,8));center.setBorder(new EmptyBorder(12,12,12,12));center.add(form,BorderLayout.NORTH);center.add(new JScrollPane(addonTable),BorderLayout.CENTER);
             JButton addAddon=new JButton("Add Print Add-on"),remove=new JButton("Remove Add-on"),save=new JButton("Add Custom Item"),cancel=new JButton("Cancel");JPanel buttons=new JPanel(new FlowLayout(FlowLayout.RIGHT));buttons.add(addAddon);buttons.add(remove);buttons.add(save);buttons.add(cancel);center.add(buttons,BorderLayout.SOUTH);add(center);
             styleSecondaryButton(addAddon);styleSecondaryButton(remove);stylePrimaryButton(save);styleSecondaryButton(cancel);
             itemBox.addActionListener(e->loadVariantsAndPrice());addAddon.addActionListener(e->addAddon());remove.addActionListener(e->{int r=addonTable.getSelectedRow();if(r>=0)addons.removeRow(addonTable.convertRowIndexToModel(r));});save.addActionListener(e->save());cancel.addActionListener(e->dispose());
             ThemeManager.applyToWindow(this);
-            try{for(var item:ResponsiveTask.await(this,"Loading custom items...",CustomOrderDataService::listActiveItems))itemBox.addItem(item);if(existing!=null)loadExisting(existing);}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Custom Items",JOptionPane.ERROR_MESSAGE);dispose();}
+            try{for(var item:ResponsiveTask.await(this,"Loading custom items...",CustomOrderDataService::listActiveItems))itemBox.addItem(item);if(existing!=null)loadExisting(existing);installDiscountPrices();}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Custom Items",JOptionPane.ERROR_MESSAGE);dispose();}
         }
         private void loadExisting(LineInput existing){var c=existing.custom();for(int i=0;i<itemBox.getItemCount();i++)if(java.util.Objects.equals(itemBox.getItemAt(i).customItemId(),c.customItemId())){itemBox.setSelectedIndex(i);break;}loadVariantsAndPrice();for(int i=0;i<variantBox.getItemCount();i++)if(java.util.Objects.equals(variantBox.getItemAt(i).variantId(),c.customVariantId())){variantBox.setSelectedIndex(i);break;}qty.setText(String.valueOf(existing.quantity()));price.setText(c.areaPrice()==null?existing.unitPrice().toPlainString():c.areaPrice().toPlainString());width.setText(c.widthValue()==null?"":c.widthValue().toPlainString());length.setText(c.lengthValue()==null?"":c.lengthValue().toPlainString());discount.setText(existing.discountPercent().toPlainString());delivery.setSelectedItem(existing.deliveryMethod());design.setText(c.customizationDetails());instructions.setText(c.orderInstructions());if(c.printAddons()!=null)for(var a:c.printAddons())addons.addRow(new Object[]{a.printMaterialId(),a.materialName(),a.printSizePresetId(),a.printSizeName(),a.pricingMode(),a.description(),a.lineCount(),a.charge()});}
         private void loadVariantsAndPrice(){CustomOrderDataService.CustomItemOption item=(CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();variantBox.removeAllItems();if(item==null)return;BigDecimal p="AREA".equals(item.pricingType())?item.areaPrice():item.fixedPrice();if(p!=null)price.setText(p.toPlainString());if(item.hasVariants())try{for(var v:ResponsiveTask.await(this,"Loading variants...",()->CustomOrderDataService.listActiveVariants(item.customItemId())))variantBox.addItem(v);}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage());}}
         private void addAddon(){try{List<CustomOrderDataService.PrintMaterialOption>materials=ResponsiveTask.await(this,"Loading print materials...",CustomOrderDataService::listActivePrintMaterials);if(materials.isEmpty())throw new IllegalArgumentException("No active print materials are configured.");CustomOrderDataService.PrintMaterialOption material=(CustomOrderDataService.PrintMaterialOption)JOptionPane.showInputDialog(this,"Material:","Print Add-on",JOptionPane.PLAIN_MESSAGE,null,materials.toArray(),materials.get(0));if(material==null)return;List<CustomOrderDataService.PrintSizePresetOption>presets=ResponsiveTask.await(this,"Loading print sizes...",()->CustomOrderDataService.listActivePrintSizePresets(material.printMaterialId()));CustomOrderDataService.PrintSizePresetOption preset=presets.isEmpty()?null:(CustomOrderDataService.PrintSizePresetOption)JOptionPane.showInputDialog(this,"Print size:","Print Add-on",JOptionPane.PLAIN_MESSAGE,null,presets.toArray(),presets.get(0));String description=JOptionPane.showInputDialog(this,"Print description:","");if(description==null)return;String chargeText=JOptionPane.showInputDialog(this,"Print charge:",preset==null||preset.fixedPrice()==null?"0":preset.fixedPrice().toPlainString());if(chargeText==null)return;addons.addRow(new Object[]{material.printMaterialId(),material.materialName(),preset==null?null:preset.printSizePresetId(),preset==null?"Custom":preset.presetName(),preset==null?"FIXED_PRESET":preset.pricingMode(),description,1,parseMoney(chargeText)});}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Print Add-on",JOptionPane.ERROR_MESSAGE);}}
-        private void save(){try{var item=(CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();if(item==null)throw new IllegalArgumentException("Select a custom item.");var variant=(CustomOrderDataService.VariantOption)variantBox.getSelectedItem();if(item.hasVariants()&&variant==null)throw new IllegalArgumentException("Select a variant.");int quantity=Integer.parseInt(qty.getText().trim());if(quantity<=0)throw new IllegalArgumentException("Quantity must be greater than zero.");BigDecimal entered=parseMoney(price.getText()),configured=variant!=null&&variant.fixedPrice()!=null?variant.fixedPrice():("AREA".equals(item.pricingType())?item.areaPrice():item.fixedPrice());BigDecimal w=width.getText().isBlank()?null:new BigDecimal(width.getText().trim()),l=length.getText().isBlank()?null:new BigDecimal(length.getText().trim()),area=null,base=entered;if("AREA".equals(item.pricingType())){if(w==null||l==null||w.signum()<=0||l.signum()<=0)throw new IllegalArgumentException("Enter valid width and length for area pricing.");area=w.multiply(l);base=area.multiply(entered).setScale(2,RoundingMode.HALF_UP);}List<QuotationInvoiceService.PrintAddonInput>print=new ArrayList<>();BigDecimal addonTotal=BigDecimal.ZERO;for(int r=0;r<addons.getRowCount();r++){BigDecimal charge=parseMoney(String.valueOf(addons.getValueAt(r,7)));addonTotal=addonTotal.add(charge);print.add(new QuotationInvoiceService.PrintAddonInput(((Number)addons.getValueAt(r,0)).longValue(),String.valueOf(addons.getValueAt(r,1)),addons.getValueAt(r,2)==null?null:((Number)addons.getValueAt(r,2)).longValue(),String.valueOf(addons.getValueAt(r,3)),String.valueOf(addons.getValueAt(r,4)),String.valueOf(addons.getValueAt(r,5)),Integer.parseInt(String.valueOf(addons.getValueAt(r,6))),charge));}BigDecimal unit=base.add(addonTotal),pct=parseMoney(discount.getText());if(pct.signum()<0||pct.compareTo(BigDecimal.valueOf(100))>0)throw new IllegalArgumentException("Discount must be between 0 and 100%.");String overrideReason=null,token=null;if(configured!=null&&entered.compareTo(configured)!=0){overrideReason=JOptionPane.showInputDialog(this,"Reason for custom-item price override:");if(overrideReason==null||overrideReason.isBlank())return;if(!PermissionManager.hasPermission("CUSTOM_ORDER_PRICE_OVERRIDE")&&!PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")){var approval=ManagerApprovalService.requestApproval(this,"CUSTOM_ORDER_PRICE_OVERRIDE","Custom Order Price Override","Reason for custom-item price override:");if(approval==null)return;token=approval.lanApprovalToken();}}var custom=new QuotationInvoiceService.CustomLineInput(item.customItemId(),variant==null?null:variant.variantId(),variant==null?null:variant.name(),item.pricingType(),w,l,item.dimensionUnit(),area,item.areaPriceUnit(),entered,design.getText().trim(),instructions.getText().trim(),print);String notesText=condensed(custom);line=new LineInput(null,item.name(),item.sku(),quantity,unit,unit,pct,String.valueOf(delivery.getSelectedItem()),notesText,overrideReason,null,null,token,custom);dispose();}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Custom Item",JOptionPane.ERROR_MESSAGE);}}
+        private BigDecimal originalDiscountUnitPrice() {
+            var item=(CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();
+            BigDecimal base=parseMoney(price.getText());
+            if(item!=null && "AREA".equals(item.pricingType())) base=base.multiply(new BigDecimal(width.getText().trim())).multiply(new BigDecimal(length.getText().trim())).setScale(2,RoundingMode.HALF_UP);
+            for(int row=0;row<addons.getRowCount();row++) base=base.add(parseMoney(String.valueOf(addons.getValueAt(row,7))));
+            return base;
+        }
+        private void installDiscountPrices() {
+            discountPrices=new ui.helpers.DiscountPriceFields(this::originalDiscountUnitPrice,discount,discountedPrice);
+            for(JTextField field:new JTextField[]{price,width,length}) ui.helpers.DiscountPriceFields.listen(field,discountPrices::refresh);
+            addons.addTableModelListener(e->discountPrices.refresh());
+        }
+        private void save(){try{var item=(CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();if(item==null)throw new IllegalArgumentException("Select a custom item.");var variant=(CustomOrderDataService.VariantOption)variantBox.getSelectedItem();if(item.hasVariants()&&variant==null)throw new IllegalArgumentException("Select a variant.");int quantity=Integer.parseInt(qty.getText().trim());if(quantity<=0)throw new IllegalArgumentException("Quantity must be greater than zero.");BigDecimal entered=parseMoney(price.getText()),configured=variant!=null&&variant.fixedPrice()!=null?variant.fixedPrice():("AREA".equals(item.pricingType())?item.areaPrice():item.fixedPrice());BigDecimal w=width.getText().isBlank()?null:new BigDecimal(width.getText().trim()),l=length.getText().isBlank()?null:new BigDecimal(length.getText().trim()),area=null,base=entered;if("AREA".equals(item.pricingType())){if(w==null||l==null||w.signum()<=0||l.signum()<=0)throw new IllegalArgumentException("Enter valid width and length for area pricing.");area=w.multiply(l);base=area.multiply(entered).setScale(2,RoundingMode.HALF_UP);}List<QuotationInvoiceService.PrintAddonInput>print=new ArrayList<>();BigDecimal addonTotal=BigDecimal.ZERO;for(int r=0;r<addons.getRowCount();r++){BigDecimal charge=parseMoney(String.valueOf(addons.getValueAt(r,7)));addonTotal=addonTotal.add(charge);print.add(new QuotationInvoiceService.PrintAddonInput(((Number)addons.getValueAt(r,0)).longValue(),String.valueOf(addons.getValueAt(r,1)),addons.getValueAt(r,2)==null?null:((Number)addons.getValueAt(r,2)).longValue(),String.valueOf(addons.getValueAt(r,3)),String.valueOf(addons.getValueAt(r,4)),String.valueOf(addons.getValueAt(r,5)),Integer.parseInt(String.valueOf(addons.getValueAt(r,6))),charge));}BigDecimal unit=base.add(addonTotal),pct=discountPrices.validatedPercent();if(pct.signum()<0||pct.compareTo(BigDecimal.valueOf(100))>0)throw new IllegalArgumentException("Discount must be between 0 and 100%.");String overrideReason=null,token=null;if(configured!=null&&entered.compareTo(configured)!=0){overrideReason=JOptionPane.showInputDialog(this,"Reason for custom-item price override:");if(overrideReason==null||overrideReason.isBlank())return;if(!PermissionManager.hasPermission("CUSTOM_ORDER_PRICE_OVERRIDE")&&!PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")){var approval=ManagerApprovalService.requestApproval(this,"CUSTOM_ORDER_PRICE_OVERRIDE","Custom Order Price Override","Reason for custom-item price override:");if(approval==null)return;token=approval.lanApprovalToken();}}var custom=new QuotationInvoiceService.CustomLineInput(item.customItemId(),variant==null?null:variant.variantId(),variant==null?null:variant.name(),item.pricingType(),w,l,item.dimensionUnit(),area,item.areaPriceUnit(),entered,design.getText().trim(),instructions.getText().trim(),print);String notesText=condensed(custom);line=new LineInput(null,item.name(),item.sku(),quantity,unit,unit,pct,String.valueOf(delivery.getSelectedItem()),notesText,overrideReason,null,null,token,custom);dispose();}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Custom Item",JOptionPane.ERROR_MESSAGE);}}
         private static String condensed(QuotationInvoiceService.CustomLineInput c){List<String>parts=new ArrayList<>();if(c.variantName()!=null&&!c.variantName().isBlank())parts.add("Variant: "+c.variantName());if(c.itemSize()!=null&&!c.itemSize().isBlank())parts.add("Item size: "+c.itemSize());if(c.itemColor()!=null&&!c.itemColor().isBlank())parts.add("Color: "+c.itemColor());if(c.widthValue()!=null&&c.lengthValue()!=null)parts.add("Dimensions: "+c.widthValue()+" x "+c.lengthValue()+" "+c.dimensionUnit());if(c.customizationDetails()!=null&&!c.customizationDetails().isBlank())parts.add("Design: "+c.customizationDetails());if(c.orderInstructions()!=null&&!c.orderInstructions().isBlank())parts.add(c.orderInstructions());if(c.printAddons()!=null&&!c.printAddons().isEmpty())parts.add("Print: "+c.printAddons().stream().map(a->a.materialName()+" / "+a.printSizeName()).reduce((a,b)->a+", "+b).orElse(""));return String.join(" | ",parts);}
         private static void hideAddonIds(JTable t){t.removeColumn(t.getColumnModel().getColumn(2));t.removeColumn(t.getColumnModel().getColumn(0));}
     }

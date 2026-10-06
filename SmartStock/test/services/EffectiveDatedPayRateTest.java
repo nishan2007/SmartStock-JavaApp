@@ -22,14 +22,14 @@ class EffectiveDatedPayRateTest {
     }
 
     @Test
-    void payrollAndClockOutResolveRateByWorkDate() throws Exception {
+    void payrollAndClockOutShareTheWorkDatesPeriodRate() throws Exception {
         String reports = Files.readString(Path.of("src/managers/ServerTimeClockManager.java"));
         String autoClose = Files.readString(Path.of("src/services/TimeClockAutoCloseService.java"));
         String employeeAdmin = Files.readString(Path.of("src/services/LanEmployeeAdminService.java"));
 
-        assertTrue(reports.contains("effective_from <= tc.work_date"));
+        assertTrue(reports.contains("periodRateSql(\"tc.user_id\", \"tc.work_date\")"));
         assertTrue(reports.contains("COALESCE(pay.pay_rate, u.salary, 0)"));
-        assertTrue(autoClose.contains("effective_from <= tc.work_date"));
+        assertTrue(autoClose.contains("periodRateSql(\"tc.user_id\", \"tc.work_date\")"));
         assertTrue(autoClose.contains("COALESCE(pay.pay_rate, u.salary, 0)"));
         assertTrue(employeeAdmin.contains("saveCurrentPeriodPayRate"));
     }

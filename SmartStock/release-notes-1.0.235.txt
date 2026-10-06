@@ -1,0 +1,7 @@
+SmartStock 1.0.235
+
+Adds Allow Studio beside Allow Sales and Allow Orders in Device Management. SmartStudio 0.1.1 pairs its own secure credential with the existing physical computer's device row; only a new computer creates a new row. Studio access is enforced on the server. Register credentials and sessions remain independent, so Studio login/logout does not interrupt the register.
+
+Computers paired with SmartStudio 0.1.0 should install 0.1.1 and pair once again using a fresh server pairing phrase. Enable Allow Studio on the existing device row, then check approval in SmartStudio. The old duplicate Studio row is retained for history and hidden after linking.
+
+Includes the current application source and previous update improvements. Windows SmartStock update ZIP only; no SmartStock installer is included. The separate SmartStudio 0.1.1 installer improves PNG/JPEG loading from network drives, displays image previews and progress, and shows clear errors for unavailable files.

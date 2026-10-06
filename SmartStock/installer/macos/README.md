@@ -32,9 +32,12 @@ DMG with:
 bash SmartStock/tools/package-macos-release.sh
 ```
 
-Upload the generated zip to the `smartstock-releases` bucket using the
-`mac/...` path printed by the script, then publish the printed `app_releases`
-metadata row with `platform = 'mac'`.
+Follow [packaging and publishing](../../docs/release-packaging-publishing.md)
+for verified publication. Do not manually insert the printed example release
+row: download and verify the final ZIP's size and SHA-256 through the existing
+publisher first. Use the shared Maven version and build number on every platform
+(`1.1.1` = `101001`). Packages exclude AI model weights; publish those separately.
+Run the migration helper before an older Mac's first model-free update.
 
 ## Sign And Notarize
 

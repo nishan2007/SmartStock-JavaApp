@@ -76,10 +76,11 @@ $serviceInstaller = Join-Path $PSScriptRoot "install-sync-service.ps1"
     -SupabasePublishableKey $SupabasePublishableKey -ServiceUser $serviceUser
 
 $lanRules = @(
-    @{ Name = "SmartStock LAN API $LanApiPort"; Port = $LanApiPort },
-    @{ Name = "SmartStock Mobile Item Web UI 8444"; Port = 8444 },
-    @{ Name = "SmartStock Mobile Item Web API 8445"; Port = 8445 },
-    @{ Name = "SmartStock Employee Registration 8448"; Port = 8448 }
+    @{ Name = "SmartStock LAN API $LanApiPort"; Port = $LanApiPort; Protocol = 'TCP' },
+    @{ Name = "SmartStock LAN Discovery 18443"; Port = 18443; Protocol = 'UDP' },
+    @{ Name = "SmartStock Mobile Item Web UI 8444"; Port = 8444; Protocol = 'TCP' },
+    @{ Name = "SmartStock Mobile Item Web API 8445"; Port = 8445; Protocol = 'TCP' },
+    @{ Name = "SmartStock Employee Registration 8448"; Port = 8448; Protocol = 'TCP' }
 )
 foreach ($rule in $lanRules) {
     $existingRule = Get-NetFirewallRule -DisplayName $rule.Name -ErrorAction SilentlyContinue
@@ -87,8 +88,19 @@ foreach ($rule in $lanRules) {
         Remove-NetFirewallRule -DisplayName $rule.Name
     }
     New-NetFirewallRule -DisplayName $rule.Name -Direction Inbound -Action Allow `
-        -Protocol TCP -LocalPort $rule.Port -RemoteAddress $LanSubnet `
+        -Protocol $rule.Protocol -LocalPort $rule.Port -RemoteAddress $LanSubnet `
         -Profile Private | Out-Host
+    $installed = Get-NetFirewallRule -PolicyStore ActiveStore -DisplayName $rule.Name -ErrorAction Stop
+    $ports = $installed | Get-NetFirewallPortFilter
+    $addresses = $installed | Get-NetFirewallAddressFilter
+    $protocolNumber = if ($rule.Protocol -eq 'UDP') { '17' } else { '6' }
+    if ($installed.Enabled -ne 'True' -or $installed.Direction -ne 'Inbound' -or
+        $installed.Action -ne 'Allow' -or $installed.Profile -ne 'Private' -or
+        ($ports.Protocol -ne $rule.Protocol -and $ports.Protocol -ne $protocolNumber) -or
+        ($ports.LocalPort -join ',') -ne [string]$rule.Port -or
+        ($addresses.RemoteAddress -join ',') -ne $LanSubnet) {
+        throw "The effective firewall rule could not be verified: $($rule.Name)"
+    }
 }
 
 Start-Sleep -Seconds 3

@@ -1,6 +1,8 @@
 INSERT INTO storage.buckets(id, name, public, file_size_limit, allowed_mime_types)
 VALUES
     ('employee files', 'employee files', false, NULL, NULL),
+    ('deckers-creative', 'deckers-creative', false, 8388608,
+        ARRAY['image/jpeg','image/png','application/pdf','application/octet-stream']),
     ('Product Images', 'Product Images', true, 52428800,
         ARRAY['image/jpeg','image/png','image/gif','image/bmp','image/webp']),
     ('smartstock-releases', 'smartstock-releases', false, 50000000,
@@ -12,6 +14,9 @@ ON CONFLICT (id) DO UPDATE SET
     allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 DROP POLICY IF EXISTS "Anyone can view product images" ON storage.objects;
+DROP POLICY IF EXISTS deckers_creative_server_only ON storage.objects;
+CREATE POLICY deckers_creative_server_only ON storage.objects AS RESTRICTIVE FOR ALL TO anon,authenticated
+USING(bucket_id <> 'deckers-creative') WITH CHECK(bucket_id <> 'deckers-creative');
 CREATE POLICY "Anyone can view product images"
 ON storage.objects FOR SELECT TO PUBLIC
 USING (bucket_id = 'Product Images');
@@ -108,3 +113,21 @@ DO $portal_storage$ BEGIN
    USING(public.current_app_user_id() IS NOT NULL) WITH CHECK(public.current_app_user_id() IS NOT NULL);
  END IF;
 END $portal_storage$;
+
+-- Store-server-only recovery copy. The project's global Storage limit still applies.
+DO $custom_order_storage$ BEGIN
+ IF to_regclass('storage.buckets') IS NOT NULL THEN
+  INSERT INTO storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+   VALUES ('custom-order-private','custom-order-private',FALSE,NULL,
+     ARRAY['image/jpeg','image/png','image/webp','image/gif','application/pdf',
+       'application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+       'application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+       'application/vnd.ms-powerpoint','application/vnd.openxmlformats-officedocument.presentationml.presentation'])
+   ON CONFLICT(id) DO UPDATE SET public=FALSE,file_size_limit=NULL,
+     allowed_mime_types=EXCLUDED.allowed_mime_types;
+  DROP POLICY IF EXISTS custom_order_private_server_only ON storage.objects;
+  CREATE POLICY custom_order_private_server_only ON storage.objects AS RESTRICTIVE
+    FOR ALL TO anon,authenticated
+    USING(bucket_id <> 'custom-order-private') WITH CHECK(bucket_id <> 'custom-order-private');
+ END IF;
+END $custom_order_storage$;

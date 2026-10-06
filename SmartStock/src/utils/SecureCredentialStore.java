@@ -117,13 +117,31 @@ public final class SecureCredentialStore {
     }
 
     private static String readWindows(String key) throws Exception {
-        Path path = windowsPath(key);
+        return readWindowsPath(windowsPath(key));
+    }
+
+    private static String readWindowsPath(Path path) throws Exception {
         if (!Files.isRegularFile(path)) return null;
         String script = "$p=[Console]::In.ReadToEnd().Trim();"
                 + "$s=Get-Content -Raw -LiteralPath $p | ConvertTo-SecureString;"
                 + "$b=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($s);"
                 + "try {[Runtime.InteropServices.Marshal]::PtrToStringBSTR($b)} finally {[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($b)}";
         return blankToNull(run(windowsPowerShell(script), path.toString(), true));
+    }
+
+    /** Read only LAN pairing values from the companion register's user home. */
+    public static String readRegisterPairing(Path home, String key) throws Exception {
+        if (!key.matches("smartstock-(production|development)-lan-api-(server-host|server-port|device-token|server-fingerprint)"))
+            throw new IllegalArgumentException("Only LAN pairing values can be reused.");
+        if (osName().contains("mac")) return readMac(key);
+        Path root = home.resolve(".smartstock");
+        if (osName().contains("win")) return readWindowsPath(root.resolve("credentials").resolve(safeKey(key) + ".dpapi"));
+        Properties props = new Properties();
+        Path file = root.resolve("secure-credentials.properties");
+        if (!Files.isRegularFile(file)) return null;
+        try (var input = Files.newInputStream(file)) { props.load(input); }
+        String value = props.getProperty(key);
+        return value == null ? null : new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
     }
 
     private static void writeWindows(String key, String value) throws Exception {

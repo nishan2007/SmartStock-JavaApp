@@ -36,13 +36,14 @@ class CustomOrderLabelWorkflowTest {
     }
 
     @Test
-    void closingLabelPromptStillPrintsTheSlip() throws Exception {
+    void previewCancellationAndZeroLabelsPreserveReceiptPrinting() throws Exception {
         String preview = Files.readString(Path.of("src/ui/screens/CustomOrderSlipPreview.java"));
         String orders = Files.readString(Path.of("src/ui/screens/customorders/CustomOrders.java"));
 
         assertTrue(preview.contains("if (labelCount == null) {"));
         assertTrue(preview.indexOf("CustomOrderSlipPrinter.printToPosPrinter") < preview.indexOf("if (labelCount == null) {"));
-        assertTrue(orders.contains("printSlipAndLabelsAsync(orderNumber, count);"));
-        assertTrue(orders.contains("if (count == null) return new OrderPrintResult(data, null, null);"));
+        assertTrue(orders.contains("printSlipAndLabelsAsync(orderNumber, receiptCount, labelCount);"));
+        assertTrue(orders.contains("if (count == 0) return new OrderPrintResult(data, null, null, printed);"));
+        assertTrue(orders.indexOf("CustomOrderSlipPrinter.print(data)") < orders.indexOf("if (count == 0) return new OrderPrintResult"));
     }
 }

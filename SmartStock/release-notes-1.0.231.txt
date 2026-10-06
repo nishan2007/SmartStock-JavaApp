@@ -1,0 +1,7 @@
+SmartStock 1.0.231
+
+Staff photo studio: upload a PNG or JPEG in the local Mobile Item Web App, remove its background offline, preview the result, and download a transparent PNG. The page uses Company Preferences branding and the Deckers palette. Photos are processed on the store server without being saved by the tool.
+
+Includes the current SmartStock source changes: customer-supplied custom-order items, custom-order media/design tools, catalog photo studio, storefront resources, register connection improvements, payroll/time-clock fixes, and synchronization/recovery improvements.
+
+Update the store server and registers. This is an update ZIP only; no new installer or installer-portal release is included. Live store, database, service, browser and hardware acceptance remains outstanding.

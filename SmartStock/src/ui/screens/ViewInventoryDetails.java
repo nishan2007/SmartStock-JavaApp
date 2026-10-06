@@ -99,12 +99,12 @@ public class ViewInventoryDetails extends JDialog {
             JTable movementTable = buildMovementHistoryTable(payload.activities());
 
             root.removeAll();
-            root.add(buildHeaderPanel(itemDetails), BorderLayout.NORTH);
+            root.add(buildHeaderPanel(itemDetails,payload.imageUrls()), BorderLayout.NORTH);
             root.add(buildContentTabs(itemDetails, movementTable), BorderLayout.CENTER);
             root.add(loadingState,BorderLayout.SOUTH);root.revalidate();root.repaint();
     }
 
-    private JPanel buildHeaderPanel(ItemDetails itemDetails) {
+    private JPanel buildHeaderPanel(ItemDetails itemDetails,List<String> imageUrls) {
         JPanel header = new JPanel(new BorderLayout(18, 12));
         header.setBackground(surfaceColor());
         header.setBorder(BorderFactory.createCompoundBorder(
@@ -142,8 +142,20 @@ public class ViewInventoryDetails extends JDialog {
         metricsPanel.add(buildMetricPanel("Sold", itemDetails.get("Total Sold", "0")));
         metricsPanel.add(buildMetricPanel("Sales", moneyValue(itemDetails.get("Total Sales Amount", "0"))));
 
-        JLabel imagePreview = ProductImageHelper.createImagePreview(itemDetails.get("Image Url", ""), 150, 110);
-        header.add(imagePreview, BorderLayout.WEST);
+        List<String> photos=imageUrls==null?List.of():imageUrls;
+        JLabel imagePreview = ProductImageHelper.createImagePreview(
+                photos.isEmpty()?itemDetails.get("Image Url", ""):photos.get(0), 150, 110);
+        JPanel gallery=new JPanel(new BorderLayout(2,2));gallery.setOpaque(false);
+        gallery.add(imagePreview,BorderLayout.CENTER);
+        if(photos.size()>1){
+            final int[] selected={0};
+            JLabel count=new JLabel("1 / "+photos.size(),SwingConstants.CENTER);
+            JButton previous=new JButton("‹"),next=new JButton("›");
+            previous.addActionListener(e->{selected[0]=(selected[0]+photos.size()-1)%photos.size();ProductImageHelper.setPreviewImage(imagePreview,photos.get(selected[0]),150,110);count.setText((selected[0]+1)+" / "+photos.size());});
+            next.addActionListener(e->{selected[0]=(selected[0]+1)%photos.size();ProductImageHelper.setPreviewImage(imagePreview,photos.get(selected[0]),150,110);count.setText((selected[0]+1)+" / "+photos.size());});
+            JPanel controls=new JPanel(new BorderLayout());controls.setOpaque(false);controls.add(previous,BorderLayout.WEST);controls.add(count,BorderLayout.CENTER);controls.add(next,BorderLayout.EAST);gallery.add(controls,BorderLayout.SOUTH);
+        }
+        header.add(gallery, BorderLayout.WEST);
         header.add(titlePanel, BorderLayout.CENTER);
         header.add(metricsPanel, BorderLayout.EAST);
         return header;

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "quality": "FAST",
+      "version": "isnet-general-use-1",
+      "objectKey": "models/fast/60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a.onnx",
+      "sizeBytes": 178648008,
+      "sha256": "60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a",
+      "compatibility": "isnet-1024-v1"
+    },
+    {
+      "quality": "BEST",
+      "version": "birefnet-general-1",
+      "objectKey": "models/best/58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c.onnx",
+      "sizeBytes": 972666916,
+      "sha256": "58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c",
+      "compatibility": "birefnet-1024-imagenet-v1"
+    }
+  ]
+}

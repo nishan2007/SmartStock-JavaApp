@@ -219,6 +219,17 @@ public final class AppUpdateService {
         manifest.setProperty("sync.service.app.dir", Path.of(System.getProperty("user.home"), ".smartstock", "sync-service", "app").toString());
         manifest.setProperty("sync.service.task.name", "SmartStockServerService");
         manifest.setProperty("sync.service.user", windowsServiceUser());
+        boolean serverUpdate = data.DatabaseConfig.load().mode() == data.DatabaseMode.SERVER;
+        manifest.setProperty("sync.service.required", Boolean.toString(serverUpdate));
+        manifest.setProperty("sync.service.environment", data.EnvironmentProfile.active().id());
+        manifest.setProperty("models.dir", StudioModelService.modelRoot().toString());
+        if (serverUpdate) {
+            try {
+                manifest.setProperty("sync.service.certificate.fingerprint", LanTlsIdentity.loadOrCreate().fingerprint());
+            } catch (Exception ex) {
+                throw new IOException("Could not prepare the server's verified restart check.", ex);
+            }
+        }
         manifest.setProperty("sync.service.launch.agent.label", "com.smartstock.sync");
         manifest.setProperty("relaunch", "true");
         // The updater is launched by the current desktop process. Carry its
@@ -237,10 +248,10 @@ public final class AppUpdateService {
             List<? extends ZipEntry> candidates = archive.stream()
                     .filter(entry -> !entry.isDirectory())
                     .filter(entry -> entry.getName().matches(
-                            "inventory-management-[^/\\\\]+\\.jar"))
+                            "(?:SmartStock\\.app/Contents/app/)?inventory-management-[^/\\\\]+\\.jar"))
                     .toList();
             if (candidates.size() != 1) {
-                throw new IOException("The verified release must contain exactly one root SmartStock application JAR.");
+                throw new IOException("The verified release must contain exactly one SmartStock application JAR at its root or in SmartStock.app/Contents/app.");
             }
             Files.createDirectories(updaterRunner.getParent());
             try (InputStream input = archive.getInputStream(candidates.get(0))) {
@@ -306,16 +317,41 @@ public final class AppUpdateService {
     }
 
     private static void downloadFile(String url, Path target) throws IOException, InterruptedException {
+        try {
+            downloadFile(url, target, HTTP_CLIENT);
+        } catch (IOException ex) {
+            if (!isTlsTagMismatch(ex)) throw ex;
+            // Retry this read-only download on a fresh TLS 1.2 connection. Keep
+            // default CA/hostname verification and the staged artifact SHA-256 check.
+            javax.net.ssl.SSLParameters parameters = new javax.net.ssl.SSLParameters();
+            parameters.setProtocols(new String[]{"TLSv1.2"});
+            HttpClient compatible = HttpClient.newBuilder().sslParameters(parameters)
+                    .connectTimeout(Duration.ofSeconds(15))
+                    .followRedirects(HttpClient.Redirect.NORMAL).build();
+            downloadFile(url, target, compatible);
+        }
+    }
+
+    static boolean isTlsTagMismatch(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof javax.crypto.AEADBadTagException) return true;
+            if (cause instanceof javax.net.ssl.SSLException && cause.getMessage() != null
+                    && cause.getMessage().toLowerCase(Locale.ROOT).contains("tag mismatch")) return true;
+        }
+        return false;
+    }
+
+    private static void downloadFile(String url, Path target, HttpClient client) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .timeout(Duration.ofMinutes(5))
                 .GET()
                 .build();
-        HttpResponse<InputStream> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new IOException("Download failed with HTTP " + response.statusCode() + ".");
-        }
+        HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
         try (InputStream input = response.body()) {
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IOException("Download failed with HTTP " + response.statusCode() + ".");
+            }
             Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
         }
     }
@@ -339,13 +375,10 @@ public final class AppUpdateService {
         Files.deleteIfExists(manifestPath.resolveSibling("updater.started"));
         Files.deleteIfExists(manifestPath.resolveSibling("updater.cancelled"));
         Path runner = manifestPath.getParent().resolve("smartstock-updater-runner.jar");
-        Path appBundle = findContainingMacAppBundle(currentAppJar());
-        Path nativeUpdater = appBundle == null ? null
-                : appBundle.resolve("Contents").resolve("MacOS").resolve("SmartStockUpdater");
         ProcessBuilder process;
-        if (nativeUpdater != null && Files.isExecutable(nativeUpdater)) {
-            process = new ProcessBuilder(nativeUpdater.toString(), manifestPath.toString());
-        } else if (detectPlatform().equals("windows")) {
+        // Always execute the updater from the verified release, including macOS.
+        // An installed native launcher can still point at older migration behavior.
+        if (detectPlatform().equals("windows")) {
             Path java = windowsUpdaterJavaBinary();
             if (!Files.isExecutable(java)) {
                 throw new IOException("No updater launcher or Java executable was found at " + java + ".");

@@ -1,0 +1,3 @@
+Fixes quotation and invoice footers in the installed application's print renderer. Items, signatures, subtotal, grand total and notes now share one continuous table, removing the gap and doubled border above signatures.
+
+Received By and Team Member Signature render as readable labels with writing space. Stacked totals have consistent padding and alignment. Narrow quantity and wider description columns are preserved. Includes changes from 1.1.4. Update the store server before registers.

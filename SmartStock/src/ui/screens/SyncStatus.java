@@ -18,6 +18,12 @@ import java.time.format.DateTimeFormatter;
 public class SyncStatus extends JFrame {
     private final JLabel statusLabel = new JLabel();
     private final JLabel syncTimingLabel = new JLabel();
+    private final JLabel transferLabel = new JLabel();
+    private final JLabel transferPeriodLabel = new JLabel();
+    private final DefaultTableModel crossStoreModel = new DefaultTableModel(
+            new Object[]{"Store", "Source Snapshot", "Last Checked", "Next Check", "Error"},0) {
+        @Override public boolean isCellEditable(int row,int column){return false;}
+    };
     private static final DateTimeFormatter SYNC_TIME_FORMAT =
             DateTimeFormatter.ofPattern("MMM d, yyyy h:mm:ss a");
     private final DefaultTableModel conflictModel = new DefaultTableModel(
@@ -49,6 +55,17 @@ public class SyncStatus extends JFrame {
         JButton refreshButton = new JButton("Refresh");
         JButton runNowButton = new JButton("Run Sync Now");
         JButton resolveButton = new JButton("Mark Selected Resolved");
+        JButton billingButton = new JButton("Set Billing Period");
+        billingButton.addActionListener(e -> {
+            String value=JOptionPane.showInputDialog(this,"Billing period start shown in Supabase (YYYY-MM-DD):","Set Billing Period",JOptionPane.QUESTION_MESSAGE);
+            if(value==null)return;
+            try{
+                long start=java.time.LocalDate.parse(value.trim()).atStartOfDay(StoreTimeZoneHelper.getStoreZone()).toInstant().toEpochMilli();
+                UiTaskRunner.submit(this,"sync-status.billing",()->{LanApiClient.setSyncBillingPeriod(start);return Boolean.TRUE;},
+                        ignored->{SessionDataCache.invalidate("sync-status:");refresh();},
+                        ex->JOptionPane.showMessageDialog(this,ex.getMessage(),"Billing Period",JOptionPane.ERROR_MESSAGE));
+            }catch(java.time.DateTimeException ex){JOptionPane.showMessageDialog(this,"Enter the date as YYYY-MM-DD.","Billing Period",JOptionPane.ERROR_MESSAGE);}
+        });
         refreshButton.addActionListener(e -> refresh());
         runNowButton.addActionListener(e -> {
             runNowButton.setEnabled(false);
@@ -74,6 +91,7 @@ public class SyncStatus extends JFrame {
         buttons.add(runNowButton);
         buttons.add(refreshButton);
         buttons.add(resolveButton);
+        buttons.add(billingButton);
 
         JPanel root = new JPanel(new BorderLayout(10, 10));
         root.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
@@ -82,10 +100,14 @@ public class SyncStatus extends JFrame {
         statusHeader.add(statusLabel);
         statusHeader.add(Box.createVerticalStrut(5));
         statusHeader.add(syncTimingLabel);
+        statusHeader.add(Box.createVerticalStrut(5));
+        statusHeader.add(transferLabel);
+        statusHeader.add(transferPeriodLabel);
         root.add(statusHeader, BorderLayout.NORTH);
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Conflicts", new JScrollPane(conflictsTable));
         tabs.addTab("Audit History", new JScrollPane(auditTable));
+        tabs.addTab("Other Stores",new JScrollPane(new JTable(crossStoreModel)));
         root.add(tabs, BorderLayout.CENTER);
         JPanel footer=new JPanel(new BorderLayout());footer.add(loadingState,BorderLayout.NORTH);footer.add(buttons,BorderLayout.SOUTH);root.add(footer, BorderLayout.SOUTH);
         setContentPane(root);
@@ -100,6 +122,10 @@ public class SyncStatus extends JFrame {
 
     private void applyStatus(LanApiClient.SyncStatusSnapshot status) {
             conflictModel.setRowCount(0);auditModel.setRowCount(0);
+            crossStoreModel.setRowCount(0);
+            if(status.crossStoreRefreshes()!=null)for(var store:status.crossStoreRefreshes())
+                crossStoreModel.addRow(new Object[]{store.storeName(),displayTimeOrNever(store.sourceCompletedEpochMillis()),
+                        displayTimeOrNever(store.lastCheckedEpochMillis()),displayNextSync(store.nextRefreshEpochMillis()),store.lastError()});
             if (status.conflicts() != null) for (LanApiClient.SyncConflict conflict : status.conflicts()) {
                 conflictModel.addRow(new Object[]{conflict.conflictId(), conflict.eventType(),
                         conflict.conflictType(), conflict.status(), instant(conflict.createdAtEpochMillis())});
@@ -121,6 +147,13 @@ public class SyncStatus extends JFrame {
             long nextSync = nextSyncEpochMillis(status.lastSuccessEpochMillis(), intervalMillis);
             syncTimingLabel.setText("Last Sync: " + displayTimeOrNever(status.lastSuccessEpochMillis())
                     + "   |   Next Sync: " + displayNextSync(nextSync));
+            transferLabel.setText(String.format("Measured downloads today: %.2f MB | Uploads: %.2f MB (application payloads, not Supabase billing)",
+                    status.transferTodayResponseBytes()/1_000_000.0,status.transferTodayRequestBytes()/1_000_000.0));
+            transferPeriodLabel.setText(status.transferBillingStartEpochMillis()>0
+                    ? String.format("Billing period from %s: downloads %.2f MB | uploads %.2f MB | measurements available since %s",
+                        displayTime(status.transferBillingStartEpochMillis()),status.transferBillingResponseBytes()/1_000_000.0,
+                        status.transferBillingRequestBytes()/1_000_000.0,displayTimeOrNever(status.transferMeasuredSinceEpochMillis()))
+                    : "Billing-period totals: configure the actual period start on the store server.");
     }
 
     private void resolveSelected(JTable table) {

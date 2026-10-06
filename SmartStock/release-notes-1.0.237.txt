@@ -1,0 +1,8 @@
+SmartStock 1.0.237
+- Adds internal custom-order spoil reporting from phones through the local QR-activated web app, including required photo evidence and a reason.
+- Deducts one replacement unit from the exact inventory item or variant; flags shortages and preserves service/customer-supplied stock behavior.
+- Adds internal desktop spoil history and manager reversals, with duplicate-submission protection and private off-site recovery.
+- Allows selecting attachments before Add Line and editing files after a line enters the cart.
+- Fixes custom-order button text becoming unreadable after Windows theme refresh.
+- Includes the current offline photo models, SmartStudio compatibility, register connection, staff/device permissions, updater, storefront and other completed improvements in the source snapshot.
+- Includes the full ordered local/cloud schema migration resources and the cloud permission/recovery corrections.

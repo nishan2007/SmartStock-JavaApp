@@ -225,7 +225,11 @@ final class LanInventoryService {
         }
         fields.put("Additional Barcodes", additionalBarcodes(c, productId));
         addSalesSummary(c, fields, productId, locationId);
-        return map("fields", fields, "activities", activities(c, productId, locationId));
+        List<String> imageUrls=new ArrayList<>();
+        Object primary=fields.get("Image Url");
+        if(primary!=null&&!primary.toString().isBlank())imageUrls.add(primary.toString());
+        imageUrls.addAll(CatalogPhotoGalleryService.load(c,"products","product_id",productId));
+        return map("fields", fields, "imageUrls",imageUrls,"activities", activities(c, productId, locationId));
     }
 
     static List<Map<String, Object>> receivingHistory(Connection c, JsonObject body,

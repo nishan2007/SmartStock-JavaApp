@@ -25,7 +25,7 @@ class CrossStoreInventoryArchitectureTest {
         assertFalse(ui.contains("INSERT INTO"));
         assertTrue(service.contains("smartstock_store_table_snapshot"));
         assertTrue(service.contains("sync_cross_store_inventory_cache"));
-        assertTrue(worker.contains("CrossStoreInventoryService.refreshAll"));
+        assertTrue(worker.contains("CrossStoreRefreshCoordinator.requestRefresh"));
     }
 
     @Test

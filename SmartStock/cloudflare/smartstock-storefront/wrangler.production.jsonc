@@ -1,0 +1,15 @@
+{
+  // Deployment target only. Fill ORIGINS_JSON with verified registered store
+  // instances and configure ORIGIN_KEYS_JSON as a Worker secret before deploy.
+  // Never use the synthetic preview on port 5180 as an origin.
+  "name": "smartstock-storefront",
+  "account_id": "5a56ab6770eaa3b32509b0594417e9dc",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-24",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{"pattern": "www.deckers.gy", "custom_domain": true}, {"pattern": "deckers.gy", "custom_domain": true}],
+  "durable_objects": {"bindings": [{"name":"STORES","class_name":"StoreCoordinator"}]},
+  "migrations": [{"tag":"v1","new_sqlite_classes":["StoreCoordinator"]}],
+  "vars": {"ORIGINS_JSON":"[]", "CANONICAL_HOST":"www.deckers.gy", "REDIRECT_HOST":"deckers.gy", "BROWSE_ONLY":"true"}
+}

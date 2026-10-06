@@ -95,12 +95,14 @@ public class CustomOrderSlipFormatter {
         if (slipSettings.showPaymentReference() && !clean(data.paymentReference()).isBlank()) {
             appendField(builder, "PAY REF", data.paymentReference());
         }
-        if (slipSettings.showSignatures()) {
+        if (slipSettings.showTeamMemberSignature()) {
             appendSignature(builder, "TEAM MEMBER SIGNATURE");
-            appendSignature(builder, "CUSTOMER SIGNATURE");
         }
         appendRule(builder);
         appendWrapped(builder, slipSettings.footerNote(), RECEIPT_WIDTH);
+        if (slipSettings.showCustomerSignature()) {
+            appendSignature(builder, "CUSTOMER SIGNATURE");
+        }
         builder.append('\n');
         return builder.toString();
     }

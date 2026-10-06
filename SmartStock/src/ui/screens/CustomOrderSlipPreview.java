@@ -133,9 +133,8 @@ public class CustomOrderSlipPreview extends JFrame {
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this, "Failed to load configured printers.\n\n" + ex.getMessage(), "Receipt Printers", JOptionPane.WARNING_MESSAGE);
         }
-        if (printerBox.getItemCount() == 0) {
-            printerBox.addItem(new PrinterOption(null));
-        }
+        printerBox.insertItemAt(new PrinterOption(null), 0);
+        printerBox.setSelectedIndex(0);
         updateFormatFromPrinter();
     }
 
@@ -143,7 +142,16 @@ public class CustomOrderSlipPreview extends JFrame {
         PrinterOption selected = (PrinterOption) printerBox.getSelectedItem();
         if (selected != null && selected.printer != null) {
             formatBox.setSelectedItem(selected.printer.printFormat());
+        } else {
+            try {
+                var printer = HardwareSettingsManager.getDefaultReceiptPrinter();
+                boolean ethernet = HardwareSettingsManager.getDefaultOrderSlipPrinterDestination() == HardwareSettingsManager.ReceiptPrinterDestination.ETHERNET;
+                formatBox.setSelectedItem(ethernet || printer == null ? HardwareSettingsManager.PrintFormat.RECEIPT_40 : printer.printFormat());
+            } catch (IOException ex) {
+                formatBox.setSelectedItem(HardwareSettingsManager.PrintFormat.RECEIPT_40);
+            }
         }
+        formatBox.setEnabled(selected != null && selected.printer != null);
         syncPreviewTabToFormat();
     }
 
@@ -182,7 +190,8 @@ public class CustomOrderSlipPreview extends JFrame {
         Integer labelCount = CustomOrderLabelPrinter.promptLabelCount(this);
         try {
             PrinterOption selected = (PrinterOption) printerBox.getSelectedItem();
-            CustomOrderSlipPrinter.printToPosPrinter(slipData, selected == null ? null : selected.printer, getSelectedPrintFormat());
+            if (selected == null || selected.printer == null) CustomOrderSlipPrinter.print(slipData);
+            else CustomOrderSlipPrinter.printToPosPrinter(slipData, selected.printer, getSelectedPrintFormat());
             if (labelCount == null) {
                 JOptionPane.showMessageDialog(this, "Custom order slip sent to the printer. Order labels were skipped.");
                 return;
@@ -231,7 +240,7 @@ public class CustomOrderSlipPreview extends JFrame {
 
         @Override
         public String toString() {
-            return printer == null ? "System Default Printer" : printer.toString();
+            return printer == null ? "Default Order Slip Printer" : printer.toString();
         }
     }
 

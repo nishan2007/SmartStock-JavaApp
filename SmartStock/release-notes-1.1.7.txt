@@ -1,0 +1,6 @@
+SmartStock 1.1.7
+
+- Edit a selected custom-order cart line, restore its fields and attachments, and use Update Line to replace it. Cancel Edit preserves the original.
+- Drag files from Explorer into the custom-order attachment window. Duplicate files are ignored and the 15-file limit remains.
+- Later custom-order payments accept comma-formatted amounts and show request failures directly.
+- Includes the latest application source and resources, including the Compact quotation/invoice layout and fixes from 1.1.6.

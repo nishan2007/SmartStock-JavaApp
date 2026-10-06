@@ -75,7 +75,7 @@ public final class ServerStoreSetupService {
         }
         try (Connection connection = DB.getConnection()) {
             CloudRecoveryService.restoreRows(connection, "locations", selectedRows);
-            CloudSyncManifest mirror = CloudSyncManifest.fetchStoreSnapshot(selected.locationId());
+            CloudSyncManifest mirror = CloudSyncManifest.fetchStoreSnapshot(selected.locationId(),connection);
             CloudRecoveryService.restoreStoreMirror(connection, selected.locationId(), mirror);
             try (PreparedStatement sequence = connection.prepareStatement("""
                     SELECT setval(pg_get_serial_sequence('locations','location_id'),
@@ -102,6 +102,19 @@ public final class ServerStoreSetupService {
                 .orElseThrow(() -> new SQLException(
                         "The assigned store is no longer available in this environment."));
         return restoreFromCloud(selected);
+    }
+
+    /** Repairs a store left locally by an interrupted first setup before selecting it. */
+    public static Store reconcileLocalIdentity(Store local) throws SQLException {
+        if (local == null) throw new IllegalArgumentException("Select an existing store.");
+        List<Store> cloudStores = listCloud();
+        Store cloudAtId = cloudStores.stream()
+                .filter(store -> store.locationId() == local.locationId())
+                .findFirst().orElse(null);
+        if (cloudAtId == null || cloudAtId.storeCode().equalsIgnoreCase(local.storeCode())) {
+            return local;
+        }
+        return create(local.name(), local.storeCode(), local.timezone(), "");
     }
 
     static List<Store> parseCloudStores(String json) throws SQLException {
@@ -223,31 +236,63 @@ public final class ServerStoreSetupService {
                     "Enter a valid timezone such as America/New_York.", ex);
         }
 
+        // A fresh local database starts its identity sequence at 1 even when this
+        // cloud project already contains other stores. IDs must be unique across
+        // both databases before the server registry is consulted.
+        List<Store> cloudStores = listCloud();
+        if (cloudStores.stream().anyMatch(store ->
+                store.storeCode().equalsIgnoreCase(cleanCode))) {
+            throw new IllegalArgumentException("Store code " + cleanCode
+                    + " already belongs to an existing store. Select that store instead.");
+        }
+        int cloudMaxId = cloudStores.stream().mapToInt(Store::locationId).max().orElse(0);
+
         try (Connection connection = DB.getConnection()) {
             connection.setAutoCommit(false);
             try {
                 try (PreparedStatement existing = connection.prepareStatement(
-                        "SELECT 1 FROM locations WHERE UPPER(TRIM(receipt_store_code)) = UPPER(?)")) {
+                        "SELECT location_id, name, receipt_store_code, timezone FROM locations "
+                                + "WHERE UPPER(TRIM(receipt_store_code)) = UPPER(?)")) {
                     existing.setString(1, cleanCode);
                     try (ResultSet rows = existing.executeQuery()) {
                         if (rows.next()) {
-                            throw new IllegalArgumentException(
-                                    "Store code " + cleanCode + " already exists.");
+                            Store local = store(rows);
+                            boolean cloudIdConflict = cloudStores.stream().anyMatch(store ->
+                                    store.locationId() == local.locationId()
+                                            && !store.storeCode().equalsIgnoreCase(cleanCode));
+                            if (!cloudIdConflict || !local.name().equals(cleanName)
+                                    || !local.timezone().equals(cleanTimezone)) {
+                                throw new IllegalArgumentException(
+                                        "Store code " + cleanCode + " already exists locally.");
+                            }
+                            int replacementId = nextLocationId(connection, cloudMaxId);
+                            try (PreparedStatement relocate = connection.prepareStatement(
+                                    "UPDATE locations SET location_id=? WHERE location_id=?")) {
+                                relocate.setInt(1, replacementId);
+                                relocate.setInt(2, local.locationId());
+                                relocate.executeUpdate();
+                            }
+                            advanceLocationSequence(connection, replacementId);
+                            connection.commit();
+                            return new Store(replacementId, cleanName, cleanCode, cleanTimezone);
                         }
                     }
                 }
+                int locationId = nextLocationId(connection, cloudMaxId);
                 try (PreparedStatement insert = connection.prepareStatement("""
-                        INSERT INTO locations (name, receipt_store_code, timezone, address)
-                        VALUES (?, ?, ?, NULLIF(?, ''))
+                        INSERT INTO locations (location_id, name, receipt_store_code, timezone, address)
+                        VALUES (?, ?, ?, ?, NULLIF(?, ''))
                         RETURNING location_id, name, receipt_store_code, timezone
                         """)) {
-                    insert.setString(1, cleanName);
-                    insert.setString(2, cleanCode);
-                    insert.setString(3, cleanTimezone);
-                    insert.setString(4, cleanAddress);
+                    insert.setInt(1, locationId);
+                    insert.setString(2, cleanName);
+                    insert.setString(3, cleanCode);
+                    insert.setString(4, cleanTimezone);
+                    insert.setString(5, cleanAddress);
                     try (ResultSet rows = insert.executeQuery()) {
                         if (!rows.next()) throw new SQLException("The new store ID was not returned.");
                         Store created = store(rows);
+                        advanceLocationSequence(connection, locationId);
                         connection.commit();
                         return created;
                     }
@@ -260,6 +305,27 @@ public final class ServerStoreSetupService {
             } finally {
                 connection.setAutoCommit(true);
             }
+        }
+    }
+
+    private static int nextLocationId(Connection connection, int cloudMaxId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "SELECT COALESCE(MAX(location_id), 0) FROM locations");
+             ResultSet rows = statement.executeQuery()) {
+            rows.next();
+            return Math.addExact(Math.max(rows.getInt(1), cloudMaxId), 1);
+        } catch (ArithmeticException ex) {
+            throw new SQLException("No new store ID is available.", ex);
+        }
+    }
+
+    private static void advanceLocationSequence(Connection connection, int locationId)
+            throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT setval(pg_get_serial_sequence('locations', 'location_id'), ?, true)
+                """)) {
+            statement.setInt(1, locationId);
+            statement.execute();
         }
     }
 

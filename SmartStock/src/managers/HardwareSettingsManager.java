@@ -137,6 +137,40 @@ public class HardwareSettingsManager {
         }
     }
 
+    public static ReceiptPrinterDestination getDefaultOrderSlipPrinterDestination() throws IOException {
+        return ReceiptPrinterDestination.fromConfigValue(loadProperties().getProperty("order_slip.default_destination", "WINDOWS_QUEUE"));
+    }
+
+    public static void saveDefaultOrderSlipPrinterDestination(ReceiptPrinterDestination destination) throws IOException {
+        Properties properties = loadProperties();
+        properties.setProperty("order_slip.default_destination", destination.configValue());
+        Files.createDirectories(CONFIG_PATH.getParent());
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            properties.store(outputStream, "SmartStock local hardware settings");
+        }
+    }
+
+    public static ReceiptPrinterDestination getDefaultOrderLabelPrinterDestination() throws IOException {
+        String configured = loadProperties().getProperty("order_label.default_destination", "").trim();
+        if (!configured.isBlank()) return ReceiptPrinterDestination.fromConfigValue(configured);
+        // Preserve the receipt-printer fallback used before the label destination selector.
+        PosPrinter receiptPrinter = getDefaultReceiptPrinter();
+        return getDefaultOrderLabelPrinter() == null && receiptPrinter != null
+                && receiptPrinter.printFormat() == PrintFormat.RECEIPT_40
+                && getNativeEthernetPrinterSettings().enabled()
+                && getDefaultReceiptPrinterDestination() == ReceiptPrinterDestination.ETHERNET
+                ? ReceiptPrinterDestination.ETHERNET : ReceiptPrinterDestination.WINDOWS_QUEUE;
+    }
+
+    public static void saveDefaultOrderLabelPrinterDestination(ReceiptPrinterDestination destination) throws IOException {
+        Properties properties = loadProperties();
+        properties.setProperty("order_label.default_destination", destination.configValue());
+        Files.createDirectories(CONFIG_PATH.getParent());
+        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
+            properties.store(outputStream, "SmartStock local hardware settings");
+        }
+    }
+
     public static BadgePrinterSettings getBadgePrinterSettings() throws IOException {
         return readBadgePrinterSettings(loadProperties());
     }

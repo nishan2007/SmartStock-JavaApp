@@ -18,7 +18,7 @@ class CustomItemPhonePhotoArchitectureTest {
         assertTrue(server.contains("MANAGE_CUSTOM_ORDER_ITEMS"));
         assertTrue(client.contains("createMobileItemPhotoHandoff"));
         assertTrue(client.contains("mobileItemPhotoHandoffStatus"));
-        assertTrue(screen.contains("Photo from Phone"));
+        assertTrue(screen.contains("Add Phone Photo"));
         assertTrue(screen.contains("showPhonePhoto(\"variant\""));
     }
 
@@ -28,8 +28,9 @@ class CustomItemPhonePhotoArchitectureTest {
         String script=source("src/mobile-web/photo.js");
         assertTrue(web.contains("Instant.now().plus(Duration.ofMinutes(10))"));
         assertTrue(web.contains("PHOTO_HANDOFF_USED"));
-        assertTrue(web.contains("UPDATE custom_order_item_variants SET image_url=?"));
-        assertTrue(web.contains("UPDATE custom_order_items SET image_url=?"));
+        assertTrue(web.contains("SELECT image_url,additional_image_urls::text"));
+        assertTrue(web.contains("CatalogPhotoGalleryService.save(c,table,key,h.targetId,primary,photos)"));
+        assertTrue(web.contains("SET image_url=?,updated_at=CURRENT_TIMESTAMP"));
         assertTrue(page.contains("capture=\"environment\""));
         assertTrue(script.contains("/photo/upload"));
         assertTrue(script.contains("API=`${location.origin}/api/v1`"));

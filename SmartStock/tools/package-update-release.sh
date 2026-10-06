@@ -50,13 +50,16 @@ fi
 VERSION="${JAR_NAME#inventory-management-}"
 VERSION="${VERSION%.jar}"
 IFS='.' read -r VERSION_MAJOR VERSION_MINOR VERSION_PATCH <<< "$VERSION"
-BUILD_NUMBER=$((10#$VERSION_MAJOR * 10000 + 10#$VERSION_MINOR * 100 + 10#$VERSION_PATCH))
+BUILD_NUMBER=$((10#$VERSION_MAJOR * 100000 + 10#$VERSION_MINOR * 1000 + 10#$VERSION_PATCH))
 ZIP_PATH="$RELEASE_DIR/smartstock-windows-$VERSION.zip"
 
 rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR/payload/dependency"
 cp "$JAR_PATH" "$RELEASE_DIR/payload/"
 cp -R "$TARGET_DIR/dependency/." "$RELEASE_DIR/payload/dependency/"
+find "$RELEASE_DIR/payload/dependency" -type f -name '*.onnx' -delete
+bash "$ROOT_DIR/tools/stage-studio-models.sh" "$RELEASE_DIR/payload/dependency/catalog-studio" --notices-only
+jar --create --file "$RELEASE_DIR/smartstock-ai-model-migration.jar" --main-class app.StudioModelMigration -C "$TARGET_DIR/classes" app/StudioModelMigration.class
 cat > "$RELEASE_DIR/payload/run-smartstock-client.cmd" <<EOF
 @echo off
 set "SMARTSTOCK_ENVIRONMENT=$SMARTSTOCK_ENVIRONMENT"
@@ -83,7 +86,13 @@ EOF
 )
 
 SHA256="$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
+if unzip -Z1 "$ZIP_PATH" | grep -qi '\.onnx$'; then
+  echo 'AI models must be published separately from application updates.' >&2
+  exit 1
+fi
 SIZE_BYTES="$(wc -c < "$ZIP_PATH" | tr -d ' ')"
+(cd "$RELEASE_DIR" && shasum -a 256 smartstock-ai-model-migration.jar >smartstock-ai-model-migration.jar.sha256)
+printf '%s  %s\n' "$SHA256" "$(basename "$ZIP_PATH")" >"$ZIP_PATH.sha256"
 
 cat <<EOF
 Release artifact: $ZIP_PATH

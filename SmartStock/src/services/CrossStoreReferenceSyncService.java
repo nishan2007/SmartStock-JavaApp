@@ -27,7 +27,7 @@ final class CrossStoreReferenceSyncService {
                       - ARRAY['password_hash','password_cache_invalidated_at','employee_pin_salt',
                               'employee_pin_hash','employee_pin_updated_at','badge_secret_salt',
                               'badge_secret_hash']::text[]
-                      || jsonb_build_object('role_name',
+                      || jsonb_build_object('role_policy_version',1,'role_name',
                            (SELECT r.role_name FROM roles r WHERE r.role_id=t.role_id))
                     """),
             new TableSnapshot("user_locations", "user_id,location_id",
@@ -50,13 +50,15 @@ final class CrossStoreReferenceSyncService {
     private CrossStoreReferenceSyncService() { }
 
     static int announceChanges(Connection connection, int locationId) throws SQLException {
-        int announced = 0;
+        int announced = CrossStoreRoleSyncService.announceCustomRoles(connection, locationId);
         for (TableSnapshot table : TABLES) {
+            String payrollScope = payrollOwnerScope(table.name());
             try (PreparedStatement ps = connection.prepareStatement("SELECT " + table.keySql()
                     + ",("+table.rowSql()+")::text,"+table.timestampSql()+" FROM " + table.name() + " t "
                     + (java.util.Set.of("users","user_locations","employee_payroll_settings").contains(table.name())
-                        ? "WHERE NOT EXISTS (SELECT 1 FROM employee_registrations er WHERE er.employee_id=t.user_id AND er.status<>'APPROVED') " : "") + "ORDER BY "
+                        ? "WHERE NOT EXISTS (SELECT 1 FROM employee_registrations er WHERE er.employee_id=t.user_id AND er.status<>'APPROVED') " : payrollScope) + "ORDER BY "
                     + table.orderSql())) {
+                if (!payrollScope.isEmpty()) ps.setInt(1, locationId);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         String rowKey=rs.getString(1),rowData=rs.getString(2);
@@ -106,18 +108,29 @@ final class CrossStoreReferenceSyncService {
     }
 
     static int applyInbox(Connection connection) throws SQLException {
+        Integer localLocationId = data.DatabaseConfig.load().locationId();
+        if (localLocationId == null) throw new SQLException("A store location is required to apply shared payroll records.");
+        return applyInbox(connection, localLocationId);
+    }
+
+    static int applyInbox(Connection connection, int localLocationId) throws SQLException {
         List<InboxEvent> events=new ArrayList<>();
         try(PreparedStatement ps=connection.prepareStatement("""
-                SELECT cloud_sequence,payload FROM sync_inbox
-                WHERE event_type='REFERENCE_ROW_CHANGED' AND status IN ('RECEIVED','FAILED')
+                SELECT cloud_sequence,payload,origin_location_id FROM sync_inbox
+                WHERE event_type='REFERENCE_ROW_CHANGED' AND (status IN ('RECEIVED','FAILED')
+                  OR (status='APPLIED' AND payload->>'table_name'='users'
+                    AND payload->'row_data'->>'role_name' IS NOT NULL
+                    AND EXISTS (SELECT 1 FROM users u WHERE u.role_id IS NULL
+                      AND u.user_id::text=payload->'row_data'->>'user_id'
+                      AND u.updated_at=(payload->'row_data'->>'updated_at')::timestamptz)))
                 ORDER BY cloud_sequence
                 """ );ResultSet rs=ps.executeQuery()){
-            while(rs.next())events.add(new InboxEvent(rs.getLong(1),rs.getString(2)));
+            while(rs.next())events.add(new InboxEvent(rs.getLong(1),rs.getString(2),(Integer)rs.getObject(3)));
         }
         boolean oldAuto=connection.getAutoCommit();int applied=0;
         for(InboxEvent event:events){connection.setAutoCommit(false);try{
             JsonObject payload=JsonParser.parseString(event.payload()).getAsJsonObject();
-            applyPayload(connection,payload);
+            applyPayload(connection,payload,localLocationId,event.originLocationId());
             mark(connection,event.sequence(),"APPLIED",null);connection.commit();applied++;
         }catch(Exception ex){connection.rollback();mark(connection,event.sequence(),"FAILED",safeError(ex));connection.commit();}
         finally{connection.setAutoCommit(oldAuto);}}
@@ -126,6 +139,10 @@ final class CrossStoreReferenceSyncService {
 
     static void applyPayload(Connection connection,JsonObject payload)throws SQLException{
         String table=required(payload,"table_name"),operation=required(payload,"operation");
+        if ("role_policy".equals(table) && "UPSERT".equals(operation)) {
+            CrossStoreRoleSyncService.apply(connection, payload.getAsJsonObject("row_data"));
+            return;
+        }
         if("UPSERT".equals(operation)){
             upsert(connection,table,payload.getAsJsonObject("row_data"));
             if("users".equals(table)&&payload.has("protected_credentials"))
@@ -134,6 +151,36 @@ final class CrossStoreReferenceSyncService {
         else if("DELETE".equals(operation))delete(connection,table,payload.getAsJsonObject("key_data"),
                 Instant.parse(required(payload,"deleted_at")));
         else throw new SQLException("Shared reference event has an invalid operation.");
+    }
+
+    private static String payrollOwnerScope(String table) {
+        return switch (table) {
+            case "employee_time_clock", "payroll_payments", "employee_payroll_bonuses" -> "WHERE t.location_id=? ";
+            case "employee_time_clock_adjustments" -> "WHERE EXISTS (SELECT 1 FROM employee_time_clock tc WHERE tc.clock_id=t.clock_id AND tc.location_id=?) ";
+            default -> "";
+        };
+    }
+
+    static void applyPayload(Connection c, JsonObject payload, int localLocationId,
+                             Integer originLocationId) throws SQLException {
+        String table = required(payload,"table_name");
+        if (!payrollOwnerScope(table).isEmpty() && "UPSERT".equals(required(payload,"operation"))) {
+            JsonObject row = payload.getAsJsonObject("row_data");
+            Integer owner = null;
+            // Look up the existing clock too: a remote payload cannot change its
+            // location to evade ownership or reopen this store's completed shift.
+            if ("employee_time_clock".equals(table) || "employee_time_clock_adjustments".equals(table)) {
+                try (PreparedStatement ps = c.prepareStatement("SELECT location_id FROM employee_time_clock WHERE clock_uuid=?::uuid")) {
+                    ps.setString(1,required(row,"clock_uuid"));
+                    try (ResultSet rs=ps.executeQuery()) { if(rs.next()) owner=(Integer)rs.getObject(1); }
+                }
+                if (owner != null && owner == localLocationId) return;
+            }
+            if (owner == null && row.has("location_id") && !row.get("location_id").isJsonNull())
+                owner = row.get("location_id").getAsInt();
+            if (owner == null || owner == localLocationId || !owner.equals(originLocationId)) return;
+        }
+        applyPayload(c,payload);
     }
 
     private static JsonObject protectedCredentials(Connection c,int userId)throws SQLException{
@@ -171,11 +218,21 @@ final class CrossStoreReferenceSyncService {
                     COALESCE(i.badge_rotated_at,i.badge_generated_at)>=
                     COALESCE(u.badge_rotated_at,u.badge_generated_at,'epoch'::timestamptz)
                     THEN i.badge_secret_hash ELSE u.badge_secret_hash END
-                FROM incoming i WHERE u.user_id=i.user_id
+                FROM incoming i WHERE u.user_id=i.user_id AND (
+                  (i.employee_pin_updated_at IS NOT NULL AND
+                    i.employee_pin_updated_at>=COALESCE(u.employee_pin_updated_at,'epoch'::timestamptz)
+                    AND (u.employee_pin_salt IS DISTINCT FROM i.employee_pin_salt
+                      OR u.employee_pin_hash IS DISTINCT FROM i.employee_pin_hash
+                      OR u.employee_pin_updated_at IS DISTINCT FROM i.employee_pin_updated_at))
+                  OR (COALESCE(i.badge_rotated_at,i.badge_generated_at) IS NOT NULL AND
+                    COALESCE(i.badge_rotated_at,i.badge_generated_at)>=
+                    COALESCE(u.badge_rotated_at,u.badge_generated_at,'epoch'::timestamptz)
+                    AND (u.badge_secret_salt IS DISTINCT FROM i.badge_secret_salt
+                      OR u.badge_secret_hash IS DISTINCT FROM i.badge_secret_hash)))
                 """)){p.setString(1,credentials.toString());p.executeUpdate();}
     }
 
-    private static boolean alreadyKnown(Connection c,String table,String key,String hash)throws SQLException{
+    static boolean alreadyKnown(Connection c,String table,String key,String hash)throws SQLException{
         try(PreparedStatement ps=c.prepareStatement("""
                 SELECT 1 FROM sync_outbox
                 WHERE event_type='REFERENCE_ROW_CHANGED' AND payload->>'table_name'=?
@@ -219,6 +276,24 @@ final class CrossStoreReferenceSyncService {
     }
 
     private static void upsertUser(Connection c,JsonObject r)throws SQLException{
+        // An older server cannot overwrite a repaired role while stores update in sequence.
+        if ((!r.has("role_policy_version") || r.get("role_policy_version").isJsonNull()
+                || r.get("role_policy_version").getAsInt() < 1) && StoreRoleRecoveryService.completed(c)) {
+            r = r.deepCopy();
+            try (PreparedStatement p = c.prepareStatement("""
+                    SELECT r.role_name FROM users u JOIN roles r USING(role_id) WHERE u.user_id=?
+                    """)) {
+                p.setInt(1, integer(r, "user_id"));
+                try (ResultSet rs = p.executeQuery()) { if (rs.next()) r.addProperty("role_name", rs.getString(1)); }
+            }
+        }
+        String roleName = required(r, "role_name");
+        try (PreparedStatement p = c.prepareStatement("SELECT 1 FROM roles WHERE UPPER(role_name)=UPPER(?)")) {
+            p.setString(1, roleName);
+            try (ResultSet rs = p.executeQuery()) {
+                if (!rs.next()) throw new SQLException("Employee role is not available yet: " + roleName);
+            }
+        }
         String sql="""
                 INSERT INTO users(user_id,username,first_name,middle_name,last_name,full_name,nickname,email,phone,
                   employee_photo_url,employee_id_card_document_url,date_of_birth,hire_date,badge_id,
@@ -237,7 +312,8 @@ final class CrossStoreReferenceSyncService {
                   auth_user_id=EXCLUDED.auth_user_id,is_active=EXCLUDED.is_active,
                   deactivated_at=EXCLUDED.deactivated_at,deactivated_by_user_id=EXCLUDED.deactivated_by_user_id,
                   deactivated_by_name=EXCLUDED.deactivated_by_name,updated_at=EXCLUDED.updated_at
-                WHERE users.updated_at<EXCLUDED.updated_at
+                WHERE (users.updated_at<EXCLUDED.updated_at
+                       OR (users.updated_at=EXCLUDED.updated_at AND users.role_id IS NULL))
                   AND (users.auth_user_id IS NULL OR EXCLUDED.auth_user_id IS NULL
                        OR users.auth_user_id=EXCLUDED.auth_user_id)
                 """;
@@ -286,13 +362,29 @@ final class CrossStoreReferenceSyncService {
             nullableInt(p,i++,r,"revoked_by_user_id");nullableTimestamp(p,i++,r,"last_used_at");p.setTimestamp(i,timestamp(r,"updated_at"));p.executeUpdate();}
     }
 
-    private static void upsertPayrollSetting(Connection c,JsonObject r)throws SQLException{
+    static void upsertPayrollSetting(Connection c,JsonObject r)throws SQLException{
+        if (!r.has("compensation_type") || r.get("compensation_type").isJsonNull()
+                || !r.has("pay_rate") || r.get("pay_rate").isJsonNull()) {
+            // Legacy events cannot supply a historical rate. Only acknowledge one
+            // already superseded by a complete record for the same effective date.
+            try (PreparedStatement p = c.prepareStatement("""
+                    SELECT 1 FROM employee_payroll_settings
+                    WHERE user_id=? AND effective_from=? AND updated_at>=?
+                      AND compensation_type IS NOT NULL AND pay_rate IS NOT NULL
+                    """)) {
+                p.setInt(1,integer(r,"user_id"));
+                p.setDate(2,date(r,"effective_from"));
+                p.setTimestamp(3,timestamp(r,"updated_at"));
+                try (ResultSet rs=p.executeQuery()) { if (rs.next()) return; }
+            }
+            throw new SQLException("Incomplete payroll event requires a complete source record for its effective date.");
+        }
         try(PreparedStatement p=c.prepareStatement("""
                 INSERT INTO employee_payroll_settings(setting_id,user_id,period_type,work_hour_limit,effective_from,
                   compensation_type,pay_rate,created_by_user_id,created_by_name,created_at,updated_at)
                 VALUES(?,?,?,?,?,?::compensation_type_enum,?,?,?,?,?)
-                ON CONFLICT(setting_id) DO UPDATE SET period_type=EXCLUDED.period_type,
-                  work_hour_limit=EXCLUDED.work_hour_limit,effective_from=EXCLUDED.effective_from,
+                ON CONFLICT(user_id,effective_from) DO UPDATE SET period_type=EXCLUDED.period_type,
+                  work_hour_limit=EXCLUDED.work_hour_limit,
                   compensation_type=EXCLUDED.compensation_type,pay_rate=EXCLUDED.pay_rate,
                   created_by_user_id=EXCLUDED.created_by_user_id,created_by_name=EXCLUDED.created_by_name,
                   updated_at=EXCLUDED.updated_at WHERE employee_payroll_settings.updated_at<EXCLUDED.updated_at
@@ -492,5 +584,5 @@ final class CrossStoreReferenceSyncService {
             this(name,orderSql,keySql,timestampSql,"to_jsonb(t)");
         }
     }
-    private record InboxEvent(long sequence,String payload) { }
+    private record InboxEvent(long sequence,String payload,Integer originLocationId) { }
 }

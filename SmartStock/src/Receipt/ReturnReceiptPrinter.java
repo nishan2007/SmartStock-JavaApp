@@ -22,7 +22,7 @@ public final class ReturnReceiptPrinter {
                                          boolean reprint) throws PrintException {
         HardwareSettingsManager.PrintFormat format = printer == null ? HardwareSettingsManager.PrintFormat.RECEIPT_40 : printer.printFormat();
         CompanyCustomizationManager.ReceiptSettings settings = CompanyCustomizationManager.loadReceiptSettings();
-        if (format == HardwareSettingsManager.PrintFormat.RECEIPT_40) {
+        if (format == HardwareSettingsManager.PrintFormat.RECEIPT_40 || NativeEscPosTransport.isEnabled()) {
             byte[] content = formatEscPos(receipt, settings, reprint);
             if (NativeEscPosTransport.sendIfEnabled(content) != null) return;
         }

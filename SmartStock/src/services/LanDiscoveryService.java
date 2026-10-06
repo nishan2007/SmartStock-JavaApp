@@ -69,6 +69,8 @@ final class LanDiscoveryService implements AutoCloseable {
         return service;
     }
 
+    boolean isReady() { return running && !socket.isClosed() && thread.isAlive(); }
+
     @Override public void close() {
         running = false;
         socket.close();

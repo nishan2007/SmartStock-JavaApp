@@ -77,7 +77,6 @@ merge it with the main development work.
 
 ## Platform packaging
 
-- Current source release version: `1.0.83`
 - Version source of truth: `SmartStock/pom.xml`
 - Windows: `SmartStock/tools/package-windows-release.ps1`
 - macOS: `SmartStock/tools/package-macos-release.sh`
@@ -87,6 +86,21 @@ application image, and release artifact names. Before packaging either platform,
 update the single `<version>` value in `SmartStock/pom.xml`, commit that version
 change with the release work, and build both platforms from the same commit.
 Do not maintain separate Windows and macOS version numbers.
+Release metadata uses `major * 100000 + minor * 1000 + patch`; version `1.1.1`
+has build number `101001` on every platform.
+
+Application updates and installers exclude AI model weights. Administrators
+install Fast and Best separately through **Status > AI Models** on the store
+server. Existing verified models persist across application updates. Retain the
+inference runtime and model notices/licences in every application package.
+
+Follow the [packaging and publishing guide](SmartStock/docs/release-packaging-publishing.md)
+and [AI model rollout guide](SmartStock/docs/ai-model-updates.md). Publish models
+only when their files change, then publish application releases independently.
+The publishing tools check that application ZIPs are model-free and that the
+hosted catalogue has its verified immutable snapshot before release metadata is
+created. Older Mac installations require the migration helper before their
+first model-free upgrade. Building or preparing artifacts does not publish them.
 
 Confirm the shared version from the repository root with:
 

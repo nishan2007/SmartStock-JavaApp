@@ -1,0 +1,7 @@
+SmartStudio 0.1.4
+
+- Fix drag-and-drop failing with a Windows DnD state error: capture the native drop before loading the image in the background.
+- Reopen SmartStudio automatically after an in-app update finishes, including updates initiated by SmartStudio 0.1.3.
+- Retain original-size transparent Copy result and existing branding and pairing.
+
+This release includes only SmartStudio changes and uses the existing SmartStock server connection.

@@ -1,0 +1,1 @@
+Repairs Rosehall catalog enrollment from Skeldon's verified cloud snapshot, preserving store transactions and existing data. Downloads missing OneDrive images after importing product and custom-item metadata. Stops safely on catalog identity conflicts and retries interrupted downloads. Runs recovery snapshot cleanup before creating a new mirror.

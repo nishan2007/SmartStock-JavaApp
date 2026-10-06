@@ -82,6 +82,15 @@ public final class SchemaContractService {
             ,"database/migrations/v1_after/20260919180000_name_custom_item_permission.sql"
             ,"database/migrations/v1_after/20260920120000_sale_quick_pick_sizes.sql"
             ,"database/migrations/v1_after/20260924120000_allow_same_name_custom_variants.sql"
+            ,"database/migrations/v1_after/20260926120000_catalog_photo_galleries.sql"
+            ,"database/migrations/v1_after/20261004120000_catalog_studio_shared_reviews.sql"
+            ,"database/migrations/v1_after/20261007120000_custom_order_media.sql"
+            ,"database/migrations/v1_after/20261008120000_custom_order_design_workspace.sql"
+            ,"database/migrations/v1_after/20261008160000_studio_device_access.sql"
+            ,"database/migrations/v1_after/20261008170000_custom_order_spoils.sql"
+            ,"database/migrations/v1_after/20261008180000_custom_order_signature_controls.sql"
+            ,"database/migrations/v1_after/20261008190000_manual_custom_order_entry.sql"
+            ,"database/migrations/v1_after/20261003173205_cross_store_egress_local.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -96,16 +105,19 @@ public final class SchemaContractService {
             "database/migrations/v1_after/20260820213000_seed_cloud_builtin_roles.sql",
             "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql"
             ,"database/migrations/v1_after/20260831120000_apple_wallet_badges.sql"
-            ,"database/migrations/v1_after/20260831150000_wallet_template.sql"
             ,"database/migrations/v1_after/20260902180000_wallet_location_relevance.sql"
-            ,"database/migrations/v1_after/20260903120000_whatsapp_sales_documents.sql"
-            ,"database/migrations/v1_after/20260904150000_cash_drawer_count_history.sql"
-            ,"database/migrations/v1_after/20260907120000_customer_charge_authorizations.sql"
             ,"database/migrations/v1_after/20260908120000_employee_registration.sql"
             ,"database/migrations/v1_after/20260909120000_employment_portal.sql"
-            ,"database/migrations/v1_after/20260911180000_sale_quick_pick_item_types.sql"
             ,"database/migrations/v1_after/20260919180000_name_custom_item_permission.sql"
-            ,"database/migrations/v1_after/20260920120000_sale_quick_pick_sizes.sql"
+            ,"database/migrations/v1_after/20260927120000_storefront_private_creative_storage.sql"
+            ,"database/migrations/v1_after/20261007120100_custom_order_private_storage.sql"
+            ,"database/migrations/v1_after/20261008130000_fast_cloud_sync_schema_status.sql"
+            ,"database/migrations/v1_after/20261008140000_store_mirror_clone_timeout.sql"
+            ,"database/migrations/v1_after/20261008150000_guard_payroll_event_ownership.sql"
+            ,"database/migrations/v1_after/20261008160000_studio_device_access.sql"
+            ,"database/migrations/v1_after/20261008170100_custom_order_spoil_permissions.sql"
+            ,"database/migrations/v1_after/20261008190000_manual_custom_order_entry.sql"
+            ,"database/migrations/v1_after/20261003173203_cross_store_egress_cloud.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
@@ -115,7 +127,9 @@ public final class SchemaContractService {
             "SET_CREDIT_LIMIT", "EDIT_ACCOUNT_NUMBER", "VIEW_ITEM_DETAILS",
             "EMPLOYEE_MANAGEMENT", "ROLE_MANAGEMENT", "VIEW_REPORTS", "CHANGE_STORE",
             "COMPANY_CUSTOMIZATION", "LOCAL_DEVICE_SETTINGS", "CUSTOM_ORDER_PRICE_OVERRIDE",
-            "CUSTOM_ORDER_ITEMS", "MANAGE_CUSTOM_ORDER_ITEMS", "ADD_MISC_SALE_ITEM", "VIEW_DRAWER_HISTORY");
+            "CUSTOM_ORDER_ITEMS", "MANAGE_CUSTOM_ORDER_ITEMS", "ADD_MISC_SALE_ITEM", "VIEW_DRAWER_HISTORY",
+            "REMOVE_CUSTOM_ORDER_FILES", "CUSTOM_ORDER_FILE_SIZE_OVERRIDE",
+            "RECORD_CUSTOM_ORDER_SPOILS", "REVERSE_CUSTOM_ORDER_SPOILS", "MANUAL_CUSTOM_ORDER_ENTRY");
 
 
     private SchemaContractService() {
@@ -145,6 +159,7 @@ public final class SchemaContractService {
 
     public static void installLocalBaseline(Connection connection) throws Exception {
         installBaseline(connection, localContractResources(), "LOCAL", List.of("public"));
+        StorefrontSchema.ensure(connection);
     }
 
     public static Readiness validateLocal(Connection connection) throws SQLException {
@@ -474,6 +489,13 @@ public final class SchemaContractService {
         ensureCustomVariantBrandUpgrade(connection);
         ensureSameNameCustomVariantsUpgrade(connection);
         ensureCustomItemsInPosUpgrade(connection);
+        ensureCatalogPhotoGalleriesUpgrade(connection);
+        ensureCatalogStudioSharedReviewsUpgrade(connection);
+        ensureCustomOrderMediaUpgrade(connection);
+        ensureCustomOrderDesignWorkspaceUpgrade(connection);
+        ensureCustomOrderSpoilsUpgrade(connection);
+        ensureCustomOrderSignatureControlsUpgrade(connection);
+        ensureStudioDeviceAccessUpgrade(connection);
         ensureCustomerChargeAuthorizationUpgrade(connection);
         ensureAutomaticCustomerDiscountUpgrade(connection);
         ensureEmployeeRegistrationUpgrade(connection);
@@ -493,9 +515,41 @@ public final class SchemaContractService {
         ensureWalletTemplateUpgrade(connection);
         ensureWalletSessionAuthSourcesUpgrade(connection);
         ensureWalletLocationRelevanceUpgrade(connection);
+        ensureCrossStoreEgressUpgrade(connection);
         Readiness readiness = validateLocal(connection);
         if (!readiness.ready()) throw new SQLException(readiness.message(), "55000");
         VALIDATED_LOCAL_DATABASES.add(key);
+    }
+
+    /** Applies a packaged migration only to an exact, undrifted previous contract. */
+    public static void ensureCrossStoreEgressUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection,"public","smartstock_schema_metadata")
+                || tableExists(connection,"public","sync_cross_store_refresh")) return;
+        String migration="database/migrations/v1_after/20261003173205_cross_store_egress_local.sql";
+        List<String> previous=new ArrayList<>(localContractResources());previous.remove(migration);
+        try {
+            String resource=resourceFingerprint(previous);
+            String catalog=catalogFingerprint(connection,List.of("public"),false);
+            try(PreparedStatement p=connection.prepareStatement("SELECT resource_fingerprint_sha256,catalog_fingerprint_sha256 FROM public.smartstock_schema_metadata WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                p.setInt(1,BASELINE_VERSION);try(ResultSet r=p.executeQuery()){
+                    if(!r.next() || (!resource.equals(r.getString(1))
+                            && !resourceFingerprint(localContractResources()).equals(r.getString(1)))
+                            || !catalog.equals(r.getString(2)))
+                        throw new SQLException("Local schema drift blocks the cross-store egress migration.","55000");
+                }
+            }
+            if(!connection.getAutoCommit())throw new SQLException("Cross-store schema upgrade needs an independent transaction.");
+            connection.setAutoCommit(false);
+            try {
+                SqlScriptRunner.runResource(connection,migration);
+                try(PreparedStatement p=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                    p.setString(1,resourceFingerprint(localContractResources()));p.setString(2,catalogFingerprint(connection,List.of("public"),false));
+                    p.setInt(3,BASELINE_VERSION);p.executeUpdate();
+                }
+                connection.commit();
+            }catch(Exception ex){connection.rollback();throw ex;}
+            finally{connection.setAutoCommit(true);}
+        }catch(Exception ex){if(ex instanceof SQLException sql)throw sql;throw new SQLException("Cross-store egress migration failed.",ex);}
     }
 
     public static void ensureEmploymentPortalUpgrade(Connection connection)throws SQLException {
@@ -703,6 +757,127 @@ public final class SchemaContractService {
             }
             connection.commit();
         }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Same-name custom variants could not be enabled.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCatalogPhotoGalleriesUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","products")||!tableExists(connection,"public","custom_order_items"))return;
+        if(columnExists(connection,"public","products","additional_image_urls")
+                &&columnExists(connection,"public","custom_order_items","additional_image_urls")
+                &&columnExists(connection,"public","custom_order_item_variants","additional_image_urls"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260926120000_catalog_photo_galleries.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Catalog photo galleries could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCatalogStudioSharedReviewsUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "products")
+                || tableExists(connection, "public", "catalog_studio_reviews")) return;
+        boolean auto = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20261004120000_catalog_studio_shared_reviews.sql"));
+            if (tableExists(connection, "public", "smartstock_schema_metadata"))
+                try (PreparedStatement ps = connection.prepareStatement(
+                        "UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                    ps.setString(1, resourceFingerprint(localContractResources()));
+                    ps.setString(2, catalogFingerprint(connection, List.of("public"), false));
+                    ps.setInt(3, BASELINE_VERSION);
+                    ps.executeUpdate();
+                }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback();
+            throw new SQLException("Shared catalog photo reviews could not be installed.", ex);
+        } finally {
+            connection.setAutoCommit(auto);
+        }
+    }
+
+    public static void ensureCustomOrderMediaUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","custom_orders")||!tableExists(connection,"public","custom_order_lines"))return;
+        if(tableExists(connection,"public","custom_order_files")&&tableExists(connection,"public","custom_order_design_proofs")
+                &&columnExists(connection,"public","company_customization","custom_order_file_limit_bytes"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20261007120000_custom_order_media.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Custom order media could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCustomOrderSignatureControlsUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection, "public", "company_customization")
+                || (columnExists(connection, "public", "company_customization", "custom_order_slip_show_team_member_signature")
+                && columnExists(connection, "public", "company_customization", "custom_order_slip_show_customer_signature"))) return;
+        boolean auto = connection.getAutoCommit();
+        connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20261008180000_custom_order_signature_controls.sql"));
+            if (tableExists(connection, "public", "smartstock_schema_metadata")) {
+                try (PreparedStatement ps = connection.prepareStatement(
+                        "UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                    ps.setString(1, resourceFingerprint(localContractResources()));
+                    ps.setString(2, catalogFingerprint(connection, List.of("public"), false));
+                    ps.setInt(3, BASELINE_VERSION);
+                    ps.executeUpdate();
+                }
+            }
+            connection.commit();
+        } catch (Exception ex) {
+            connection.rollback();
+            throw new SQLException("Custom order signature controls could not be installed.", ex);
+        } finally {
+            connection.setAutoCommit(auto);
+        }
+    }
+
+    public static void ensureCustomOrderSpoilsUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","custom_order_lines")||tableExists(connection,"public","custom_order_spoils"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20261008170000_custom_order_spoils.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();throw new SQLException("Custom order spoils could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCustomOrderDesignWorkspaceUpgrade(Connection connection)throws SQLException{
+        if(!tableExists(connection,"public","custom_order_lines"))return;
+        if(tableExists(connection,"public","custom_order_design_documents")
+                &&columnExists(connection,"public","custom_order_items","template_width"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try{
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20261008120000_custom_order_design_workspace.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata"))try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Custom order design workspace could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureStudioDeviceAccessUpgrade(Connection connection) throws SQLException {
+        if (!tableExists(connection,"public","devices")) return;
+        if (tableExists(connection,"public","studio_device_clients") && columnExists(connection,"public","lan_api_sessions","client_application")) return;
+        boolean auto=connection.getAutoCommit(); connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20261008160000_studio_device_access.sql"));
+            if(tableExists(connection,"public","smartstock_schema_metadata")) try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();
+            }
+            connection.commit();
+        } catch(Exception ex) { connection.rollback(); throw new SQLException("Studio device access could not be installed.",ex); }
+        finally { connection.setAutoCommit(auto); }
     }
 
     public static void ensureCustomItemsInPosUpgrade(Connection connection)throws SQLException{
@@ -1016,6 +1191,10 @@ public final class SchemaContractService {
         try {
             SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
                     "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql"));
+            // This permission-only migration has no table/column marker. Existing
+            // stores must apply it before checking the current required catalog.
+            SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
+                    "database/migrations/v1_after/20261008190000_manual_custom_order_entry.sql"));
             try (PreparedStatement update = connection.prepareStatement("""
                     UPDATE public.smartstock_schema_metadata
                     SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=?
@@ -1464,6 +1643,12 @@ public final class SchemaContractService {
             for (String resource : resources) {
                 String sql = SqlScriptRunner.readResource(resource)
                         .replace(RESOURCE_FINGERPRINT_TOKEN, resourceFingerprint);
+                // Appended baseline features can allocate permission IDs above the original dump's
+                // sequence value. Do not rewind that sequence before the seed's additional grants.
+                if (resource.equals("database/v1/local/002_seed.sql")) {
+                    sql=sql.replace("SELECT pg_catalog.setval('public.permissions_permission_id_seq', 72, true);",
+                            "SELECT pg_catalog.setval('public.permissions_permission_id_seq', GREATEST(72, (SELECT COALESCE(MAX(permission_id),72) FROM public.permissions)), true);");
+                }
                 SqlScriptRunner.runSql(connection, sql);
             }
             // The already-applied v1 baseline predates grant fingerprinting. The

@@ -166,6 +166,7 @@ public class CustomerAccounts extends JFrame {
         accountNumberField.setEditable(false);
         nameField = new JTextField();
         phoneField = new JTextField();
+        phoneField.setToolTipText("Seven-digit Guyana number or international number with country code, e.g. +5927058194. Saved with +country code and digits.");
         emailField = new JTextField();
         customerSinceField = new JTextField();
         customerTypeSelector = new CustomerTypeSelector();
@@ -392,7 +393,8 @@ public class CustomerAccounts extends JFrame {
 
     private void addCustomer() {
         String name = nameField.getText().trim();
-        String phone = phoneField.getText().trim();
+        String phone = normalizedPhone();
+        if (phone == null) return;
         String email = emailField.getText().trim();
         String accountNotes = accountNotesArea.getText().trim();
         Integer customerSince=parseCustomerSince(customerSinceField.getText());if(customerSinceField.getText()!=null&&!customerSinceField.getText().trim().isEmpty()&&customerSince==null)return;
@@ -436,7 +438,8 @@ public class CustomerAccounts extends JFrame {
 
         String accountNumber = accountNumberField.getText().trim();
         String name = nameField.getText().trim();
-        String phone = phoneField.getText().trim();
+        String phone = normalizedPhone();
+        if (phone == null) return;
         String email = emailField.getText().trim();
         String accountNotes = accountNotesArea.getText().trim();
         Integer customerSince=parseCustomerSince(customerSinceField.getText());if(customerSinceField.getText()!=null&&!customerSinceField.getText().trim().isEmpty()&&customerSince==null)return;
@@ -476,6 +479,18 @@ public class CustomerAccounts extends JFrame {
             },ex->JOptionPane.showMessageDialog(this,"Failed to update customer account: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to update customer account: " + ex.getMessage());
+        }
+    }
+
+    private String normalizedPhone() {
+        try {
+            String phone = utils.CustomerPhoneNumber.normalize(phoneField.getText());
+            phoneField.setText(phone);
+            return phone;
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Phone number", JOptionPane.WARNING_MESSAGE);
+            phoneField.requestFocusInWindow();
+            return null;
         }
     }
 

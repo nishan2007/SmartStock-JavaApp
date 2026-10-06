@@ -96,7 +96,7 @@ fi
 VERSION="${JAR_NAME#inventory-management-}"
 VERSION="${VERSION%.jar}"
 IFS='.' read -r VERSION_MAJOR VERSION_MINOR VERSION_PATCH <<< "$VERSION"
-BUILD_NUMBER=$((10#$VERSION_MAJOR * 10000 + 10#$VERSION_MINOR * 100 + 10#$VERSION_PATCH))
+BUILD_NUMBER=$((10#$VERSION_MAJOR * 100000 + 10#$VERSION_MINOR * 1000 + 10#$VERSION_PATCH))
 ZIP_PATH="$RELEASE_DIR/smartstock-mac-$VERSION.zip"
 DMG_PATH="$RELEASE_DIR/smartstock-mac-$VERSION.dmg"
 
@@ -107,6 +107,8 @@ mkdir -p "$JPACKAGE_INPUT_DIR/dependency"
 
 cp "$JAR_PATH" "$JPACKAGE_INPUT_DIR/"
 cp -R "$TARGET_DIR/dependency/." "$JPACKAGE_INPUT_DIR/dependency/"
+find "$JPACKAGE_INPUT_DIR/dependency" -type f -name '*.onnx' -delete
+bash "$ROOT_DIR/tools/stage-studio-models.sh" "$JPACKAGE_INPUT_DIR/dependency/catalog-studio" --notices-only
 # These artifacts contain compile-time annotations only. They are not referenced
 # by SmartStock's runtime dependency graph and needlessly inflate updater bundles.
 rm -f "$JPACKAGE_INPUT_DIR/dependency/checker-qual-"*.jar
@@ -236,6 +238,16 @@ EOF
 fi
 
 SHA256="$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
+if unzip -Z1 "$ZIP_PATH" | grep -qi '\.onnx$'; then
+  echo 'AI models must be published separately from application updates.' >&2
+  exit 1
+fi
+unzip -Z1 "$ZIP_PATH" | grep 'catalog-studio-model-NOTICE.txt$' >/dev/null
+unzip -Z1 "$ZIP_PATH" | grep 'birefnet-LICENSE.txt$' >/dev/null
+unzip -Z1 "$ZIP_PATH" | grep 'dependency/onnxruntime-.*\.jar$' >/dev/null
+jar --create --file "$RELEASE_DIR/smartstock-ai-model-migration.jar" --main-class app.StudioModelMigration -C "$TARGET_DIR/classes" app/StudioModelMigration.class
+(cd "$RELEASE_DIR" && shasum -a 256 smartstock-ai-model-migration.jar >smartstock-ai-model-migration.jar.sha256)
+printf '%s  %s\n' "$SHA256" "$(basename "$ZIP_PATH")" >"$ZIP_PATH.sha256"
 SIZE_BYTES="$(wc -c < "$ZIP_PATH" | tr -d ' ')"
 
 cat <<EOF

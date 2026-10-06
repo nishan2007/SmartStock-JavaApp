@@ -1,0 +1,7 @@
+SmartStock 1.0.232
+
+Fixes Windows update failures caused by a locked bundled tunnel executable. Updates and rollback now stage complete application files before swapping directories, preventing partial deletion of required Java libraries.
+
+The updater stops the tunnel executable from both desktop and server application folders and retains the original error if rollback also fails. Includes the features from 1.0.231.
+
+Update the store server and registers. If an older installation already fails to launch, restore its missing libraries and apply the updater hotfix before using the in-app updater.

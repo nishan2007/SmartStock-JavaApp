@@ -1,0 +1,9 @@
+Windows LAN service startup repair
+
+- Correctly recognize the Windows background task's Running state in server setup.
+- Recognize installed Windows tasks despite spacing in their status output, avoiding repeated service installation.
+- Repair older Explorer-based server launch tasks using the direct Java task.
+- Preserve service installation failures instead of continuing as if setup succeeded.
+- Wait for LAN port 8443 after Start LAN Service and report task diagnostics if the listener does not open.
+
+Cloud Offline and background sync degradation remain separate from local LAN availability.

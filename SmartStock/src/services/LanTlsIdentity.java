@@ -71,6 +71,10 @@ public final class LanTlsIdentity {
         SSLContext context = SSLContext.getInstance("TLSv1.3");
         context.init(kmf.getKeyManagers(), null, null);
         Certificate certificate = keyStore.getCertificate(ALIAS);
+        // Public certificate only, for the standalone updater's pinned loopback health check.
+        Path publicCertificate = KEYSTORE.resolveSibling("lan-api.cer");
+        Files.write(publicCertificate, certificate.getEncoded());
+        SecureFilePermissions.restrictFileToOwner(publicCertificate);
         String fingerprint = HexFormat.of().formatHex(
                 MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded()));
         return new LanTlsIdentity(context, fingerprint);
@@ -92,6 +96,8 @@ public final class LanTlsIdentity {
 
     /** Bonjour/mDNS name used by iPhone browsers on the store LAN. */
     public static String mobileWebHostName() throws Exception {
+        String configured = configuredMobileWebHost();
+        if (!configured.isBlank()) return configured;
         // Prefer the store's primary LAN address when it is present.  Hostname
         // resolution can return Hyper-V/WSL adapters first, which makes the
         // QR target unreachable from phones on the main 10.1.1.x network.
@@ -104,6 +110,59 @@ public final class LanTlsIdentity {
         }
         String hostname = tlsHostName();
         return hostname.endsWith(".local") ? hostname : hostname + ".local";
+    }
+
+    static String validateMobileWebHost(String value) {
+        String host = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        if (host.isBlank()) return "";
+        if (host.length() > 253 || !host.endsWith(".deckers.gy") ||
+                !host.matches("(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+deckers\\.gy"))
+            throw new IllegalArgumentException("Use a local Deckers subdomain such as studio.deckers.gy.");
+        return host;
+    }
+
+    private static String configuredMobileWebHost() throws Exception {
+        String configured = System.getProperty("smartstock.mobileWeb.host");
+        if (configured == null) {
+            Path settings = KEYSTORE.getParent().resolve("mobile-web.properties");
+            if (!Files.isRegularFile(settings)) return "";
+            var properties = new java.util.Properties();
+            try (var input = Files.newInputStream(settings)) { properties.load(input); }
+            configured = properties.getProperty("host", "");
+        }
+        return validateMobileWebHost(configured);
+    }
+
+    /** Separate browser identity: never rotates the certificate pinned by registers. */
+    public static SSLContext mobileWebSslContext(LanTlsIdentity registerIdentity) throws Exception {
+        String host = configuredMobileWebHost();
+        if (host.isBlank()) return registerIdentity.sslContext();
+        Path directory = KEYSTORE.getParent();
+        Files.createDirectories(directory);
+        SecureFilePermissions.restrictDirectoryToOwner(directory);
+        Path webStore = directory.resolve("mobile-web-" + host + ".p12");
+        String secret = "mobile-web-keystore-password";
+        String password = SecureCredentialStore.read(secret);
+        if (password == null) {
+            password = LanSecurity.randomToken();
+            SecureCredentialStore.write(secret, password);
+        }
+        if (!Files.isRegularFile(webStore)) {
+            generateKeyStore(webStore, password, host);
+            SecureFilePermissions.restrictFileToOwner(webStore);
+        }
+        var store = KeyStore.getInstance("PKCS12");
+        try (var input = Files.newInputStream(webStore)) { store.load(input, password.toCharArray()); }
+        var certificate = (X509Certificate)store.getCertificate(ALIAS);
+        certificate.checkValidity();
+        Path publicCertificate = directory.resolve("mobile-web-" + host + ".cer");
+        Files.write(publicCertificate, certificate.getEncoded());
+        SecureFilePermissions.restrictFileToOwner(publicCertificate);
+        var manager = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        manager.init(store, password.toCharArray());
+        var context = SSLContext.getInstance("TLSv1.3");
+        context.init(manager.getKeyManagers(), null, null);
+        return context;
     }
 
     /** Changes every ten minutes and accepts the immediately previous window during setup. */

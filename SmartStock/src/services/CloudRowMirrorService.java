@@ -54,6 +54,8 @@ public final class CloudRowMirrorService {
             Map.entry("custom_order_line_production_history", customOrderPredicate()),
             Map.entry("custom_order_line_returns", customOrderPredicate()),
             Map.entry("custom_order_lines", customOrderPredicate()),
+            Map.entry("custom_order_design_documents", customOrderPredicate()),
+            Map.entry("custom_order_design_document_revisions", "EXISTS (SELECT 1 FROM custom_order_design_documents d JOIN custom_orders p ON p.custom_order_id=d.custom_order_id WHERE d.document_id=t.document_id AND p.location_id=?)"),
             Map.entry("custom_order_payments", customOrderPredicate()),
             Map.entry("custom_order_status_history", customOrderPredicate()),
             Map.entry("custom_order_line_print_addons", "EXISTS (SELECT 1 FROM custom_order_lines l JOIN custom_orders p ON p.custom_order_id=l.custom_order_id WHERE l.custom_order_line_id=t.custom_order_line_id AND p.location_id=?)"),
@@ -105,6 +107,9 @@ public final class CloudRowMirrorService {
         if (locationId <= 0) throw new SQLException("A valid store location is required.");
         SyncSchemaInstaller.ensureSchema(local);
         discardAbandonedGenerations(locationId);
+        // Make room before cloning: a full disk prevents finalization and therefore
+        // prevents the normal post-sync retention cleanup from being reached.
+        pruneCompletedGenerations(locationId);
         int uploaded = 0;
         int unchanged = 0;
         int deleted = 0;
@@ -323,7 +328,7 @@ public final class CloudRowMirrorService {
         }
         if (localGeneration == null) return false;
         try {
-            CloudSyncManifest cloud = CloudSyncManifest.fetchStoreSnapshot(locationId);
+            CloudSyncManifest cloud = CloudSyncManifest.fetchStoreSnapshot(locationId,local);
             return sameBaseline(localGeneration, cloud.snapshotGenerationId());
         } catch (IOException ex) {
             throw new SQLException("Supabase mirror baseline verification failed.", ex);

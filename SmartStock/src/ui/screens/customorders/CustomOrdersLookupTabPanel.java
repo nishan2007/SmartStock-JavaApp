@@ -56,6 +56,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         JButton payButton = new JButton("Apply Payment");
         JButton refundButton = new JButton("Refund");
         JButton productionButton = new JButton("Production");
+        JButton mediaButton = new JButton("Files & Design Approval");
         JButton deliveredButton = new JButton("Deliver Lines");
         JButton previewSlipButton = new JButton("Preview Slip");
         JButton printSlipButton = new JButton("Print Slip");
@@ -65,6 +66,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         styleDialogButton(payButton);
         styleDialogButton(refundButton);
         styleDialogButton(productionButton);
+        styleDialogButton(mediaButton);
         styleDialogButton(deliveredButton);
         styleDialogButton(previewSlipButton);
         styleDialogButton(printSlipButton);
@@ -80,6 +82,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         JPanel detailsHeader = new JPanel(new BorderLayout(8, 0));
         detailsHeader.add(new JLabel("Order Details"), BorderLayout.WEST);
         JPanel printControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        printControls.add(mediaButton);
         printControls.add(previewSlipButton);
         printControls.add(printSlipButton);
         printControls.add(reprintLabelButton);
@@ -101,10 +104,12 @@ class CustomOrdersLookupTabPanel extends JPanel {
         actionPanel.add(payButton);
         actionPanel.add(refundButton);
         actionPanel.add(productionButton);
+
         actionPanel.add(deliveredButton);
         actionPanel.add(closeButton);
 
         searchButton.addActionListener(e -> handler.loadLookupOrders(model, searchField.getText().trim()));
+        mediaButton.addActionListener(e -> { Long orderId=handler.selectedLookupOrderId(table,model);if(orderId==null)JOptionPane.showMessageDialog(this,"Select an order first.");else handler.openMedia(orderId,this); });
         searchField.addActionListener(e -> handler.loadLookupOrders(model, searchField.getText().trim()));
         UiDebouncer.bind(searchField, 300,
                 () -> handler.loadLookupOrders(model, searchField.getText().trim()));
@@ -604,6 +609,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         boolean canUpdateProduction();
         void previewOrderSlip(String orderNumber);
         void printOrderSlip(String orderNumber);
+        default void openMedia(Long orderId, Component parent) { }
         void reprintOrderLabels(String orderNumber);
         void refreshRelatedOrders();
     }

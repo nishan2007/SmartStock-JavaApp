@@ -6,7 +6,7 @@ import java.awt.*;
 
 public class CustomOrderDepositPanel extends JPanel {
     public CustomOrderDepositPanel(JTextField minimumDepositPercentField, JTextField refundApprovalLimitField,
-                                   JCheckBox roundToNearestTwentyBox) {
+                                   JCheckBox roundToNearestTwentyBox, JTextField fileLimitMbField) {
         setLayout(new GridBagLayout());
         setBackground(Color.WHITE);
         setBorder(BorderFactory.createCompoundBorder(
@@ -26,6 +26,7 @@ public class CustomOrderDepositPanel extends JPanel {
         addRow(this, 1, "Minimum Deposit", percentPanel);
         addRow(this, 2, "Refund Approval Over", refundApprovalLimitField);
         addWide(this, roundToNearestTwentyBox, 3);
+        addRow(this, 4, "Attachment limit per file (MB)", fileLimitMbField);
     }
 
     private static void addRow(JPanel panel, int row, String label, JComponent field) {

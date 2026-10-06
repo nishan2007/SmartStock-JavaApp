@@ -60,6 +60,10 @@ public final class CustomOrderLabelPrinter {
         parseLabelCount(String.valueOf(count));
         HardwareSettingsManager.PosPrinter printer;
         try {
+            if (HardwareSettingsManager.getDefaultOrderLabelPrinterDestination() == HardwareSettingsManager.ReceiptPrinterDestination.ETHERNET) {
+                printToEthernet(data, count, HardwareSettingsManager.getNativeEthernetPrinterSettings());
+                return;
+            }
             printer = HardwareSettingsManager.getDefaultOrderLabelPrinter();
         } catch (Exception ex) {
             throw new PrintException(ex);
@@ -73,11 +77,6 @@ public final class CustomOrderLabelPrinter {
             }
         }
         if (printer == null) throw new PrintException("No order label or receipt printer is configured.");
-        if (receiptPrinterFallback
-                && printer.printFormat() == HardwareSettingsManager.PrintFormat.RECEIPT_40) {
-            byte[] content = formatEscPosReceiptLabels(data, count);
-            if (NativeEscPosTransport.sendIfEnabled(content) != null) return;
-        }
         PrintService service = HardwareSettingsManager.findPrintService(printer.systemName());
         if (service == null) {
             throw new PrintException("The configured " + (receiptPrinterFallback ? "receipt" : "custom order label")
@@ -89,6 +88,12 @@ public final class CustomOrderLabelPrinter {
         } else {
             printToService(data, count, service, isCt221b(printer.systemName()) || isCt221b(printer.displayName()));
         }
+    }
+
+    static void printToEthernet(CustomOrderSlipData data, int count,
+            HardwareSettingsManager.NativeEthernetPrinterSettings settings) throws PrintException {
+        if (!settings.enabled()) throw new PrintException("Enable Native Ethernet ESC/POS in Hardware Settings to print order labels.");
+        NativeEscPosTransport.send(formatEscPosReceiptLabels(data, count), settings);
     }
 
     static void printToReceiptService(CustomOrderSlipData data, int count, PrintService service) throws PrintException {

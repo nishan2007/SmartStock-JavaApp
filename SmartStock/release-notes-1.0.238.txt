@@ -1,0 +1,8 @@
+SmartStock 1.0.238
+- Adds separate Ethernet defaults for custom-order slips and order labels, including barcode labels with a cut after each copy.
+- Adds the administrator Web Status screen for website, tunnels, scheduler, employee applications, mobile tools and register API health, with permission-controlled server service actions.
+- Reduces other-store inventory, sales and customer-history downloads through shared cached snapshots, table fingerprints and changed-row synchronization.
+- Adds cloud transfer measurements, billing-period controls and other-store refresh status.
+- Includes all completed custom-order spoil, attachment, Studio, storefront, staff, payroll, register, recovery and updater improvements from the complete current source.
+- Bundles the ordered local/cloud schema upgrades, both offline photo models and the pinned Cloudflare runtime.
+Update store servers before registers. Physical printer, cash drawer, NFC, installed-service and two-store workflow checks remain separate deployment checks.

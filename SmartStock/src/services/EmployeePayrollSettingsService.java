@@ -336,16 +336,33 @@ public final class EmployeePayrollSettingsService {
                                                        String previousCompensationType,
                                                        String compensationType, BigDecimal rate) throws SQLException {
         PayrollSetting current = settingFor(conn, userId, today, previousCompensationType);
-        LocalDate start = periodFor(current.periodType(), current.workHourLimit(), today).start();
+        PayPeriod period = periodFor(current.periodType(), current.workHourLimit(), today);
+        LocalDate start = period.start();
         PayRate atStart = payRateFor(conn, userId, start);
-        return !atStart.compensationType().equalsIgnoreCase(normalizeCompensationType(compensationType))
-                || atStart.rate().compareTo(normalizeRate(rate)) != 0;
+        if (!atStart.compensationType().equalsIgnoreCase(normalizeCompensationType(compensationType))
+                || atStart.rate().compareTo(normalizeRate(rate)) != 0) return true;
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT EXISTS (SELECT 1 FROM employee_payroll_settings
+                    WHERE user_id = ? AND effective_from BETWEEN ? AND ?
+                      AND (compensation_type::text IS DISTINCT FROM ? OR pay_rate IS DISTINCT FROM ?))
+                    OR EXISTS (SELECT 1 FROM employee_time_clock
+                    WHERE user_id = ? AND work_date BETWEEN ? AND ? AND clock_out IS NOT NULL
+                      AND ? = 'HOURLY' AND total_hours_worked > 0
+                      AND total_earned IS DISTINCT FROM ROUND(total_hours_worked * ?, 2))
+                """)) {
+            ps.setInt(1, userId); ps.setDate(2, Date.valueOf(start)); ps.setDate(3, Date.valueOf(period.end()));
+            ps.setString(4, normalizeCompensationType(compensationType)); ps.setBigDecimal(5, normalizeRate(rate));
+            ps.setInt(6, userId); ps.setDate(7, Date.valueOf(start)); ps.setDate(8, Date.valueOf(period.end()));
+            ps.setString(9, normalizeCompensationType(compensationType)); ps.setBigDecimal(10, normalizeRate(rate));
+            try (ResultSet rs = ps.executeQuery()) { rs.next(); return rs.getBoolean(1); }
+        }
     }
 
     public static void saveCurrentPeriodPayRate(Connection conn, int userId, LocalDate today,
                                                 String previousCompensationType,
                                                 String compensationType, BigDecimal rate) throws SQLException {
         ensureSchema(conn);
+        ManualTimeClockService.lockEmployee(conn, userId);
         PayrollSetting current = settingFor(conn, userId, today, previousCompensationType);
         LocalDate effectiveFrom = periodFor(current.periodType(), current.workHourLimit(), today).start();
         try (PreparedStatement ps = conn.prepareStatement("""
@@ -421,11 +438,7 @@ public final class EmployeePayrollSettingsService {
                        COALESCE(eps.effective_from, DATE '1900-01-01')
                 FROM users u
                 LEFT JOIN LATERAL (
-                    SELECT compensation_type, pay_rate, effective_from
-                    FROM employee_payroll_settings
-                    WHERE user_id = u.user_id AND effective_from <= ?
-                    ORDER BY effective_from DESC, updated_at DESC
-                    LIMIT 1
+                """ + periodRateSql("u.user_id", "?::date") + """
                 ) eps ON TRUE
                 WHERE u.user_id = ?
                 """)) {
@@ -436,6 +449,48 @@ public final class EmployeePayrollSettingsService {
                 return new PayRate(rs.getString(1), rs.getBigDecimal(2), rs.getDate(3).toLocalDate());
             }
         }
+    }
+
+    /** One rate for a complete period, including sessions before a mid-period edit. */
+    public static String periodRateSql(String userIdSql, String workDateSql) {
+        return """
+                WITH requested AS (SELECT %s AS work_date),
+                current_setting AS (
+                    SELECT COALESCE((SELECT period_type FROM employee_payroll_settings
+                        WHERE user_id = %s AND effective_from <= requested.work_date
+                        ORDER BY effective_from DESC, updated_at DESC LIMIT 1), 'SEMI_MONTHLY') AS period_type,
+                        requested.work_date
+                    FROM requested
+                ), bounds AS (
+                    SELECT CASE period_type
+                        WHEN 'WEEKLY' THEN work_date - (EXTRACT(ISODOW FROM work_date)::int - 1)
+                        WHEN 'FOUR_MONTH_BLOCKS' THEN work_date - (EXTRACT(DAY FROM work_date)::int -
+                            CASE WHEN EXTRACT(DAY FROM work_date) <= 7 THEN 1
+                                 WHEN EXTRACT(DAY FROM work_date) <= 15 THEN 8
+                                 WHEN EXTRACT(DAY FROM work_date) <= 23 THEN 16 ELSE 24 END)
+                        ELSE CASE WHEN EXTRACT(DAY FROM work_date) <= 15
+                            THEN DATE_TRUNC('month', work_date)::date
+                            ELSE DATE_TRUNC('month', work_date)::date + 15 END END AS period_start,
+                        CASE period_type
+                        WHEN 'WEEKLY' THEN work_date + (7 - EXTRACT(ISODOW FROM work_date)::int)
+                        WHEN 'FOUR_MONTH_BLOCKS' THEN CASE
+                            WHEN EXTRACT(DAY FROM work_date) <= 7 THEN DATE_TRUNC('month', work_date)::date + 6
+                            WHEN EXTRACT(DAY FROM work_date) <= 15 THEN DATE_TRUNC('month', work_date)::date + 14
+                            WHEN EXTRACT(DAY FROM work_date) <= 23 THEN DATE_TRUNC('month', work_date)::date + 22
+                            ELSE (DATE_TRUNC('month', work_date) + INTERVAL '1 month - 1 day')::date END
+                        ELSE CASE WHEN EXTRACT(DAY FROM work_date) <= 15
+                            THEN DATE_TRUNC('month', work_date)::date + 14
+                            ELSE (DATE_TRUNC('month', work_date) + INTERVAL '1 month - 1 day')::date END END AS period_end
+                    FROM current_setting
+                )
+                SELECT eps.compensation_type, eps.pay_rate, eps.effective_from
+                FROM employee_payroll_settings eps CROSS JOIN bounds
+                WHERE eps.user_id = %s AND eps.effective_from <= bounds.period_end
+                ORDER BY (eps.effective_from >= bounds.period_start) DESC,
+                    CASE WHEN eps.effective_from >= bounds.period_start THEN eps.updated_at END DESC NULLS LAST,
+                    eps.effective_from DESC, eps.updated_at DESC
+                LIMIT 1
+                """.formatted(workDateSql, userIdSql, userIdSql);
     }
 
     private static void updatePayRate(Connection conn, int userId, LocalDate effectiveFrom,

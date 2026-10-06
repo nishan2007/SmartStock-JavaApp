@@ -758,7 +758,8 @@ public class ServerCompanyCustomizationRepository {
         String sql = """
                 SELECT COALESCE(custom_order_minimum_deposit_percent, 0) AS custom_order_minimum_deposit_percent,
                        COALESCE(custom_order_refund_approval_limit, 0) AS custom_order_refund_approval_limit,
-                       COALESCE(round_custom_orders_to_nearest_twenty, TRUE) AS round_custom_orders_to_nearest_twenty
+                       COALESCE(round_custom_orders_to_nearest_twenty, TRUE) AS round_custom_orders_to_nearest_twenty,
+                       COALESCE(custom_order_file_limit_bytes, 104857600) AS custom_order_file_limit_bytes
                 FROM company_customization
                 WHERE location_id = ?
                 """;
@@ -773,7 +774,8 @@ public class ServerCompanyCustomizationRepository {
                 return new CustomOrderSettings(
                         rs.getBigDecimal("custom_order_minimum_deposit_percent"),
                         rs.getBigDecimal("custom_order_refund_approval_limit"),
-                        rs.getBoolean("round_custom_orders_to_nearest_twenty")
+                        rs.getBoolean("round_custom_orders_to_nearest_twenty"),
+                        rs.getLong("custom_order_file_limit_bytes")
                 );
             }
         }
@@ -787,13 +789,15 @@ public class ServerCompanyCustomizationRepository {
                     custom_order_minimum_deposit_percent,
                     custom_order_refund_approval_limit,
                     round_custom_orders_to_nearest_twenty,
+                    custom_order_file_limit_bytes,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     custom_order_minimum_deposit_percent = EXCLUDED.custom_order_minimum_deposit_percent,
                     custom_order_refund_approval_limit = EXCLUDED.custom_order_refund_approval_limit,
                     round_custom_orders_to_nearest_twenty = EXCLUDED.round_custom_orders_to_nearest_twenty,
+                    custom_order_file_limit_bytes = EXCLUDED.custom_order_file_limit_bytes,
                     updated_at = NOW()
                 """;
         try (Connection conn = DB.getConnection();
@@ -802,6 +806,7 @@ public class ServerCompanyCustomizationRepository {
             ps.setBigDecimal(2, settings.minimumDepositPercent());
             ps.setBigDecimal(3, settings.refundApprovalLimit());
             ps.setBoolean(4, settings.roundToNearestTwenty());
+            ps.setLong(5, settings.fileLimitBytes());
             ps.executeUpdate();
         }
     }
@@ -883,7 +888,9 @@ public class ServerCompanyCustomizationRepository {
                        COALESCE(custom_order_slip_show_payment_summary, TRUE) AS show_payment_summary,
                        COALESCE(custom_order_slip_show_payment_reference, TRUE) AS show_payment_reference,
                        COALESCE(custom_order_slip_show_taken_by, TRUE) AS show_taken_by,
-                       COALESCE(custom_order_slip_show_signatures, TRUE) AS show_signatures
+                       COALESCE(custom_order_slip_show_signatures, TRUE) AS show_signatures,
+                       custom_order_slip_show_team_member_signature AS team_member_signature,
+                       custom_order_slip_show_customer_signature AS customer_signature
                 FROM company_customization
                 WHERE location_id = ?
                 """;
@@ -915,7 +922,9 @@ public class ServerCompanyCustomizationRepository {
                         rs.getBoolean("show_payment_summary"),
                         rs.getBoolean("show_payment_reference"),
                         rs.getBoolean("show_taken_by"),
-                        rs.getBoolean("show_signatures")
+                        rs.getBoolean("show_signatures"),
+                        (Boolean) rs.getObject("team_member_signature"),
+                        (Boolean) rs.getObject("customer_signature")
                 );
             }
         }
@@ -946,9 +955,11 @@ public class ServerCompanyCustomizationRepository {
                     custom_order_slip_show_payment_reference,
                     custom_order_slip_show_taken_by,
                     custom_order_slip_show_signatures,
+                    custom_order_slip_show_team_member_signature,
+                    custom_order_slip_show_customer_signature,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                 ON CONFLICT (location_id) DO UPDATE SET
                     custom_order_slip_enabled = EXCLUDED.custom_order_slip_enabled,
                     custom_order_slip_auto_print = EXCLUDED.custom_order_slip_auto_print,
@@ -971,6 +982,8 @@ public class ServerCompanyCustomizationRepository {
                     custom_order_slip_show_payment_reference = EXCLUDED.custom_order_slip_show_payment_reference,
                     custom_order_slip_show_taken_by = EXCLUDED.custom_order_slip_show_taken_by,
                     custom_order_slip_show_signatures = EXCLUDED.custom_order_slip_show_signatures,
+                    custom_order_slip_show_team_member_signature = EXCLUDED.custom_order_slip_show_team_member_signature,
+                    custom_order_slip_show_customer_signature = EXCLUDED.custom_order_slip_show_customer_signature,
                     updated_at = NOW()
                 """;
         try (Connection conn = DB.getConnection();
@@ -997,6 +1010,8 @@ public class ServerCompanyCustomizationRepository {
             ps.setBoolean(20, settings.showPaymentReference());
             ps.setBoolean(21, settings.showTakenBy());
             ps.setBoolean(22, settings.showSignatures());
+            ps.setBoolean(23, settings.showTeamMemberSignature());
+            ps.setBoolean(24, settings.showCustomerSignature());
             ps.executeUpdate();
         }
     }
@@ -1293,7 +1308,8 @@ public class ServerCompanyCustomizationRepository {
         return new CustomOrderSettings(
                 parsePercent(properties.getProperty("custom_orders.minimum_deposit_percent", "0")),
                 parseMoney(properties.getProperty("custom_orders.refund_approval_limit", "0")),
-                Boolean.parseBoolean(properties.getProperty("custom_orders.round_to_nearest_twenty", "true"))
+                Boolean.parseBoolean(properties.getProperty("custom_orders.round_to_nearest_twenty", "true")),
+                Long.parseLong(properties.getProperty("custom_orders.file_limit_bytes", "104857600"))
         );
     }
 
@@ -1327,7 +1343,9 @@ public class ServerCompanyCustomizationRepository {
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_payment_summary", "true")),
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_payment_reference", "true")),
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_taken_by", "true")),
-                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_signatures", "true"))
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_signatures", "true")),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_team_member_signature", properties.getProperty("custom_order_slip.show_signatures", "true"))),
+                Boolean.parseBoolean(properties.getProperty("custom_order_slip.show_customer_signature", properties.getProperty("custom_order_slip.show_signatures", "true")))
         );
     }
 
@@ -1464,6 +1482,7 @@ public class ServerCompanyCustomizationRepository {
         properties.setProperty("custom_orders.minimum_deposit_percent", settings.minimumDepositPercent().toPlainString());
         properties.setProperty("custom_orders.refund_approval_limit", settings.refundApprovalLimit().toPlainString());
         properties.setProperty("custom_orders.round_to_nearest_twenty", String.valueOf(settings.roundToNearestTwenty()));
+        properties.setProperty("custom_orders.file_limit_bytes", String.valueOf(settings.fileLimitBytes()));
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
         }
@@ -1498,6 +1517,8 @@ public class ServerCompanyCustomizationRepository {
         properties.setProperty("custom_order_slip.show_payment_reference", String.valueOf(settings.showPaymentReference()));
         properties.setProperty("custom_order_slip.show_taken_by", String.valueOf(settings.showTakenBy()));
         properties.setProperty("custom_order_slip.show_signatures", String.valueOf(settings.showSignatures()));
+        properties.setProperty("custom_order_slip.show_team_member_signature", String.valueOf(settings.showTeamMemberSignature()));
+        properties.setProperty("custom_order_slip.show_customer_signature", String.valueOf(settings.showCustomerSignature()));
         try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(outputStream, "SmartStock company customization settings");
         }
@@ -2200,10 +2221,17 @@ public class ServerCompanyCustomizationRepository {
 
     public record CustomOrderSettings(java.math.BigDecimal minimumDepositPercent,
                                       java.math.BigDecimal refundApprovalLimit,
-                                      boolean roundToNearestTwenty) {
+                                      boolean roundToNearestTwenty,
+                                      long fileLimitBytes) {
+        public CustomOrderSettings(java.math.BigDecimal minimumDepositPercent,
+                                   java.math.BigDecimal refundApprovalLimit,
+                                   boolean roundToNearestTwenty) {
+            this(minimumDepositPercent,refundApprovalLimit,roundToNearestTwenty,104857600L);
+        }
         public CustomOrderSettings {
             minimumDepositPercent = minimumDepositPercent == null ? java.math.BigDecimal.ZERO : minimumDepositPercent;
             refundApprovalLimit = refundApprovalLimit == null ? java.math.BigDecimal.ZERO : refundApprovalLimit;
+            if(fileLimitBytes<=0)fileLimitBytes=104857600L;
         }
     }
 
@@ -2244,8 +2272,22 @@ public class ServerCompanyCustomizationRepository {
             boolean showPaymentSummary,
             boolean showPaymentReference,
             boolean showTakenBy,
-            boolean showSignatures
+            boolean showSignatures,
+            Boolean teamMemberSignature,
+            Boolean customerSignature
     ) {
+        public CustomOrderSlipSettings(boolean enabled, boolean autoPrint, String title, String contactLine, String emailLine, String footerNote, int blankDetailLines, boolean showLogo, boolean showOrderNumber, boolean showDueDate, boolean showCustomerPhone, boolean showCustomerAccount, boolean showStore, boolean showDevice, boolean showCashier, boolean showLineItems, boolean showPricing, boolean showPaymentSummary, boolean showPaymentReference, boolean showTakenBy, boolean showSignatures) {
+            this(enabled, autoPrint, title, contactLine, emailLine, footerNote, blankDetailLines, showLogo, showOrderNumber, showDueDate, showCustomerPhone, showCustomerAccount, showStore, showDevice, showCashier, showLineItems, showPricing, showPaymentSummary, showPaymentReference, showTakenBy, showSignatures, null, null);
+        }
+
+        public boolean showTeamMemberSignature() {
+            return teamMemberSignature == null ? showSignatures : teamMemberSignature;
+        }
+
+        public boolean showCustomerSignature() {
+            return customerSignature == null ? showSignatures : customerSignature;
+        }
+
         public CustomOrderSlipSettings {
             title = clean(title, "CUSTOMER'S ORDER SLIP");
             contactLine = Objects.requireNonNullElse(contactLine, "").trim();

@@ -63,11 +63,13 @@ class PriceTagStockLayoutTest {
 
     @Test void ct221bJobCalibratesTheTransmissiveGapHoleBeforePrinting() {
         var settings = PriceTagPrintService.ct221bPortraitTemplate(10 / 25.4);
-        byte[] job = PriceTagPrintService.formatCt221bGapJob(List.of(solid(Color.BLACK), solid(Color.WHITE)), settings);
+        var rawRows = PriceTagPrintService.arrangeRawRows(List.of(solid(Color.BLACK), solid(Color.WHITE)), settings);
+        assertEquals(203, rawRows.get(0).getHeight(), "Raw TSPL bitmap must fit inside the declared one-inch label");
+        byte[] job = PriceTagPrintService.formatCt221bGapJob(rawRows, settings);
         String commands = new String(job, StandardCharsets.ISO_8859_1);
         assertTrue(commands.startsWith("SIZE 25.400 mm,25.400 mm\r\nGAP 10.000 mm,0 mm\r\nGAPDETECT 203,80\r\n"));
-        assertEquals(2, commands.split("PRINT 1,1", -1).length - 1);
-        assertTrue(commands.contains("BITMAP 0,0,14,220,0,"));
+        assertEquals(1, commands.split("PRINT 1,1", -1).length - 1);
+        assertTrue(commands.contains("BITMAP 0,0,26,203,0,"));
     }
 
     @Test void ct221bRecognitionAllowsDriverPunctuationAndSpacing() {
@@ -82,6 +84,18 @@ class PriceTagStockLayoutTest {
         assertFalse(german.contains("18.000"));
         assertFalse(german.contains(",00"));
         assertTrue(german.contains("18000"));
+    }
+
+    @Test void longUnbrokenTextUsesAvailableLinesBeforeShrinkingToMinimumFont() {
+        BufferedImage image=new BufferedImage(240,120,BufferedImage.TYPE_INT_RGB);
+        var graphics=image.createGraphics();
+        try {
+            var fit=PriceTagPrintService.fitText(graphics,"EXTRALONGVARIANTIDENTIFIERWITHOUTSPACES",
+                    new java.awt.Rectangle(0,0,180,90),java.awt.Font.BOLD,true);
+            assertTrue(fit.lines().size()>1,"Long text should wrap even when it contains no spaces");
+            assertTrue(fit.fontSize()>8,"The renderer should use the second line before choosing the minimum font");
+            assertEquals("EXTRALONGVARIANTIDENTIFIERWITHOUTSPACES",String.join("",fit.lines()));
+        } finally { graphics.dispose(); }
     }
 
     private PriceTagTemplateSettings stock(double gap) {

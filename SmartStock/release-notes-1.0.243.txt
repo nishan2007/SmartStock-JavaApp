@@ -1,0 +1,1 @@
+Adds permission-controlled manual custom items and print add-ons, including saved order and slip details. Fixes default Ethernet routing for drawer-close and return receipts. Supports quotation discounts entered as either a price or percentage, carried through to invoices. Includes current startup, updater, and document improvements.

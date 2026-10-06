@@ -60,10 +60,12 @@ import java.util.concurrent.Executors;
 public final class LanApiServer implements AutoCloseable {
     public static final int DEFAULT_PORT = 8443;
     private static final int MAX_BODY_BYTES = 2 * 1024 * 1024;
+    private static final int MAX_STOREFRONT_PROOF_BODY_BYTES = 6 * 1024 * 1024;
     private static final int MAX_IMAGE_BODY_BYTES = 16 * 1024 * 1024;
     private static final int MAX_CLOUD_FILE_BODY_BYTES = 36 * 1024 * 1024;
     private static final Set<String> DEVICE_HEADER_EXEMPT_ROUTES = Set.of(
-            "/v1/devices/enroll", "/v1/devices/claim", "/v1/devices/local-claim");
+            "/v1/devices/enroll", "/v1/devices/claim", "/v1/devices/local-claim",
+            "/v1/studio/devices/enroll", "/v1/studio/devices/claim");
     private static final Duration SESSION_LIFETIME = Duration.ofMinutes(15);
     private static final Duration SESSION_ABSOLUTE_LIFETIME = Duration.ofHours(12);
     private static final Gson GSON = LanJson.create();
@@ -76,7 +78,10 @@ public final class LanApiServer implements AutoCloseable {
     private final LanDiscoveryService discoveryService;
     private volatile MobileItemWebServer mobileItemWebServer;
     private volatile EmployeeRegistrationWebServer employeeRegistrationWebServer;
+    private volatile StorefrontRuntime storefrontRuntime;
+    private final CustomOrderMediaMaintenance customOrderMediaMaintenance=new CustomOrderMediaMaintenance();
     private volatile HealthReadiness cachedHealthReadiness;
+    private final Map<String,String> webCommands=new LinkedHashMap<>();
 
     private LanApiServer(HttpsServer server, ExecutorService executor, LanTlsIdentity tlsIdentity,
                          LanDiscoveryService discoveryService) {
@@ -108,8 +113,15 @@ public final class LanApiServer implements AutoCloseable {
         LanApiServer api = new LanApiServer(https, executor, identity, discovery);
         api.installRoutes();
         https.start();
+        WebRuntimeMetrics.started("lan");
+        api.customOrderMediaMaintenance.start();
         api.restoreMobileItemWebIfEnabled();
         api.restoreEmployeeRegistrationWeb();
+        try {
+            try (Connection c=DB.getConnection()) { StorefrontSchema.ensure(c); }
+            api.storefrontRuntime=StorefrontRuntime.startIfConfigured();
+        }
+        catch(Exception e) { System.err.println("Storefront startup failed: "+e.getClass().getSimpleName()); }
         System.out.println("SmartStock LAN service listening on HTTPS port " + port
                 + "; certificate " + identity.fingerprint());
         return api;
@@ -161,6 +173,13 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/health", this::health);
         server.createContext("/v1/devices/enroll", exchange -> handle(exchange, this::enroll));
         server.createContext("/v1/devices/claim", exchange -> handle(exchange, this::claim));
+        server.createContext("/v1/studio/devices/enroll", exchange -> handle(exchange, this::enroll));
+        server.createContext("/v1/studio/devices/claim", exchange -> handle(exchange, this::claim));
+        server.createContext("/v1/studio/devices/from-register", exchange -> handle(exchange, this::studioFromRegister));
+        server.createContext("/v1/studio/device-status", exchange -> handle(exchange, this::studioDeviceStatus));
+        server.createContext("/v1/studio/models/status", exchange -> handle(exchange, x -> studioModels(x, "status")));
+        server.createContext("/v1/studio/models/refresh", exchange -> handle(exchange, x -> studioModels(x, "refresh")));
+        server.createContext("/v1/studio/models/install", exchange -> handle(exchange, x -> studioModels(x, "install")));
         server.createContext("/v1/devices/local-claim", exchange -> handle(exchange, this::localServerClaim));
         server.createContext("/v1/devices/metadata", exchange -> handle(exchange, this::updateDeviceMetadata));
         server.createContext("/v1/devices/rotate", exchange -> handle(exchange, this::rotate));
@@ -183,6 +202,11 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/catalog/search", exchange -> handle(exchange, this::searchCatalog));
         server.createContext("/v1/catalog/identifier", exchange -> handle(exchange, this::catalogIdentifier));
         server.createContext("/v1/catalog/barcodes/generate", exchange -> handle(exchange, this::generateCatalogBarcode));
+        server.createContext("/v1/storefront/status", exchange -> handle(exchange, this::storefrontStatus));
+        server.createContext("/v1/web/status", exchange -> handle(exchange, this::webStatus));
+        server.createContext("/v1/web/mutation", exchange -> handle(exchange, this::webControl));
+        server.createContext("/v1/storefront/quote-file", exchange -> handle(exchange, this::storefrontQuoteFile));
+        server.createContext("/v1/storefront/mutation", exchange -> handle(exchange, this::storefrontAdmin));
         server.createContext("/v1/customers/accounts", exchange -> handle(exchange, this::customerAccounts));
         server.createContext("/v1/cash-drawers/current", exchange -> handle(exchange, this::currentCashDrawer));
         server.createContext("/v1/sales/settings", exchange -> handle(exchange, this::salesSettings));
@@ -220,6 +244,15 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/catalog/customer-types/list", exchange -> handle(exchange, this::catalogCustomerTypes));
         server.createContext("/v1/catalog/customer-types/save", exchange -> handle(exchange, this::saveCatalogCustomerType));
         server.createContext("/v1/products/edit-search", exchange -> handle(exchange, this::editableProductSearch));
+        server.createContext("/v1/products/studio-list", exchange -> handle(exchange, this::studioProductList));
+        server.createContext("/v1/studio/branding", exchange -> handle(exchange, this::studioBranding));
+        server.createContext("/v1/studio/remove-background", exchange -> handle(exchange, this::studioRemoveBackground));
+        server.createContext("/v1/products/studio-source", exchange -> handle(exchange, this::studioProductSource));
+        server.createContext("/v1/products/studio-import", exchange -> handle(exchange, this::studioProductImport));
+        server.createContext("/v1/products/studio-reviews", exchange -> handle(exchange, this::studioReviews));
+        server.createContext("/v1/products/studio-review-photo", exchange -> handle(exchange, this::studioReviewPhoto));
+        server.createContext("/v1/products/studio-review-upload", exchange -> handle(exchange, this::studioReviewUpload));
+        server.createContext("/v1/products/studio-review-decision", exchange -> handle(exchange, this::studioReviewDecision));
         server.createContext("/v1/products/archived-search", exchange -> handle(exchange, this::archivedProductSearch));
         server.createContext("/v1/products/price-tags", exchange -> handle(exchange, this::priceTagProductSearch));
         server.createContext("/v1/products/price-tag-settings", exchange -> handle(exchange, this::priceTagSettings));
@@ -236,6 +269,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/products/non-rounded-prices", exchange -> handle(exchange, this::nonRoundedProductPrices));
         server.createContext("/v1/products/round-prices", exchange -> handle(exchange, this::roundProductPrices));
         server.createContext("/v1/sync/status", exchange -> handle(exchange, this::syncStatus));
+        server.createContext("/v1/sync/billing-period", exchange -> handle(exchange, this::syncBillingPeriod));
         server.createContext("/v1/sync/run", exchange -> handle(exchange, this::runSync));
         server.createContext("/v1/sync/resolve", exchange -> handle(exchange, this::resolveSyncConflict));
         server.createContext("/v1/mobile-item-web/status", exchange -> handle(exchange, this::mobileItemWebStatus));
@@ -322,6 +356,8 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/custom-orders/admin/update", exchange -> handle(exchange, this::customCatalogAdminMutation));
         server.createContext("/v1/custom-orders/workflow/read", exchange -> handle(exchange, this::customOrderWorkflowRead));
         server.createContext("/v1/custom-orders/workflow/update", exchange -> handle(exchange, this::customOrderWorkflowMutation));
+        server.createContext("/v1/custom-orders/media/read", exchange -> handle(exchange, this::customOrderMediaRead));
+        server.createContext("/v1/custom-orders/media/update", exchange -> handle(exchange, this::customOrderMediaMutation));
         server.createContext("/v1/configuration/read", exchange -> handle(exchange, this::companyCustomizationRead));
         server.createContext("/v1/configuration/update", exchange -> handle(exchange, this::companyCustomizationMutation));
         server.createContext("/v1/cloud/update/latest", exchange -> handle(exchange, this::latestAppRelease));
@@ -352,6 +388,8 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/time-clock/auto-close/confirm", exchange -> handle(exchange, this::confirmTimeClockAutoClose));
         server.createContext("/v1/time-clock/auto-close/correct", exchange -> handle(exchange, this::correctTimeClockAutoClose));
         server.createContext("/v1/time-clock/correct", exchange -> handle(exchange, this::correctTimeClockSession));
+        server.createContext("/v1/time-clock/manual/employees", exchange -> handle(exchange, this::manualTimeClockEmployees));
+        server.createContext("/v1/time-clock/manual/create", exchange -> handle(exchange, this::createManualTimeClock));
         server.createContext("/v1/time-clock/dashboard", exchange -> handle(exchange, this::timeClockDashboard));
         server.createContext("/v1/time-clock/punch-state", exchange -> handle(exchange, this::timeClockPunchState));
         server.createContext("/v1/time-clock/punch", exchange -> handle(exchange, this::timeClockPunch));
@@ -389,9 +427,12 @@ public final class LanApiServer implements AutoCloseable {
         DevicePrincipal device = authenticateDevice(context.exchange());
         authenticateSession(context.exchange(), device, true);
         String platform = required(context.body(), "platform", 40).toLowerCase(java.util.Locale.ROOT);
+        String application = optional(context.body(), "application", 40);
+        boolean studioUpdate = device.studio() || "smartstudio".equals(application);
         if (!platform.matches("[a-z0-9._-]+")) throw new ApiException(400, "VALIDATION_ERROR", "The update platform is invalid.", false);
         String query = "select=release_id,version,build_number,platform,artifact_bucket,artifact_path,sha256,file_size_bytes,release_notes,required,minimum_supported_version"
                 + "&published=eq.true&platform=in.(" + cloudEncode(platform) + ",all)&order=build_number.desc&limit=1";
+        query += studioUpdate ? "&artifact_path=like.smartstudio/*" : "&artifact_path=not.like.smartstudio/*";
         HttpResponse<String> response = cloudRequest(HttpRequest.newBuilder()
                 .uri(URI.create(SupabaseSessionManager.getSupabaseUrl() + "/rest/v1/app_releases?" + query))
                 .timeout(Duration.ofSeconds(20)).header("Accept", "application/json").GET());
@@ -415,6 +456,8 @@ public final class LanApiServer implements AutoCloseable {
         authenticateSession(context.exchange(), device, true);
         String bucket = required(context.body(), "bucket", 100);
         String path = required(context.body(), "path", 1000);
+        if (device.studio() && !path.startsWith("smartstudio/"))
+            throw new ApiException(403,"UPDATE_ARTIFACT_DENIED","Choose a SmartStudio update.",false);
         if (R2UpdateUrlSigner.handles(bucket)) {
             if (!R2UpdateUrlSigner.R2_BUCKET_REFERENCE.equals(bucket)
                     || path.startsWith("/") || path.contains("..") || path.contains("\\")) {
@@ -603,6 +646,7 @@ public final class LanApiServer implements AutoCloseable {
                 ImageCloudProvider.ProbeResult probe=ServerImageAssetService.probeOneDrive(connection);
                 ServerImageAssetService.publishOneDriveIdentifiers(connection,tenantId,clientId,driveId,
                         session.userId(),displayName(loadUser(connection,session.userId(),session.locationId())));
+                ServerImageAssetService.publishCloudOneDriveIdentifiers(tenantId,clientId,driveId);
                 return ApiResult.ok(Map.of("configured",true,"ready",probe.ready(),"message",probe.message()));
             }catch(ApiException ex){throw ex;}
             catch(Exception ex){
@@ -672,6 +716,8 @@ public final class LanApiServer implements AutoCloseable {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("service", "SmartStock LAN Service");
         data.put("status", "ok");
+        data.put("appVersion", utils.DeviceUtils.getAppVersion());
+        data.put("discoveryReady", discoveryService != null && discoveryService.isReady());
         data.put("apiVersion", "v1");
         HealthReadiness local = healthReadiness();
         data.put("localSchemaVersion", local.version());
@@ -740,10 +786,25 @@ public final class LanApiServer implements AutoCloseable {
         String pairingChallenge = LanSecurity.randomToken();
         String pairingChallengeEnvelope = encryptForDevice(publicKey, pairingChallenge);
 
+        if ("/v1/studio/devices/enroll".equals(context.exchange().getRequestURI().getPath())) {
+            Integer location=DatabaseConfig.load().locationId();
+            if(location==null)throw new ApiException(503,"STORE_NOT_CONFIGURED","This server has no configured store.",false);
+            try(Connection c=DB.getConnection()) {
+                c.setAutoCommit(false);
+                try {
+                    var enrolled=StudioDeviceEnrollmentService.enroll(c,body,location,pairingChallenge);
+                    auditSecurity(c,"STUDIO_DEVICE_ENROLLMENT",enrolled.deviceId(),null,"Studio credential attached to physical device; Allow Studio controls approval");
+                    c.commit();
+                    return ApiResult.ok(Map.of("deviceId",enrolled.deviceId().toString(),"status",enrolled.allowed()?"APPROVED":"PENDING_APPROVAL","locationId",location,"pairingChallengeEnvelope",pairingChallengeEnvelope,"employeeActionRequired",false));
+                } catch(Exception ex) {c.rollback();throw ex;}
+            }
+        }
+
         try (Connection connection = DB.getConnection()) {
             connection.setAutoCommit(false);
             try {
             Integer configuredDestination=DatabaseConfig.load().locationId();
+            if(configuredDestination!=null)StudioDeviceEnrollmentService.adoptStudioOnlyDevice(connection,body,configuredDestination);
             String emergencyReason=optional(body,"emergencyReason",1000);
             if(emergencyReason!=null){if(configuredDestination==null)throw new ApiException(503,"STORE_NOT_CONFIGURED","This server has no configured store.",false);try{RegisterTransferService.importCompanyDeviceForEmergency(connection,installationId,configuredDestination);}catch(RegisterTransferService.RuleViolation ex){throw new ApiException(ex.status,ex.code,ex.getMessage(),false);}}
             else if(configuredDestination!=null){try{RegisterTransferService.importPreparedTransferForDestination(connection,installationId,configuredDestination);}catch(RegisterTransferService.RuleViolation ex){throw new ApiException(ex.status,ex.code,ex.getMessage(),false);}}
@@ -848,6 +909,17 @@ public final class LanApiServer implements AutoCloseable {
         String installationId = required(body, "installationId", 160);
         String publicKeyText = required(body, "publicKey", 8192);
         String pairingChallenge = required(body, "pairingChallenge", 256);
+
+        if ("/v1/studio/devices/claim".equals(context.exchange().getRequestURI().getPath())) {
+            try(Connection c=DB.getConnection()) {
+                c.setAutoCommit(false);
+                try {
+                    var credential=StudioDeviceEnrollmentService.claim(c,body);
+                    String envelope=encryptForDevice(publicKeyText,credential.token());c.commit();
+                    return ApiResult.ok(Map.of("deviceId",credential.deviceId().toString(),"locationId",credential.locationId(),"credentialEnvelope",envelope,"expiresAt",credential.expiresAt().toString()));
+                }catch(Exception ex){c.rollback();throw ex;}
+            }
+        }
 
         try (Connection connection = DB.getConnection()) {
             connection.setAutoCommit(false);
@@ -1144,7 +1216,7 @@ public final class LanApiServer implements AutoCloseable {
         }
         if (!EmployeePinService.validPin(pin)) {
             java.util.Arrays.fill(pin, '\0');
-            throw new ApiException(400, "PIN_INVALID", "Use exactly 4–8 digits for the employee PIN.", false);
+            throw new ApiException(400, "PIN_INVALID", "Use exactly 4â€“8 digits for the employee PIN.", false);
         }
         try (Connection connection = DB.getConnection()) {
             LoginSecurityService.requireAllowed(connection, badgeId);
@@ -1338,7 +1410,7 @@ public final class LanApiServer implements AutoCloseable {
             ps.setObject(1, session.sessionId());
             ps.setObject(2, device.deviceId());
             ps.executeUpdate();
-            try (PreparedStatement legacy = connection.prepareStatement("""
+            if (!device.studio()) try (PreparedStatement legacy = connection.prepareStatement("""
                     UPDATE device_sessions SET logout_time = CURRENT_TIMESTAMP, session_status = 'ENDED'
                     WHERE device_id = ? AND user_id = ? AND session_status = 'ACTIVE' AND logout_time IS NULL
                     """)) {
@@ -1569,7 +1641,7 @@ public final class LanApiServer implements AutoCloseable {
             WHERE ci.sell_in_pos AND ci.is_active AND ci.product_type='INVENTORY' AND NOT ci.has_variants AND ci.fixed_price IS NOT NULL
               AND LOWER(CONCAT_WS(' ',ci.item_name,ci.size,ci.color,ci.sku,ci.barcode,br.name)) LIKE ?
             UNION ALL
-            SELECT ci.custom_item_id,v.custom_variant_id,ci.item_name||' — '||v.variant_name,
+            SELECT ci.custom_item_id,v.custom_variant_id,ci.item_name||' â€” '||v.variant_name,
                    COALESCE(NULLIF(v.size,''),ci.size),COALESCE(NULLIF(v.color,''),ci.color),ci.description,v.sku,
                    COALESCE(v.fixed_price,ci.fixed_price),ci.category_id,v.quantity_on_hand,COALESCE(vb.name,br.name,''),
                    COALESCE(NULLIF(v.image_url,''),ci.image_url),ci.item_type_id,COALESCE(it.name,'')
@@ -2218,6 +2290,227 @@ public final class LanApiServer implements AutoCloseable {
         }
     }
 
+    private ApiResult studioBranding(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        try(Connection c=DB.getConnection()) { StudioDeviceEnrollmentService.requireAllowed(c,device.deviceId()); }
+        Integer location = device.remoteAdmin() ? authenticateSession(context.exchange(), device, true).locationId() : device.locationId();
+        if (location == null) throw new ApiException(403, "DEVICE_STORE_REQUIRED", "Pair this computer with a store first.", false);
+        return ApiResult.ok(StudioBackgroundService.branding(location));
+    }
+
+    private ApiResult studioRemoveBackground(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        try (Connection c = DB.getConnection()) {
+            StudioDeviceEnrollmentService.requireAllowed(c,device.deviceId());
+            requireAnyPermission(c, session.userId(), "NEW_ITEM", "EDIT_ITEM", "MANAGE_CUSTOM_ORDER_ITEMS", "CUSTOM_ORDER_ITEMS", "MANAGE_CUSTOM_ORDERS");
+        }
+        try {
+            byte[] bytes = Base64.getDecoder().decode(required(context.body(), "bytesBase64", 8 * 1024 * 1024));
+            StudioQuality quality = StudioQuality.parse(optional(context.body(), "quality", 20));
+            boolean cleanEdges = context.body().has("cleanEdges") && context.body().get("cleanEdges").getAsBoolean();
+            String output = optional(context.body(), "output", 20);
+            if (output != null && !output.isBlank() && !output.equals("review-jpeg"))
+                throw new IllegalArgumentException("The photo output format is invalid.");
+            boolean review = "review-jpeg".equals(output);
+            byte[] result = review ? StudioBackgroundService.reviewJpeg(bytes, quality)
+                    : StudioBackgroundService.remove(bytes, quality, cleanEdges);
+            return ApiResult.ok(Map.of("contentType", review ? "image/jpeg" : "image/png", "bytesBase64",
+                    Base64.getEncoder().encodeToString(result)));
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(400, "IMAGE_INVALID", e.getMessage(), false);
+        } catch (StudioBackgroundService.BusyException e) {
+            throw new ApiException(429, "STUDIO_BUSY", e.getMessage(), true);
+        } catch (CatalogStudioImageProcessor.ModelUnavailableException e) {
+            throw new ApiException(503, "STUDIO_MODEL_UNAVAILABLE", e.getMessage(), false);
+        }
+    }
+
+    private ApiResult studioFromRegister(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal register = authenticateDevice(context.exchange());
+        if (register.studio() || register.remoteAdmin() || register.locationId() == null)
+            throw new ApiException(403, "REGISTER_PAIRING_REQUIRED", "Use an approved SmartStock register on this computer.", false);
+        JsonObject body = context.body();
+        String installation = required(body, "installationId", 128);
+        if (installation.equals(register.installationId()))
+            throw new ApiException(403, "DEVICE_IDENTITY_MISMATCH", "Studio must have its own installation identity.", false);
+        String key = required(body, "publicKey", 10000);
+        String challenge = LanSecurity.randomToken();
+        String envelope = encryptForDevice(key, challenge);
+        try (Connection c = DB.getConnection()) {
+            c.setAutoCommit(false);
+            try {
+                try (PreparedStatement p = c.prepareStatement("SELECT 1 FROM devices WHERE device_id=? AND device_fingerprint=? AND hostname=?")) {
+                    p.setObject(1, register.deviceId());
+                    p.setString(2, required(body, "deviceFingerprint", 500));
+                    p.setString(3, required(body, "hostname", 255));
+                    try (ResultSet r = p.executeQuery()) {
+                        if (!r.next()) throw new ApiException(403, "DEVICE_IDENTITY_MISMATCH", "The register pairing belongs to another computer.", false);
+                    }
+                }
+                var enrolled = StudioDeviceEnrollmentService.enroll(c, body, register.locationId(), challenge);
+                if (!enrolled.deviceId().equals(register.deviceId()))
+                    throw new ApiException(403, "DEVICE_IDENTITY_MISMATCH", "Studio must use this register's device row.", false);
+                auditSecurity(c, "STUDIO_DEVICE_ENROLLMENT", register.deviceId(), null, "Studio enrolled using authenticated register pairing");
+                c.commit();
+                return ApiResult.ok(Map.of("locationId", register.locationId(), "pairingChallengeEnvelope", envelope));
+            } catch (Exception ex) { c.rollback(); throw ex; }
+        }
+    }
+
+    private ApiResult studioDeviceStatus(RequestContext context) throws Exception {
+        requireMethod(context.exchange(),"POST");
+        DevicePrincipal device=authenticateDevice(context.exchange());
+        if(!device.studio())throw new ApiException(409,"STUDIO_PAIRING_REQUIRED","Pair SmartStudio again using a fresh phrase to attach it to this computer's existing device row.",false);
+        return ApiResult.ok(Map.of("deviceId",device.deviceId().toString(),"studioAllowed",true));
+    }
+
+    private ApiResult studioModels(RequestContext context, String action) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        try (Connection c = DB.getConnection()) {
+            AuthenticatedUser user = loadUser(c, session.userId(), session.locationId());
+            if (!StudioModelService.administrator(user.role()))
+                throw new ApiException(403, "ADMIN_REQUIRED", "Only an administrator can manage AI models.", false);
+        }
+        StudioModelService store = StudioModelService.current();
+        if ("install".equals(action)) {
+            StudioQuality quality;
+            try { quality = StudioQuality.parse(required(context.body(), "quality", 20)); }
+            catch (IllegalArgumentException e) { throw new ApiException(400, "MODEL_QUALITY_INVALID", e.getMessage(), false); }
+            return ApiResult.ok(Map.of("progress", store.start(quality)));
+        }
+        if ("refresh".equals(action)) {
+            try { store.refreshCatalogue(); }
+            catch (Exception e) { throw new ApiException(503, "MODEL_CATALOGUE_UNAVAILABLE",
+                    "Unable to check Deckers AI model updates. Check the server download configuration and retry. Installed models remain available.", true); }
+        }
+        return ApiResult.ok(Map.of("models", store.status()));
+    }
+
+    private ApiResult studioProductList(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        long after=Math.max(0,context.body().has("afterId")?context.body().get("afterId").getAsLong():0);
+        try(Connection c=DB.getConnection()){
+            requireAnyPermission(c,session.userId(),"EDIT_ITEM");
+            List<Map<String,Object>> products=new ArrayList<>();
+            try(PreparedStatement p=c.prepareStatement("SELECT product_id,name,image_url,additional_image_urls::text FROM products WHERE product_id>? AND is_active=TRUE AND COALESCE(image_url,'')<>'' AND sku<>'SMARTSTOCK-MISC' ORDER BY product_id LIMIT 100")){
+                p.setLong(1,after);
+                try(ResultSet r=p.executeQuery()){while(r.next()){
+                    Map<String,Object> row=new LinkedHashMap<>();
+                    row.put("productId",r.getLong(1));row.put("name",r.getString(2));
+                    row.put("imageUrl",r.getString(3));
+                    row.put("additionalImageUrls",CatalogPhotoGalleryService.parse(r.getString(4)));
+                    products.add(row);
+                }}
+            }
+            return ApiResult.ok(Map.of("products",products));
+        }
+    }
+
+    private ApiResult studioProductSource(RequestContext context) throws Exception {
+        requireMethod(context.exchange(),"POST");
+        DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        long id=requiredLong(context.body(),"productId");
+        String reference;
+        try(Connection c=DB.getConnection()){
+            requireAnyPermission(c,session.userId(),"EDIT_ITEM");
+            try(PreparedStatement p=c.prepareStatement("SELECT image_url FROM products WHERE product_id=? AND is_active=TRUE")){
+                p.setLong(1,id);try(ResultSet r=p.executeQuery()){
+                    if(!r.next()||r.getString(1)==null||r.getString(1).isBlank())
+                        throw new ApiException(404,"PHOTO_NOT_FOUND","This product has no photo.",false);
+                    reference=r.getString(1);
+                }
+            }
+        }
+        ServerImageAssetService.AssetBytes asset=ServerImageAssetService.load(reference);
+        if(asset.bytes().length>8*1024*1024)
+            throw new ApiException(413,"IMAGE_TOO_LARGE","The original product photo is too large for the studio.",false);
+        return ApiResult.ok(Map.of("imageUrl",reference,"sha256",asset.sha256(),
+                "bytesBase64",Base64.getEncoder().encodeToString(asset.bytes())));
+    }
+
+    private ApiResult studioProductImport(RequestContext context) throws Exception {
+        requireMethod(context.exchange(),"POST");
+        DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        long id=requiredLong(context.body(),"productId");
+        String expected=required(context.body(),"sourceImageUrl",4000);
+        String digest=required(context.body(),"sourceSha256",64).toLowerCase(java.util.Locale.ROOT);
+        if(!digest.matches("[0-9a-f]{64}"))throw new ApiException(400,"VALIDATION_ERROR","The source photo digest is invalid.",false);
+        byte[] bytes;
+        try{bytes=Base64.getDecoder().decode(required(context.body(),"bytesBase64",16*1024*1024));}
+        catch(IllegalArgumentException e){throw new ApiException(400,"IMAGE_INVALID","The reviewed photo is invalid.",false);}
+        if(bytes.length==0||bytes.length>2*1024*1024)throw new ApiException(413,"IMAGE_TOO_LARGE","The reviewed photo must be 2 MB or smaller.",false);
+        if(bytes.length<4||(bytes[0]&255)!=0xff||(bytes[1]&255)!=0xd8)
+            throw new ApiException(400,"IMAGE_INVALID","The reviewed photo must be a JPEG.",false);
+        java.awt.image.BufferedImage checked=javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(bytes));
+        if(checked==null||checked.getWidth()>1600||checked.getHeight()>1600)
+            throw new ApiException(400,"IMAGE_INVALID","The reviewed photo is invalid.",false);
+        String key=requireIdempotencyKey(context,"An import key is required.");
+        String hash=LanSecurity.sha256(GSON.toJson(context.body()));
+        try(Connection c=DB.getConnection()){
+            c.setAutoCommit(false);
+            try{
+                requireAnyPermission(c,session.userId(),"EDIT_ITEM");
+                Map<String,Object> previous=loadIdempotentResult(c,device.deviceId(),key,"products.studio-import.v1",hash);
+                if(previous!=null){c.commit();return ApiResult.ok(previous);}
+                String primary;
+                List<String> photos;
+                try(PreparedStatement p=c.prepareStatement("SELECT image_url,additional_image_urls::text FROM products WHERE product_id=? AND is_active=TRUE FOR UPDATE")){
+                    p.setLong(1,id);try(ResultSet r=p.executeQuery()){
+                        if(!r.next())throw new ApiException(404,"PRODUCT_NOT_FOUND","The product is unavailable.",false);
+                        primary=r.getString(1);photos=new ArrayList<>(CatalogPhotoGalleryService.parse(r.getString(2)));
+                    }
+                }
+                if(!expected.equals(primary))throw new ApiException(409,"SOURCE_CHANGED","The primary photo changed. Review this product again.",false);
+                String actual=ServerImageAssetService.load(primary).sha256();
+                if(!digest.equalsIgnoreCase(actual))throw new ApiException(409,"SOURCE_CHANGED","The primary photo changed. Review this product again.",false);
+                try(PreparedStatement p=c.prepareStatement("SELECT decision,preview_jpeg FROM catalog_studio_reviews WHERE product_id=? FOR UPDATE")){
+                    p.setLong(1,id);try(ResultSet r=p.executeQuery()){
+                        if(r.next()&&(!"approved".equals(r.getString(1))||!java.util.Arrays.equals(bytes,r.getBytes(2))))
+                            throw new ApiException(409,"REVIEW_CHANGED","Approve the shared preview before adding it.",false);
+                    }
+                }
+                String outputDigest=LanSecurity.sha256(Base64.getEncoder().encodeToString(bytes));
+                String filename="studio-"+id+"-"+outputDigest.substring(0,20)+".jpg";
+                try(PreparedStatement p=c.prepareStatement("SELECT asset_id FROM image_assets WHERE bucket_name='Product Images' AND object_path=? AND lifecycle_status<>'DELETED'")){
+                    p.setString(1,"products/"+filename);try(ResultSet r=p.executeQuery()){if(r.next()){
+                        String existing=ImageAssetReference.format((UUID)r.getObject(1));
+                        if(existing.equals(primary)&&photos.contains(expected)){
+                            Map<String,Object> result=Map.of("status","skipped","reference",existing);
+                            completeIdempotency(c,device.deviceId(),key,result);c.commit();return ApiResult.ok(result);
+                        }
+                        throw new ApiException(409,"IMPORT_CONFLICT","A previous upload needs review.",false);
+                    }}
+                }
+                if(photos.size()>=20)throw new ApiException(409,"PHOTO_LIMIT","This product already has 20 additional photos.",false);
+                String ref=ServerImageAssetService.storeUpload(c,"PRODUCT","Product Images","products/"+filename,"image/jpeg",filename,"PUBLIC",bytes);
+                photos=CatalogPhotoGalleryService.afterPromotion(primary,ref,photos);
+                CatalogPhotoGalleryService.save(c,"products","product_id",id,ref,photos);
+                try(PreparedStatement p=c.prepareStatement("UPDATE products SET image_url=?,updated_at=CURRENT_TIMESTAMP WHERE product_id=?")){
+                    p.setString(1,ref);p.setLong(2,id);
+                    if(p.executeUpdate()!=1)throw new ApiException(404,"PRODUCT_NOT_FOUND","The product is unavailable.",false);
+                }
+                try(PreparedStatement p=c.prepareStatement("""
+                        UPDATE catalog_studio_reviews SET decision='imported',reference=?,error=NULL,
+                        revision=revision+1,updated_at=now() WHERE product_id=?
+                        """)){
+                    p.setString(1,ref);p.setLong(2,id);p.executeUpdate();
+                }
+                Map<String,Object> result=Map.of("status","imported","reference",ref);
+                completeIdempotency(c,device.deviceId(),key,result);c.commit();return ApiResult.ok(result);
+            }catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}
+        }
+    }
+
     private ApiResult archivedProductSearch(RequestContext context) throws Exception {
         requireMethod(context.exchange(), "POST");
         DevicePrincipal device=authenticateDevice(context.exchange());
@@ -2429,6 +2722,7 @@ public final class LanApiServer implements AutoCloseable {
                 case "CUSTOMERS" -> Map.of("customers",ServerCustomOrderDataService.searchCustomers(c,optional(x.body(),"search",300)));
                 case "EMPLOYEES" -> Map.of("employees",ServerCustomOrderDataService.listActiveEmployees(c,s.locationId()));
                 case "LOOKUP" -> {Map<String,Object>r=new LinkedHashMap<>();r.put("match",ServerCustomOrderDataService.lookupCustomItem(c,optional(x.body(),"search",300)));yield r;}
+                case "SEARCH_ITEMS" -> Map.of("items",ServerCustomOrderDataService.searchCustomItems(c,optional(x.body(),"search",300)));
                 default -> throw new ApiException(400,"VALIDATION_ERROR","The custom-order catalog action is invalid.",false);
             });
         }
@@ -2473,6 +2767,20 @@ public final class LanApiServer implements AutoCloseable {
         for(ServerCustomOrderDataService.OrderLineRequest line:request.lines()) {
             if(line==null||line.unitPrice()==null||line.unitPrice().compareTo(BigDecimal.ZERO)<0)
                 throw new ApiException(400,"VALIDATION_ERROR","Every custom-order line must have a valid non-negative total.",false);
+            try { CustomerSuppliedItem.validate(line); } catch (IllegalArgumentException e) { throw new ApiException(400,"VALIDATION_ERROR",e.getMessage(),false); }
+            if (line.customItemId()==null && line.customerItem()==null) {
+                requireAnyPermission(c,s.userId(),"MANUAL_CUSTOM_ORDER_ENTRY");
+                if (line.itemName()==null || line.itemName().isBlank() || line.itemName().length()>200 || line.customVariantId()!=null || !"FIXED".equals(line.pricingType()) || line.baseItemPrice()==null || line.baseItemPrice().signum()<0)
+                    throw new ApiException(400,"VALIDATION_ERROR","Enter a valid manual item name and non-negative fixed price.",false);
+            }
+            if (line.printAddons()!=null) for (var addon:line.printAddons()) {
+                if (addon==null) throw new ApiException(400,"VALIDATION_ERROR","Invalid print add-on.",false);
+                if (addon.printMaterialId()==null) {
+                    requireAnyPermission(c,s.userId(),"MANUAL_CUSTOM_ORDER_ENTRY");
+                    if (addon.materialName()==null || addon.materialName().isBlank() || addon.materialName().length()>200 || addon.printSizePresetId()!=null || !"FIXED_PRESET".equals(addon.pricingMode()) || addon.printLineCount()!=1 || addon.printCharge()==null || addon.printCharge().signum()<0)
+                        throw new ApiException(400,"VALIDATION_ERROR","Enter a valid manual add-on name and non-negative fixed price.",false);
+                }
+            }
             boolean discounted=line.lineDiscountPercent()!=null&&line.lineDiscountPercent().signum()>0;
             Integer discountBy=discounted?s.userId():null;
             String discountName=discounted?displayName(user):null;
@@ -2508,14 +2816,14 @@ public final class LanApiServer implements AutoCloseable {
                     ? utils.CurrencyFormatter.roundToNearestTwenty(normalizedUnitPrice) : normalizedUnitPrice;
             total=total.add(chargedUnitPrice);
             lines.add(new ServerCustomOrderDataService.OrderLineRequest(
-                    line.customItemId(),line.customVariantId(),line.itemName(),line.variantName(),line.pricingType(),
-                    chargedUnitPrice,line.customizationDetails(),line.orderInstructions(),line.widthValue(),line.lengthValue(),
+                    line.customItemId(),line.customVariantId(),line.customerItem()==null?line.itemName():line.customerItem().name(),line.variantName(),line.pricingType(),
+                    chargedUnitPrice,line.customerItem()==null?line.customizationDetails():line.customerItem().details(),line.orderInstructions(),line.widthValue(),line.lengthValue(),
                     line.dimensionUnit(),line.areaValue(),line.areaUnit(),line.areaPrice(),line.baseItemPrice(),
                     line.printMaterialId(),line.printMaterialName(),line.printSizePresetId(),line.printSizeName(),
                     line.printCharge(),line.printLineCount(),originalTotal,effectiveRate,
                     effectiveReduction,discountBy,discountName,customerRate!=null&&customerRate.compareTo(manualRate)>0?"Automatic customer discount":line.lineDiscountReason(),line.minimumDepositPercent(),
                     line.originalBasePrice(),line.priceOverridePrice(),line.priceOverrideReason(),priceBy,priceName,
-                    line.printAddons()==null?List.of():line.printAddons(),null,null,line.itemSize(),line.itemColor()));
+                    line.printAddons()==null?List.of():line.printAddons(),null,null,line.customerItem()==null?line.itemSize():line.customerItem().size(),line.customerItem()==null?line.itemColor():line.customerItem().color(),line.customerItem()));
         }
 
         total=utils.CurrencyFormatter.normalize(total);
@@ -2566,6 +2874,45 @@ public final class LanApiServer implements AutoCloseable {
         try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_OVERRIDES");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());Integer employee=x.body().has("employeeId")&&!x.body().get("employeeId").isJsonNull()?x.body().get("employeeId").getAsInt():null;LanOrdersDashboardService.assign(c,requiredLong(x.body(),"orderId"),employee,required(x.body(),"status",30),s.userId(),displayName(u),d.deviceId(),loadDeviceDisplayName(c,d.deviceId()),s.locationId());Map<String,Object>result=Map.of("saved",true);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
     private ApiResult customOrderSlip(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String number=required(x.body(),"orderNumber",100);try(Connection c=DB.getConnection()){try{return ApiResult.ok(Map.of("slip",LanDocumentDataService.customOrderSlip(c,number,s.userId(),s.locationId())));}catch(LanDocumentDataService.RuleViolation e){throw apiException(e);}}}
 
+    private ApiResult manualTimeClockEmployees(RequestContext x) throws Exception {
+        requireMethod(x.exchange(),"POST");
+        DevicePrincipal d=authenticateDevice(x.exchange());
+        SessionPrincipal s=authenticateSession(x.exchange(),d,true);
+        try(Connection c=DB.getConnection()) {
+            requireAnyPermission(c,s.userId(),"TIME_CLOCK_MANAGEMENT");
+            return ApiResult.ok(Map.of("employees",ManualTimeClockService.employees(c,s.locationId())));
+        }
+    }
+    private ApiResult createManualTimeClock(RequestContext x) throws Exception {
+        requireMethod(x.exchange(),"POST");
+        DevicePrincipal d=authenticateDevice(x.exchange());
+        SessionPrincipal s=authenticateSession(x.exchange(),d,true);
+        String key=requireIdempotencyKey(x,"A valid idempotency key is required for manual hours.");
+        String hash=LanSecurity.sha256(GSON.toJson(x.body()));
+        try(Connection c=DB.getConnection()) {
+            c.setAutoCommit(false);
+            try {
+                requireAnyPermission(c,s.userId(),"TIME_CLOCK_MANAGEMENT");
+                Map<String,Object> previous=loadIdempotentResult(c,d.deviceId(),key,"time-clock.manual.create.v1",hash);
+                if(previous!=null) { c.commit(); return ApiResult.ok(previous); }
+                AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());
+                int employeeId=requiredInt(x.body(),"employeeId");
+                TimeClockAutoCloseService.Correction entry=GSON.fromJson(x.body().get("entry"),TimeClockAutoCloseService.Correction.class);
+                long clockId=ManualTimeClockService.create(c,employeeId,s.locationId(),entry);
+                auditSecurity(c,"TIME_CLOCK_MANUAL_CREATED",d.deviceId(),s.userId(),
+                        GSON.toJson(Map.of("clockId",clockId,"employeeId",employeeId,"locationId",s.locationId(),
+                                "manager",displayName(u),"entry",entry)));
+                SyncOutboxService.recordEvent(c,"TIME_CLOCK_MANUAL_CREATED",Map.of("clock_id",clockId,"user_id",employeeId,"location_id",s.locationId()));
+                Map<String,Object> result=Map.of("clockId",clockId);
+                completeIdempotency(c,d.deviceId(),key,result);
+                c.commit();
+                return ApiResult.ok(result);
+            } catch(SQLException e) {
+                c.rollback(); throw new ApiException(409,"TIME_CLOCK_CHANGE_REJECTED",safeTimeClockChangeMessage(e),false);
+            } catch(Exception e) { c.rollback(); throw e; }
+            finally { c.setAutoCommit(true); }
+        }
+    }
     private ApiResult timeClockAutoCloseSettings(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"COMPANY_PREFERENCES");return ApiResult.ok(Map.of("settings",TimeClockAutoCloseService.loadSettings(c)));}}
     private ApiResult timeClockAutoCloseReviews(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"TIME_CLOCK_MANAGEMENT");return ApiResult.ok(Map.of("reviews",TimeClockAutoCloseService.loadPendingReviews(c)));}}
     private ApiResult timeClockAutoCloseNotice(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){TimeClockAutoCloseService.EmployeeAutoCloseNotice notice=TimeClockAutoCloseService.latestPendingNotice(c,s.userId());Map<String,Object>result=new LinkedHashMap<>();result.put("notice",notice);return ApiResult.ok(result);}}
@@ -2605,7 +2952,7 @@ public final class LanApiServer implements AutoCloseable {
     }
 
     private ApiResult employeeAdminState(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);Integer userId=x.body().has("userId")&&!x.body().get("userId").isJsonNull()?x.body().get("userId").getAsInt():null;try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"EMPLOYEE_MANAGEMENT");AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());return ApiResult.ok(Map.of("state",LanEmployeeAdminService.state(c,userId,LocalDate.now(java.time.ZoneId.of(u.locationTimezone())))));}}
-    private ApiResult employeeAdminMutation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",30),key=requireIdempotencyKey(x,"A valid idempotency key is required for this employee change."),operation="employees.admin."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{requireAnyPermission(c,s.userId(),"EMPLOYEE_MANAGEMENT");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}AuthenticatedUser actor=loadUser(c,s.userId(),s.locationId());Map<String,Object>result=new LinkedHashMap<>();if(x.body().has("userId")){try(PreparedStatement pending=c.prepareStatement("SELECT 1 FROM employee_registrations WHERE employee_id=? AND status<>'APPROVED'")){pending.setInt(1,requiredInt(x.body(),"userId"));try(ResultSet pr=pending.executeQuery()){if(pr.next())throw new ApiException(409,"REGISTRATION_PENDING","Use Pending Employees to finish this approval.",false);}}}switch(action){case"ROTATE_BADGE"->result.put("badgeId",LanEmployeeAdminService.rotateBadge(c,requiredInt(x.body(),"userId"),s.userId(),displayName(actor)));case"CLEAR_LOGIN_ATTEMPTS"->{int id=requiredInt(x.body(),"userId"),cleared=LanEmployeeAdminService.clearLoginFailures(c,id);auditSecurity(c,"LOGIN_FAILURES_CLEARED",d.deviceId(),s.userId(),"Cleared failed login attempts for employee user ID "+id);result.put("cleared",cleared);}case"SAVE_STORES"->{Integer[]ids=GSON.fromJson(x.body().get("locationIds"),Integer[].class);LanEmployeeAdminService.saveStores(c,requiredInt(x.body(),"userId"),ids==null?List.of():List.of(ids));result.put("saved",true);}case"CREATE"->{LanEmployeeAdminService.SaveRequest request=GSON.fromJson(x.body().get("employee"),LanEmployeeAdminService.SaveRequest.class);LanEmployeeAdminService.validateNewEmployeeContact(request == null ? null : request.email(),request == null ? null : request.phone());request=request.withEmail(employeeAuthEmail(request.email(),request.username(),actor.email()));String authId=employeeAuthCreate(request);try{result.put("userId",LanEmployeeAdminService.create(c,request,authId,s.userId(),displayName(actor)));}catch(Exception e){try{employeeAuthDelete(authId,null);}catch(Exception ignored){}throw e;}}case"UPDATE"->{int id=requiredInt(x.body(),"userId");LanEmployeeAdminService.SaveRequest request=GSON.fromJson(x.body().get("employee"),LanEmployeeAdminService.SaveRequest.class);String existingEmail=LanEmployeeAdminService.email(c,id);String requestedEmail=request.email()==null||request.email().isBlank()?existingEmail:request.email();request=request.withEmail(employeeAuthEmail(requestedEmail,request.username(),actor.email()));String authId=LanEmployeeAdminService.authUserId(c,id);if(authId==null||authId.isBlank()){if(request.password()==null||request.password().isBlank())throw new ApiException(400,"PASSWORD_REQUIRED","Enter a password to create the missing employee Auth account.",false);authId=employeeAuthCreate(request);}else employeeAuthUpdate(authId,request);LanEmployeeAdminService.update(c,id,request,authId,request.password()!=null&&!request.password().isBlank(),s.userId(),displayName(actor),LocalDate.now(java.time.ZoneId.of(actor.locationTimezone())));result.put("userId",id);}case"DEACTIVATE"->{int id=requiredInt(x.body(),"userId");String authId=LanEmployeeAdminService.authUserId(c,id);if(authId!=null&&!authId.isBlank())employeeAuthDelete(authId,null);LanEmployeeAdminService.deactivate(c,id,s.userId(),displayName(actor));result.put("deactivated",true);}default->throw new ApiException(400,"VALIDATION_ERROR","The employee administration action is invalid.",false);}completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
+    private ApiResult employeeAdminMutation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",30),key=requireIdempotencyKey(x,"A valid idempotency key is required for this employee change."),operation="employees.admin."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{requireAnyPermission(c,s.userId(),"EMPLOYEE_MANAGEMENT");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}AuthenticatedUser actor=loadUser(c,s.userId(),s.locationId());Map<String,Object>result=new LinkedHashMap<>();if(x.body().has("userId")){try(PreparedStatement pending=c.prepareStatement("SELECT 1 FROM employee_registrations WHERE employee_id=? AND status<>'APPROVED'")){pending.setInt(1,requiredInt(x.body(),"userId"));try(ResultSet pr=pending.executeQuery()){if(pr.next())throw new ApiException(409,"REGISTRATION_PENDING","Use Pending Employees to finish this approval.",false);}}}switch(action){case"ROTATE_BADGE"->result.put("badgeId",LanEmployeeAdminService.rotateBadge(c,requiredInt(x.body(),"userId"),s.userId(),displayName(actor)));case"CLEAR_LOGIN_ATTEMPTS"->{int id=requiredInt(x.body(),"userId"),cleared=LanEmployeeAdminService.clearLoginFailures(c,id);auditSecurity(c,"LOGIN_FAILURES_CLEARED",d.deviceId(),s.userId(),"Cleared failed login attempts for employee user ID "+id);result.put("cleared",cleared);}case"SAVE_STORES"->{Integer[]ids=GSON.fromJson(x.body().get("locationIds"),Integer[].class);LanEmployeeAdminService.saveStores(c,requiredInt(x.body(),"userId"),ids==null?List.of():List.of(ids));result.put("saved",true);}case"CREATE"->{LanEmployeeAdminService.SaveRequest request=GSON.fromJson(x.body().get("employee"),LanEmployeeAdminService.SaveRequest.class);LanEmployeeAdminService.validateNewEmployeeContact(request == null ? null : request.email(),request == null ? null : request.phone());request=request.withEmail(employeeAuthEmail(request.email(),request.username(),actor.email()));String authId=employeeAuthCreate(request);try{result.put("userId",LanEmployeeAdminService.create(c,request,authId,s.userId(),displayName(actor)));}catch(Exception e){try{employeeAuthDelete(authId,null);}catch(Exception ignored){}throw e;}}case"UPDATE"->{int id=requiredInt(x.body(),"userId");LanEmployeeAdminService.SaveRequest request=GSON.fromJson(x.body().get("employee"),LanEmployeeAdminService.SaveRequest.class);String existingEmail=LanEmployeeAdminService.email(c,id);String requestedEmail=request.email()==null||request.email().isBlank()?existingEmail:request.email();request=request.withEmail(employeeAuthEmail(requestedEmail,request.username(),actor.email()));String authId=LanEmployeeAdminService.authUserId(c,id);if(authId==null||authId.isBlank()){if(request.password()==null||request.password().isBlank())throw new ApiException(400,"PASSWORD_REQUIRED","Enter a password to create the missing employee Auth account.",false);authId=employeeAuthCreate(request);}else employeeAuthUpdate(authId,request);LanEmployeeAdminService.update(c,id,request,authId,request.password()!=null&&!request.password().isBlank(),s.userId(),displayName(actor),LocalDate.now(java.time.ZoneId.of(actor.locationTimezone())));result.put("userId",id);}case"DEACTIVATE"->{int id=requiredInt(x.body(),"userId");String authId=LanEmployeeAdminService.authUserId(c,id);if(authId!=null&&!authId.isBlank())employeeAuthDeactivate(authId);LanEmployeeAdminService.deactivate(c,id,s.userId(),displayName(actor));result.put("deactivated",true);}default->throw new ApiException(400,"VALIDATION_ERROR","The employee administration action is invalid.",false);}completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
     private ApiResult employeeRegistrations(RequestContext x)throws Exception {
         requireMethod(x.exchange(),"POST");
         if(!"/v1/employees/registrations".equals(x.exchange().getRequestURI().getPath()))
@@ -2748,6 +3095,11 @@ public final class LanApiServer implements AutoCloseable {
         if(r.password()!=null&&!r.password().isBlank())b.addProperty("password",r.password());
         employeeAuthAdminCall("PUT","/auth/v1/admin/users/"+urlPath(id),b);
     }
+    private void employeeAuthDeactivate(String id)throws Exception{
+        JsonObject body=new JsonObject();body.addProperty("ban_duration","876000h");
+        try{employeeAuthAdminCall("PUT","/auth/v1/admin/users/"+urlPath(id),body);}
+        catch(ApiException ex){if(ex.status!=404)throw ex;}
+    }
     private void employeeAuthDelete(String id,String ignoredToken)throws Exception{
         employeeAuthAdminCall("DELETE","/auth/v1/admin/users/"+urlPath(id),null);
     }
@@ -2758,7 +3110,7 @@ public final class LanApiServer implements AutoCloseable {
         switch(method){case"POST"->request.POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body),StandardCharsets.UTF_8));case"PUT"->request.PUT(HttpRequest.BodyPublishers.ofString(GSON.toJson(body),StandardCharsets.UTF_8));case"DELETE"->request.DELETE();default->throw new IllegalArgumentException("Unsupported employee Auth method.");}
         ServerSupabaseCredentials.applyTo(request);
         HttpResponse<String>response=CLOUD_HTTP.send(request.build(),HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if(response.statusCode()<200||response.statusCode()>=300){String message=employeeAuthError(response.body());if(response.statusCode()==409||isEmployeeAuthConflict(message))throw new ApiException(409,"EMPLOYEE_AUTH_CONFLICT",message,false);if(response.statusCode()==400||response.statusCode()==422)throw new ApiException(400,"EMPLOYEE_AUTH_REJECTED",message,false);throw new ApiException(502,"AUTH_SYNC_FAILED",message,response.statusCode()>=500);}
+        if(response.statusCode()<200||response.statusCode()>=300){String message=employeeAuthError(response.body());if(response.statusCode()==404)throw new ApiException(404,"EMPLOYEE_AUTH_MISSING",message,false);if(response.statusCode()==409||isEmployeeAuthConflict(message))throw new ApiException(409,"EMPLOYEE_AUTH_CONFLICT",message,false);if(response.statusCode()==400||response.statusCode()==422)throw new ApiException(400,"EMPLOYEE_AUTH_REJECTED",message,false);throw new ApiException(502,"AUTH_SYNC_FAILED",message,response.statusCode()>=500);}
         if(response.body()==null||response.body().isBlank())return new JsonObject();
         try{return JsonParser.parseString(response.body()).getAsJsonObject();}catch(Exception e){return new JsonObject();}
     }
@@ -2805,7 +3157,12 @@ public final class LanApiServer implements AutoCloseable {
                 || message.equals("Customer account was not found.")
                 || message.equals("This invoice has no remaining balance to pay.")
                 || message.equals("This invoice has no remaining balance to place on account.")
-                || message.equals("Cancelled invoices cannot be paid.")) {
+                || message.equals("Cancelled invoices cannot be paid.")
+                || message.equals("This device is not allowed to create orders. Enable Allow Orders in Device Management.")
+                || message.equals("Only draft or issued quotations can be accepted.")
+                || message.startsWith("This quotation expired on ")
+                || ("22023".equals(error.getSQLState())
+                    && message.startsWith("Enter a seven-digit Guyana phone number, or a complete international number"))) {
             return new ApiException(409, "INVOICE_PAYMENT_REJECTED", message, false);
         }
         return new ApiException(409, "QUOTATION_CHANGE_REJECTED",
@@ -2830,10 +3187,10 @@ public final class LanApiServer implements AutoCloseable {
                     ps.setInt(1,line.productId());
                     try(ResultSet rs=ps.executeQuery()){
                         if(!rs.next())throw new ApiException(400,"PRODUCT_NOT_FOUND","A quotation product no longer exists.",false);
-                        original=utils.CurrencyFormatter.normalize(rs.getBigDecimal(1));
+                        original=rs.getBigDecimal(1).setScale(2,java.math.RoundingMode.HALF_UP);
                     }
                 }
-                BigDecimal entered=utils.CurrencyFormatter.normalize(line.unitPrice());
+                BigDecimal entered=line.unitPrice().setScale(2,java.math.RoundingMode.HALF_UP);
                 if(entered.compareTo(original)!=0&&!canChangePrice){
                     reason=line.priceOverrideReason()==null?"":line.priceOverrideReason().trim();
                     if(reason.isBlank())throw new ApiException(400,"VALIDATION_ERROR","A quotation price override reason is required.",false);
@@ -2847,7 +3204,7 @@ public final class LanApiServer implements AutoCloseable {
                     approvedName=approval.approverName();
                 }
             }else if(line.custom()!=null){
-                original=configuredCustomQuotationPrice(c,line.custom());BigDecimal entered=utils.CurrencyFormatter.normalize(line.unitPrice());
+                original=configuredCustomQuotationPrice(c,line.custom());BigDecimal entered=line.unitPrice().setScale(2,java.math.RoundingMode.HALF_UP);
                 if(entered.compareTo(original)!=0){reason=line.priceOverrideReason()==null?"":line.priceOverrideReason().trim();if(reason.isBlank())throw new ApiException(400,"VALIDATION_ERROR","A custom-item price override reason is required.",false);if(canOverrideCustomPrice){approvedBy=s.userId();approvedName=displayName(u);}else{LanSalesService.Approval approval=consumeApproval(c,d,s,line.priceOverrideApprovalToken(),"CUSTOM_ORDER_PRICE_OVERRIDE","Custom Order Price Override",reason);approvedBy=approval.approverUserId();approvedName=approval.approverName();}}
             }
             trusted.add(new ServerQuotationInvoiceService.QuotationLineInput(
@@ -2863,7 +3220,7 @@ public final class LanApiServer implements AutoCloseable {
     private BigDecimal configuredCustomQuotationPrice(Connection c,ServerQuotationInvoiceService.CustomLineInput custom)throws Exception{
         BigDecimal price;String pricing;try(PreparedStatement ps=c.prepareStatement("SELECT pricing_type,COALESCE(fixed_price,0),COALESCE(area_price,0) FROM custom_order_items WHERE custom_item_id=? AND is_active=TRUE")){ps.setLong(1,custom.customItemId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(400,"CUSTOM_ITEM_NOT_FOUND","A quotation custom item no longer exists.",false);pricing=rs.getString(1);price="AREA".equals(pricing)?rs.getBigDecimal(3):rs.getBigDecimal(2);}}
         if(custom.customVariantId()!=null)try(PreparedStatement ps=c.prepareStatement("SELECT fixed_price FROM custom_order_item_variants WHERE custom_variant_id=? AND custom_item_id=? AND is_active=TRUE")){ps.setLong(1,custom.customVariantId());ps.setLong(2,custom.customItemId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(400,"CUSTOM_VARIANT_NOT_FOUND","The custom-item variant is invalid.",false);if(rs.getBigDecimal(1)!=null)price=rs.getBigDecimal(1);}}
-        if("AREA".equals(pricing))price=price.multiply(customArea(custom));if(custom.printAddons()!=null)for(var addon:custom.printAddons())if(addon.charge()!=null)price=price.add(addon.charge());return utils.CurrencyFormatter.normalize(price);
+        if("AREA".equals(pricing))price=price.multiply(customArea(custom));if(custom.printAddons()!=null)for(var addon:custom.printAddons())if(addon.charge()!=null)price=price.add(addon.charge());return price.setScale(2,java.math.RoundingMode.HALF_UP);
     }
     private static BigDecimal customArea(ServerQuotationInvoiceService.CustomLineInput c){BigDecimal w=c.widthValue(),l=c.lengthValue();String d=c.dimensionUnit()==null?"":c.dimensionUnit().trim().toUpperCase(java.util.Locale.ROOT),a=c.areaUnit()==null?"":c.areaUnit().trim().toUpperCase(java.util.Locale.ROOT);if(a.isBlank())return w.multiply(l);BigDecimal metres=switch(d){case"IN","INCH","INCHES"->new BigDecimal("0.0254");case"FT","FOOT","FEET"->new BigDecimal("0.3048");case"CM"->new BigDecimal("0.01");case"MM"->new BigDecimal("0.001");default->BigDecimal.ONE;};BigDecimal sqm=w.multiply(metres).multiply(l.multiply(metres));BigDecimal unit=switch(a){case"SQ_IN","SQUARE_INCH","SQUARE_INCHES"->new BigDecimal("0.00064516");case"SQ_FT","SQUARE_FOOT","SQUARE_FEET"->new BigDecimal("0.09290304");case"SQ_CM","SQUARE_CENTIMETRE","SQUARE_CENTIMETERS"->new BigDecimal("0.0001");case"SQ_MM"->new BigDecimal("0.000001");default->BigDecimal.ONE;};return sqm.divide(unit,6,java.math.RoundingMode.HALF_UP);}
     private void validateCustomQuotationLine(Connection c,ServerQuotationInvoiceService.CustomLineInput custom)throws Exception{
@@ -2896,7 +3253,7 @@ public final class LanApiServer implements AutoCloseable {
     }
     private void bindServerIdentity(Connection c,DevicePrincipal d,SessionPrincipal s,AuthenticatedUser u)throws SQLException{ServerRequestIdentity.bind(s.userId(),s.locationId(),u.locationName(),displayName(u),d.deviceId().toString(),loadDeviceDisplayName(c,d.deviceId()));}
     private static LocalDate optionalDate(JsonObject b,String key)throws ApiException{String v=optional(b,key,40);if(v==null||v.isBlank())return null;try{return LocalDate.parse(v);}catch(Exception e){throw new ApiException(400,"VALIDATION_ERROR",key+" is invalid.",false);}}
-    private ApiResult quotationDocument(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"QUOTATIONS_ORDERS","CREATE_QUOTATION");String type=required(x.body(),"type",30);long id=requiredLong(x.body(),"documentId");String value=switch(type){case"QUOTATION"->Receipt.ServerQuotationInvoiceDocumentBuilder.buildQuotation(id);case"INVOICE"->Receipt.ServerQuotationInvoiceDocumentBuilder.buildInvoice(id);case"DELIVERY"->Receipt.ServerQuotationInvoiceDocumentBuilder.buildDelivery(id);default->throw new ApiException(400,"VALIDATION_ERROR","The document type is invalid.",false);};return ApiResult.ok(Map.of("text",value));}}
+    private ApiResult quotationDocument(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"QUOTATIONS_ORDERS","CREATE_QUOTATION");String type=required(x.body(),"type",30);long id=requiredLong(x.body(),"documentId");boolean compact=x.body().has("compact") && x.body().get("compact").getAsBoolean();String value=switch(type){case"QUOTATION"->Receipt.ServerQuotationInvoiceDocumentBuilder.buildQuotation(id,compact);case"INVOICE"->Receipt.ServerQuotationInvoiceDocumentBuilder.buildInvoice(id,compact);case"DELIVERY"->Receipt.ServerQuotationInvoiceDocumentBuilder.buildDelivery(id);default->throw new ApiException(400,"VALIDATION_ERROR","The document type is invalid.",false);};return ApiResult.ok(Map.of("text",value));}}
     private ApiResult notificationList(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){bindNotifications(c,d,s);try{return ApiResult.ok(Map.of("notifications",ServerNotificationService.loadNotifications(c)));}finally{ServerNotificationService.clearRequest();}}}
     private ApiResult notificationUpdate(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String key=requireIdempotencyKey(x,"A valid idempotency key is required for this notification change."),operation="notifications.update.v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));String action=required(x.body(),"action",20).toUpperCase(java.util.Locale.ROOT),notificationKey=required(x.body(),"notificationKey",500);try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}bindNotifications(c,d,s);try{switch(action){case "READ"->ServerNotificationService.markRead(c,notificationKey);case "SNOOZE"->ServerNotificationService.snooze(c,notificationKey,x.body().has("minutes")?x.body().get("minutes").getAsInt():60);case "CLEAR"->ServerNotificationService.clear(c,notificationKey);case "SEEN"->{models.AppNotification n=GSON.fromJson(x.body().get("notification"),models.AppNotification.class);if(n==null||!notificationKey.equals(n.notificationKey()))throw new ApiException(400,"VALIDATION_ERROR","Notification details are invalid.",false);ServerNotificationService.markSeen(c,n);}default->throw new ApiException(400,"VALIDATION_ERROR","The notification action is invalid.",false);}}finally{ServerNotificationService.clearRequest();}Map<String,Object>result=Map.of("updated",true);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(Exception e){c.rollback();throw e;}finally{ServerNotificationService.clearRequest();c.setAutoCommit(true);}}}
     private void bindNotifications(Connection c,DevicePrincipal d,SessionPrincipal s)throws Exception{ServerNotificationService.bindRequest(s.userId(),s.locationId(),d.deviceId().toString(),Set.copyOf(loadPermissions(c,s.userId())));}
@@ -2943,6 +3300,59 @@ public final class LanApiServer implements AutoCloseable {
     }
     private ApiResult customCatalogAdminState(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");return ApiResult.ok(Map.of("state",LanCustomOrderCatalogAdminService.load(c)));}}
     private ApiResult customCatalogAdminMutation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",40),key=requireIdempotencyKey(x,"A valid idempotency key is required for this custom catalog change."),op="custom-orders.admin."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,op,hash);if(old!=null){c.commit();return ApiResult.ok(old);}long id=LanCustomOrderCatalogAdminService.mutate(c,action,x.body());Map<String,Object>result=Map.of("recordId",id);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(CatalogBarcodeService.ConflictException e){c.rollback();throw new ApiException(409,"BARCODE_EXISTS",e.getMessage(),false);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
+    private ApiResult customOrderMediaRead(RequestContext x)throws Exception{
+        requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
+        try(Connection c=DB.getConnection()){
+            long orderId=requiredLong(x.body(),"orderId");String action=required(x.body(),"action",30);
+            if("SPOILS".equals(action)||"SPOIL_PHOTO".equals(action)){
+                requireAnyPermission(c,s.userId(),"RECORD_CUSTOM_ORDER_SPOILS","REVERSE_CUSTOM_ORDER_SPOILS","MANAGE_CUSTOM_ORDERS");
+                return ApiResult.ok("SPOILS".equals(action)?CustomOrderSpoilService.state(c,s.locationId(),orderId):CustomOrderSpoilService.photo(c,s.locationId(),UUID.fromString(required(x.body(),"photoId",40))));
+            }
+            requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_LOOKUP","CUSTOM_ORDER_PRODUCTION_STEPS","CUSTOM_ORDER_OVERRIDES");
+            try(PreparedStatement check=c.prepareStatement("SELECT 1 FROM custom_orders WHERE custom_order_id=? AND location_id=?")){check.setLong(1,orderId);check.setInt(2,s.locationId());try(ResultSet r=check.executeQuery()){if(!r.next())throw new ApiException(404,"ORDER_NOT_FOUND","Order not found.",false);}}
+            if("LIST".equals(action)){
+                Map<String,Object> data=new LinkedHashMap<>();java.util.List<Map<String,Object>> files=new java.util.ArrayList<>(),proofs=new java.util.ArrayList<>(),links=new java.util.ArrayList<>();
+                try(PreparedStatement p=c.prepareStatement("SELECT file_id,custom_order_line_id,filename,content_type,byte_size,created_at FROM custom_order_files WHERE custom_order_id=? AND removed_at IS NULL AND deleted_at IS NULL ORDER BY created_at")){p.setLong(1,orderId);try(ResultSet r=p.executeQuery()){while(r.next())files.add(Map.of("id",r.getObject(1).toString(),"lineId",r.getLong(2),"filename",r.getString(3),"contentType",r.getString(4),"bytes",r.getLong(5),"createdAt",r.getTimestamp(6).toInstant().toString()));}}
+                try(PreparedStatement p=c.prepareStatement("SELECT proof_id,custom_order_line_id,revision,filename,content_type,byte_size,status,created_at,feedback,deleted_at FROM custom_order_design_proofs WHERE custom_order_id=? ORDER BY custom_order_line_id,revision DESC")){p.setLong(1,orderId);try(ResultSet r=p.executeQuery()){while(r.next()){Map<String,Object> row=new LinkedHashMap<>();row.put("id",r.getObject(1).toString());row.put("lineId",r.getLong(2));row.put("revision",r.getInt(3));row.put("filename",r.getString(4));row.put("contentType",r.getString(5));row.put("bytes",r.getLong(6));row.put("status",r.getString(7));row.put("createdAt",r.getTimestamp(8).toInstant().toString());row.put("feedback",r.getString(9));row.put("fileAvailable",r.getTimestamp(10)==null);proofs.add(row);}}}
+                try(PreparedStatement p=c.prepareStatement("SELECT link_id,created_at FROM custom_order_access_links WHERE custom_order_id=? AND revoked_at IS NULL ORDER BY created_at DESC")){p.setLong(1,orderId);try(ResultSet r=p.executeQuery()){while(r.next())links.add(Map.of("id",r.getObject(1).toString(),"createdAt",r.getTimestamp(2).toInstant().toString()));}}
+                java.util.List<Map<String,Object>> lines=new java.util.ArrayList<>();
+                try(PreparedStatement p=c.prepareStatement("SELECT custom_order_line_id,item_name,COALESCE(variant_name,'') FROM custom_order_lines WHERE custom_order_id=? ORDER BY sort_order,custom_order_line_id")){p.setLong(1,orderId);try(ResultSet r=p.executeQuery()){while(r.next())lines.add(Map.of("lineId",r.getLong(1),"item",r.getString(2),"variant",r.getString(3)));}}
+                data.put("lines",lines);data.put("files",files);data.put("proofs",proofs);data.put("links",links);data.put("limitBytes",CustomOrderMediaService.limit(c,s.locationId()));try(PreparedStatement p=c.prepareStatement("SELECT status FROM custom_orders WHERE custom_order_id=?")){p.setLong(1,orderId);try(ResultSet r=p.executeQuery()){r.next();data.put("orderStatus",r.getString(1));}}return ApiResult.ok(data);
+            }
+            if("APPROVED".equals(action)){var m=CustomOrderMediaService.approvedPreview(c,orderId,requiredLong(x.body(),"lineId"),s.locationId());return ApiResult.ok(Map.of("id",m.id().toString(),"filename",m.filename(),"contentType",m.contentType(),"bytes",m.bytes()));}
+            if("CHUNK".equals(action)){
+                boolean proof=x.body().has("proof")&&x.body().get("proof").getAsBoolean();UUID id=UUID.fromString(required(x.body(),"fileId",40));long offset=requiredNonNegativeLong(x.body(),"offset");int length=x.body().has("length")?x.body().get("length").getAsInt():524288;if(length<1||length>524288||offset<0)throw new ApiException(400,"VALIDATION_ERROR","Invalid file range.",false);
+                String sql=proof?"SELECT storage_key,filename,content_type,byte_size FROM custom_order_design_proofs WHERE proof_id=? AND custom_order_id=? AND deleted_at IS NULL AND (decided_at IS NULL OR (status='APPROVED' AND decided_at>now()-interval '3 months') OR (status<>'APPROVED' AND decided_at>now()-interval '30 days'))":"SELECT f.storage_key,f.filename,f.content_type,f.byte_size FROM custom_order_files f JOIN custom_orders o ON o.custom_order_id=f.custom_order_id WHERE f.file_id=? AND f.custom_order_id=? AND f.removed_at IS NULL AND f.deleted_at IS NULL AND (o.status<>'DELIVERED' OR o.delivered_at>now()-interval '30 days')";
+                try(PreparedStatement p=c.prepareStatement(sql)){p.setObject(1,id);p.setLong(2,orderId);try(ResultSet r=p.executeQuery()){if(!r.next())throw new ApiException(404,"FILE_NOT_FOUND","File not found.",false);long size=r.getLong(4);if(offset>=size)throw new ApiException(400,"VALIDATION_ERROR","Invalid file range.",false);int count=(int)Math.min(length,size-offset);byte[] bytes=new byte[count];try(var channel=java.nio.channels.FileChannel.open(CustomOrderMediaService.localFile(r.getString(1)),java.nio.file.StandardOpenOption.READ)){java.nio.ByteBuffer buffer=java.nio.ByteBuffer.wrap(bytes);while(buffer.hasRemaining()&&channel.read(buffer,offset+buffer.position())>0){}if(buffer.hasRemaining())throw new java.io.IOException("The file could not be read.");}return ApiResult.ok(Map.of("bytesBase64",Base64.getEncoder().encodeToString(bytes),"filename",r.getString(2),"contentType",r.getString(3),"totalBytes",size));}}
+            }
+            throw new ApiException(400,"VALIDATION_ERROR","Unknown media read action.",false);
+        }
+    }
+
+    private ApiResult customOrderMediaMutation(RequestContext x)throws Exception{
+        requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",30);long orderId=requiredLong(x.body(),"orderId");
+        String key=requireIdempotencyKey(x,"An idempotency key is required for a file change."),op="custom-orders.media."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));
+        try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{
+            if("REVERSE_SPOIL".equals(action))requireAnyPermission(c,s.userId(),"REVERSE_CUSTOM_ORDER_SPOILS");
+            else requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_PRODUCTION_STEPS","CUSTOM_ORDER_OVERRIDES");
+            Map<String,Object> old=loadIdempotentResult(c,d.deviceId(),key,op,hash);if(old!=null){c.commit();return ApiResult.ok(old);}
+            Map<String,Object> result=new LinkedHashMap<>();
+            switch(action){
+                case "REVERSE_SPOIL" -> result.putAll(CustomOrderSpoilService.reverse(c,s.locationId(),s.userId(),displayName(loadUser(c,s.userId(),s.locationId())),UUID.fromString(required(x.body(),"reportId",40)),required(x.body(),"reason",2000)));
+
+                case "BEGIN"->{String kind=required(x.body(),"kind",20);long size=requiredLong(x.body(),"size");Integer overrideBy=null;String reason=optional(x.body(),"overrideReason",2000);if(size>CustomOrderMediaService.limit(c,s.locationId())){if(reason==null||reason.isBlank())throw new ApiException(400,"VALIDATION_ERROR","A size override reason is required.",false);if(hasPermission(c,s.userId(),"CUSTOM_ORDER_FILE_SIZE_OVERRIDE"))overrideBy=s.userId();else{var approval=consumeApproval(c,d,s,optional(x.body(),"approvalToken",512),"CUSTOM_ORDER_FILE_SIZE_OVERRIDE","Custom Order File Size Override",reason);overrideBy=approval.approverUserId();}}var started=CustomOrderMediaService.begin(c,orderId,requiredLong(x.body(),"lineId"),s.locationId(),kind,required(x.body(),"filename",180),size,required(x.body(),"sha256",64),s.userId(),null,overrideBy,reason);result.put("uploadId",started.uploadId().toString());result.put("limitBytes",started.limitBytes());}
+                case "CHUNK"->{UUID id=UUID.fromString(required(x.body(),"uploadId",40));byte[] bytes=Base64.getDecoder().decode(required(x.body(),"bytesBase64",1400000));long received=CustomOrderMediaService.chunk(c,id,requiredNonNegativeLong(x.body(),"offset"),bytes,s.userId(),null);result.put("receivedBytes",received);}
+                case "FINISH"->{UUID uploadId=UUID.fromString(required(x.body(),"uploadId",40));StorefrontConfig config=null;try(PreparedStatement p=c.prepareStatement("SELECT kind FROM custom_order_file_uploads WHERE upload_id=?")){p.setObject(1,uploadId);try(ResultSet r=p.executeQuery()){if(r.next()&&"PROOF".equals(r.getString(1))){config=StorefrontConfig.load();if(config==null)throw new ApiException(503,"STOREFRONT_UNAVAILABLE","Configure the customer website before sending a design preview.",false);}}}var done=CustomOrderMediaService.finish(c,uploadId,s.locationId(),s.userId(),null);result.put("fileId",done.fileId().toString());if(done.proofToken()!=null){result.put("revision",done.revision());String url=config.origin()+"/shop/custom-order-proof?storeId="+s.locationId()+"#token="+done.proofToken();result.put("approvalUrl",url);try(PreparedStatement p=c.prepareStatement("SELECT o.order_number,COALESCE(a.email,'') FROM custom_orders o LEFT JOIN customer_accounts a ON a.customer_id=o.customer_id WHERE o.custom_order_id=? AND o.location_id=?")){p.setLong(1,orderId);p.setInt(2,s.locationId());try(ResultSet r=p.executeQuery()){if(r.next()&&!r.getString(2).isBlank())ServerEmailOutboxService.queueCustomOrderDesignProof(c,s.locationId(),r.getString(2),r.getString(1),done.revision(),url);}}}}
+                case "ISSUE_LINK"->{requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_OVERRIDES");StorefrontConfig config=StorefrontConfig.load();if(config==null)throw new ApiException(503,"STOREFRONT_UNAVAILABLE","Configure the customer website before issuing a link.",false);var link=CustomOrderMediaService.issueAccessLink(c,orderId,s.locationId(),s.userId());CustomOrderMediaService.audit(c,orderId,"ORDER_FILE_LINK_ISSUED",link.id().toString(),null,s.userId(),"Staff");result.put("linkId",link.id().toString());result.put("url",config.origin()+"/shop/custom-order-files?storeId="+s.locationId()+"#token="+link.token());}
+                case "REVOKE_LINK"->{requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_OVERRIDES");UUID linkId=UUID.fromString(required(x.body(),"linkId",40));CustomOrderMediaService.revokeAccessLink(c,linkId,orderId,s.locationId());CustomOrderMediaService.audit(c,orderId,"ORDER_FILE_LINK_REVOKED",linkId.toString(),null,s.userId(),"Staff");result.put("revoked",true);}
+                case "REMOVE"->{requireAnyPermission(c,s.userId(),"REMOVE_CUSTOM_ORDER_FILES");UUID fileId=UUID.fromString(required(x.body(),"fileId",40));try(PreparedStatement referenced=c.prepareStatement("SELECT 1 FROM custom_order_design_documents WHERE custom_order_id=? AND document_json->'objects' @> jsonb_build_array(jsonb_build_object('fileId',?)) LIMIT 1")){referenced.setLong(1,orderId);referenced.setString(2,fileId.toString());try(ResultSet row=referenced.executeQuery()){if(row.next())throw new ApiException(409,"FILE_IN_DESIGN","Remove this image from the design and save before deleting the attachment.",false);}}try(PreparedStatement p=c.prepareStatement("UPDATE custom_order_files f SET removed_at=now(),removed_by_user_id=? WHERE f.file_id=? AND f.custom_order_id=? AND f.removed_at IS NULL AND EXISTS(SELECT 1 FROM custom_orders o WHERE o.custom_order_id=f.custom_order_id AND o.location_id=? AND o.status<>'DELIVERED')")){p.setInt(1,s.userId());p.setObject(2,fileId);p.setLong(3,orderId);p.setInt(4,s.locationId());if(p.executeUpdate()!=1)throw new ApiException(404,"FILE_NOT_FOUND","File cannot be removed.",false);}CustomOrderMediaService.audit(c,orderId,"ORDER_FILE_REMOVED",fileId.toString(),null,s.userId(),"Staff");result.put("removed",true);}
+                case "REVOKE_PROOF"->{requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_OVERRIDES");UUID proofId=UUID.fromString(required(x.body(),"proofId",40));try(PreparedStatement p=c.prepareStatement("UPDATE custom_order_design_proofs p SET revoked_at=now() WHERE p.proof_id=? AND p.custom_order_id=? AND p.revoked_at IS NULL AND EXISTS(SELECT 1 FROM custom_orders o WHERE o.custom_order_id=p.custom_order_id AND o.location_id=?)")){p.setObject(1,proofId);p.setLong(2,orderId);p.setInt(3,s.locationId());if(p.executeUpdate()!=1)throw new ApiException(404,"PROOF_NOT_FOUND","Preview link not found.",false);}CustomOrderMediaService.audit(c,orderId,"ORDER_PROOF_LINK_REVOKED",proofId.toString(),null,s.userId(),"Staff");result.put("revoked",true);}
+                default->throw new ApiException(400,"VALIDATION_ERROR","Unknown media action.",false);
+            }
+            completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);
+        }catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}
+    }
+
     private ApiResult customOrderWorkflowRead(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){String action=required(x.body(),"action",40);requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_LOOKUP","CUSTOM_ORDER_OVERRIDES");Map<String,Object>r=new LinkedHashMap<>();switch(action){case"ALL"->r.put("orders",LanCustomOrderWorkflowService.orders(c,s.locationId(),null,"",500));case"MINE"->r.put("orders",LanCustomOrderWorkflowService.orders(c,s.locationId(),s.userId(),"",500));case"LOOKUP"->r.put("orders",LanCustomOrderWorkflowService.orders(c,s.locationId(),null,optional(x.body(),"search",500),100));case"RETURNS"->r.put("lines",LanCustomOrderWorkflowService.returnLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"DELIVERIES"->r.put("lines",LanCustomOrderWorkflowService.deliveryLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"PRODUCTION"->r.put("lines",LanCustomOrderWorkflowService.productionLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"DETAILS"->r.put("details",LanCustomOrderWorkflowService.details(c,requiredLong(x.body(),"orderId"),s.locationId()));default->throw new ApiException(400,"VALIDATION_ERROR","The custom order lookup is invalid.",false);}return ApiResult.ok(r);}}
     private ApiResult customOrderWorkflowMutation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",40),key=requireIdempotencyKey(x,"A valid idempotency key is required for this custom order change."),op="custom-orders.workflow."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,op,hash);if(old!=null){c.commit();return ApiResult.ok(old);}AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());String deviceName=loadDeviceDisplayName(c,d.deviceId());long orderId=requiredLong(x.body(),"orderId");switch(action){case"PAYMENT"->{requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_PAYMENTS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.payment(c,orderId,x.body().get("amount").getAsBigDecimal(),required(x.body(),"method",30),optional(x.body(),"reference",500),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"PRODUCTION"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_PRODUCTION_STEPS","CUSTOM_ORDER_OVERRIDES");Long[]ids=GSON.fromJson(x.body().get("lineIds"),Long[].class);LanCustomOrderWorkflowService.production(c,orderId,ids==null?List.of():List.of(ids),required(x.body(),"status",40),optional(x.body(),"notes",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"DELIVER_LINES"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_DELIVERY","CUSTOM_ORDER_OVERRIDES");Long[]ids=GSON.fromJson(x.body().get("lineIds"),Long[].class);LanCustomOrderWorkflowService.deliver(c,orderId,ids==null?List.of():List.of(ids),optional(x.body(),"notes",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"DELIVER_ORDER"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_DELIVERY","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.markOrderDelivered(c,orderId,s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"LINE_RETURN"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_RETURNS","CUSTOM_ORDER_REFUNDS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.ReturnRequest[]requests=GSON.fromJson(x.body().get("returns"),LanCustomOrderWorkflowService.ReturnRequest[].class);BigDecimal total=BigDecimal.ZERO;if(requests!=null)for(var r:requests)if(r.amount()!=null)total=total.add(r.amount());BigDecimal limit=BigDecimal.ZERO;try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(custom_order_refund_approval_limit,0) FROM company_customization WHERE location_id=?")){ps.setInt(1,s.locationId());try(ResultSet rs=ps.executeQuery()){if(rs.next())limit=rs.getBigDecimal(1);}}if(limit!=null&&limit.signum()>0&&total.compareTo(limit)>0&&!hasAnyPermission(c,s.userId(),"CUSTOM_ORDER_REFUND_APPROVAL","CUSTOM_ORDER_OVERRIDES")){String reason=required(x.body(),"approvalReason",2000);consumeApproval(c,d,s,optional(x.body(),"approvalToken",512),"CUSTOM_ORDER_REFUND_APPROVAL","Custom Order Refund Approval",reason);}LanCustomOrderWorkflowService.lineReturn(c,orderId,requests==null?List.of():List.of(requests),required(x.body(),"method",30),optional(x.body(),"reference",500),required(x.body(),"reason",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}default->throw new ApiException(400,"VALIDATION_ERROR","The custom order change is invalid.",false);}Map<String,Object>result=Map.of("updated",true);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
 
@@ -3577,6 +3987,7 @@ public final class LanApiServer implements AutoCloseable {
 
     private void requireMobileQrAccess(Connection c,SessionPrincipal s,DevicePrincipal d,HttpExchange exchange)throws Exception{
         if(hasPermission(c,s.userId(),"NEW_ITEM"))return;
+        if(!d.remoteAdmin()&&(hasPermission(c,s.userId(),"MANAGE_CUSTOM_ORDERS")||hasPermission(c,s.userId(),"RECORD_CUSTOM_ORDER_SPOILS")||hasPermission(c,s.userId(),"REVERSE_CUSTOM_ORDER_SPOILS")))return;
         requireMobileControl(c,s,d,exchange);
     }
 
@@ -3790,6 +4201,259 @@ public final class LanApiServer implements AutoCloseable {
             catch (CatalogBarcodeService.ConflictException ex) { connection.rollback(); throw new ApiException(409,"BARCODE_EXISTS",ex.getMessage(),false); }
             catch (Exception ex) { connection.rollback(); throw ex; }
             finally { connection.setAutoCommit(true); }
+        }
+    }
+
+    private ApiResult storefrontStatus(RequestContext context)throws Exception {
+        requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        try(Connection c=DB.getConnection()){
+            StorefrontAdminService.require(c,session.userId(),"VIEW_SALES");
+            return ApiResult.ok(StorefrontAdminService.websiteStatus(c,session.locationId()));
+        }
+    }
+
+    private ApiResult studioReviews(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        try (Connection c = DB.getConnection()) {
+            requireAnyPermission(c, session.userId(), "EDIT_ITEM");
+            List<Map<String,Object>> rows = new ArrayList<>();
+            try (PreparedStatement p = c.prepareStatement("SELECT product_id,name,source_image_url,source_sha256,decision,reference,error,generator,generated_for_review,revision FROM catalog_studio_reviews ORDER BY product_id")) {
+                try (ResultSet r = p.executeQuery()) {
+                    while (r.next()) {
+                        Map<String,Object> row = new LinkedHashMap<>();
+                        row.put("productId", r.getLong(1));row.put("name", r.getString(2));
+                        row.put("imageUrl", r.getString(3));row.put("sha256", r.getString(4));
+                        row.put("decision", r.getString(5));row.put("reference", r.getString(6));
+                        row.put("error", r.getString(7));row.put("generator", r.getString(8));
+                        row.put("generatedForReview", r.getBoolean(9));row.put("revision", r.getLong(10));
+                        rows.add(row);
+                    }
+                }
+            }
+            return ApiResult.ok(Map.of("reviews", rows));
+        }
+    }
+
+    private ApiResult studioReviewPhoto(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        long id = requiredLong(context.body(), "productId");
+        String kind = required(context.body(), "kind", 10);
+        if (!"original".equals(kind) && !"preview".equals(kind))
+            throw new ApiException(400, "VALIDATION_ERROR", "Choose an original or preview photo.", false);
+        byte[] photo;
+        String sourceReference;
+        try (Connection c = DB.getConnection()) {
+            requireAnyPermission(c, session.userId(), "EDIT_ITEM");
+            try (PreparedStatement p = c.prepareStatement("SELECT source_image_url," + ("original".equals(kind) ? "original_bytes" : "preview_jpeg") + " FROM catalog_studio_reviews WHERE product_id=?")) {
+                p.setLong(1, id);
+                try (ResultSet r = p.executeQuery()) {
+                    if (!r.next())
+                        throw new ApiException(404, "PHOTO_NOT_FOUND", "The review photo is unavailable.", false);
+                    sourceReference=r.getString(1);photo=r.getBytes(2);
+                }
+            }
+        }
+        if(photo==null&&"original".equals(kind)&&sourceReference!=null&&!sourceReference.isBlank())
+            photo=ServerImageAssetService.load(sourceReference).bytes();
+        if(photo==null)throw new ApiException(404,"PHOTO_NOT_FOUND","The review photo is unavailable.",false);
+        return ApiResult.ok(Map.of("bytesBase64",Base64.getEncoder().encodeToString(photo)));
+    }
+
+    private ApiResult studioReviewUpload(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        JsonObject body = context.body();
+        long id = requiredLong(body, "productId");
+        String name = required(body, "name", 500);
+        String decision = required(body, "decision", 20);
+        if (!Set.of("review", "rejected", "imported", "failed", "approved", "import_failed").contains(decision))
+            throw new ApiException(400, "VALIDATION_ERROR", "The review status is invalid.", false);
+        byte[] original, preview;
+        try {
+            String originalBase64=optional(body, "originalBase64", 12 * 1024 * 1024);
+            String previewBase64=optional(body, "previewBase64", 4 * 1024 * 1024);
+            original = originalBase64==null?new byte[0]:Base64.getDecoder().decode(originalBase64);
+            preview = previewBase64==null?new byte[0]:Base64.getDecoder().decode(previewBase64);
+        } catch (IllegalArgumentException ex) {
+            throw new ApiException(400, "IMAGE_INVALID", "The review image is invalid.", false);
+        }
+        if (original.length > 8 * 1024 * 1024 || preview.length > 2 * 1024 * 1024)
+            throw new ApiException(413, "IMAGE_TOO_LARGE", "A review image is too large.", false);
+        if (preview.length > 0 && (preview.length < 4 || (preview[0] & 255) != 0xff || (preview[1] & 255) != 0xd8))
+            throw new ApiException(400, "IMAGE_INVALID", "The preview must be a JPEG.", false);
+        if (Set.of("review", "approved", "import_failed").contains(decision) && preview.length == 0)
+            throw new ApiException(400, "IMAGE_MISSING", "A preview is required for review.", false);
+        try (Connection c = DB.getConnection()) {
+            requireAnyPermission(c, session.userId(), "EDIT_ITEM");
+            if ("imported".equals(decision)) {
+                String reference=optional(body,"reference",4000);
+                try (PreparedStatement current=c.prepareStatement("SELECT image_url FROM products WHERE product_id=?")) {
+                    current.setLong(1,id);
+                    try (ResultSet r=current.executeQuery()) {
+                        if (reference==null||!r.next()||!reference.equals(r.getString(1)))
+                            throw new ApiException(409,"REVIEW_CHANGED","The imported photo no longer matches the product's main photo.",false);
+                    }
+                }
+            }
+            try (PreparedStatement p = c.prepareStatement("""
+                    INSERT INTO catalog_studio_reviews(product_id,name,source_image_url,source_sha256,decision,reference,error,generator,generated_for_review,original_bytes,preview_jpeg)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(product_id) DO UPDATE SET
+                        original_bytes=EXCLUDED.original_bytes,preview_jpeg=EXCLUDED.preview_jpeg,
+                        decision='review',error=NULL,revision=catalog_studio_reviews.revision+1,updated_at=now()
+                    WHERE catalog_studio_reviews.decision='failed' AND EXCLUDED.decision='review'
+                      AND catalog_studio_reviews.source_image_url=EXCLUDED.source_image_url
+                    """)) {
+                p.setLong(1,id);p.setString(2,name);p.setString(3,optional(body,"imageUrl",4000));
+                p.setString(4,optional(body,"sha256",64));p.setString(5,decision);
+                p.setString(6,optional(body,"reference",4000));p.setString(7,optional(body,"error",2000));
+                p.setString(8,optional(body,"generator",200));
+                p.setBoolean(9,body.has("generatedForReview") && body.get("generatedForReview").getAsBoolean());
+                p.setBytes(10,original.length==0?null:original);p.setBytes(11,preview.length==0?null:preview);
+                return ApiResult.ok(Map.of("created",p.executeUpdate()==1));
+            }
+        }
+    }
+
+    private ApiResult studioReviewDecision(RequestContext context) throws Exception {
+        requireMethod(context.exchange(), "POST");
+        DevicePrincipal device = authenticateDevice(context.exchange());
+        SessionPrincipal session = authenticateSession(context.exchange(), device, true);
+        long id = requiredLong(context.body(), "productId");
+        long revision = requiredLong(context.body(), "revision");
+        String decision = required(context.body(), "decision", 20);
+        if (!Set.of("review", "rejected", "approved", "import_failed").contains(decision))
+            throw new ApiException(400,"VALIDATION_ERROR","The review decision is invalid.",false);
+        try (Connection c = DB.getConnection()) {
+            requireAnyPermission(c, session.userId(), "EDIT_ITEM");
+            try (PreparedStatement p = c.prepareStatement("""
+                    UPDATE catalog_studio_reviews SET decision=?,error=?,revision=revision+1,updated_at=now()
+                    WHERE product_id=? AND revision=? AND decision<>'imported'
+                    RETURNING revision
+                    """)) {
+                p.setString(1,decision);p.setString(2,optional(context.body(),"error",2000));
+                p.setLong(3,id);p.setLong(4,revision);
+                try (ResultSet r = p.executeQuery()) {
+                    if (!r.next()) throw new ApiException(409,"REVIEW_CHANGED","This photo was reviewed on another computer. Refresh and try again.",true);
+                    return ApiResult.ok(Map.of("revision",r.getLong(1)));
+                }
+            }
+        }
+    }
+
+    private ApiResult syncBillingPeriod(RequestContext context)throws Exception {
+        requireMethod(context.exchange(),"POST");
+        DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        if(!context.body().has("startEpochMillis") || !context.body().get("startEpochMillis").isJsonPrimitive()
+                || !context.body().get("startEpochMillis").getAsJsonPrimitive().isNumber())
+            throw new ApiException(400,"VALIDATION_ERROR","Enter a valid billing period start.",false);
+        try(Connection c=DB.getConnection()){
+            try{return ApiResult.ok(LanSyncAdminService.setBillingPeriod(c,session.userId(),
+                    context.body().get("startEpochMillis").getAsLong()));}
+            catch(LanSyncAdminService.RuleViolation ex){throw apiException(ex);}
+        }
+    }
+
+    private ApiResult webStatus(RequestContext x)throws Exception {
+        requireMethod(x.exchange(),"POST");var d=authenticateDevice(x.exchange());var s=authenticateSession(x.exchange(),d,true);
+        try(Connection c=DB.getConnection()){
+            requireAnyPermission(c,s.userId(),"DEVICE_MANAGEMENT");
+            boolean control=DatabaseConfig.load().mode()==DatabaseMode.SERVER&&!d.remoteAdmin()
+                    &&isLocalAddress(x.exchange().getRemoteAddress().getAddress())&&ServerRoleGuard.state()==ServerRoleGuard.State.PRIMARY;
+            return ApiResult.ok(webStatusSnapshot(c,control,s.userId()));
+        }
+    }
+    private Map<String,Object> webStatusSnapshot(Connection c,boolean control,int user)throws Exception {
+        var services=new ArrayList<Map<String,Object>>();var website=StorefrontRuntime.status();
+        services.addAll(WebPublicHealth.status());
+        var websiteRow=WebStatusService.service("website","Website & download login","Public website listener, gateway sync, and installer authentication",
+            Boolean.TRUE.equals(website.get("running")),website.get("origin").toString(),control,
+            "Last successful sync: "+(website.get("lastSuccess").equals(0L)?"Never":Instant.ofEpochMilli((Long)website.get("lastSuccess")))+
+            (website.get("lastError").toString().isBlank()?"":" Â· "+website.get("lastError")));
+        websiteRow.put("healthy",ServerRoleGuard.state()==ServerRoleGuard.State.PRIMARY&&System.currentTimeMillis()-(Long)website.get("lastSuccess")<60000);
+        services.add(websiteRow);
+        for(String id:List.of("websiteTunnel","schedulerTunnel")){
+            var tunnel=WebTunnelControl.status(id);var row=WebStatusService.service(id,id.equals("websiteTunnel")?"Website tunnel":"Scheduler & applications tunnel",
+                "Secure public connection to this store",Boolean.TRUE.equals(tunnel.get("running")),"",control&&WebTunnelControl.windows(),
+                tunnel.get("connectors")+" connector process(es) Â· CPU time "+tunnel.get("cpuSeconds")+" seconds. Public checks above confirm website reachability.");
+            row.put("startedAt",tunnel.get("startedAt"));services.add(row);
+        }
+        var schedule=schedulerWebStatus(c);
+        services.add(WebStatusService.service("scheduler","Scheduler web app","Owner schedules and browser sessions",
+            Boolean.TRUE.equals(schedule.get("enabled"))&&Boolean.TRUE.equals(schedule.get("running")),schedule.get("url").toString(),control,
+            "Access "+(Boolean.TRUE.equals(schedule.get("enabled"))?"enabled":"disabled")+" Â· Gateway "+(Boolean.TRUE.equals(schedule.get("running"))?"connected":"not connected")+" Â· Traffic is handled by the separate scheduler gateway."));
+        services.add(WebStatusService.service("registration","Employee applications","Application forms and document uploads",
+            employeeRegistrationWebServer!=null,employeeRegistrationWebServer==null?"":employeeRegistrationWebServer.url(),control&&hasPermission(c,user,"EMPLOYEE_MANAGEMENT"),"Employee Management permission is also required. Stopping signs applicants out."));
+        services.add(WebStatusService.service("mobile","Mobile & Studio web tools","Image studio, item photos, and local browser tools",
+            mobileItemWebServer!=null,mobileItemWebServer==null?"":mobileItemWebServer.url(),control,"Stopping revokes browser access. Desktop SmartStudio uses the register API."));
+        services.add(WebStatusService.service("lan","Register & SmartStudio API","Authenticated HTTPS store API",true,"HTTPS "+server.getAddress().getPort(),false,
+            "Managed by the installed server service. Monitoring only to keep registers connected."));
+        return Map.of("services",services,"usage",WebStatusService.resourceUsage(),"website",StorefrontAdminService.websiteStatus(c,DatabaseConfig.load().locationId()),
+            "canControl",control,"role",ServerRoleGuard.state().name(),"checkedAt",System.currentTimeMillis());
+    }
+    private synchronized ApiResult webControl(RequestContext x)throws Exception {
+        requireMethod(x.exchange(),"POST");var d=authenticateDevice(x.exchange());var s=authenticateSession(x.exchange(),d,true);
+        String id=required(x.body(),"service",40),action=required(x.body(),"action",12);
+        try{WebStatusService.validateControl(id,action);}catch(IllegalArgumentException ex){throw new ApiException(400,"WEB_ACTION_INVALID",ex.getMessage(),false);}
+        String key=x.exchange().getRequestHeaders().getFirst("Idempotency-Key");
+        if(key==null||!key.matches("[a-fA-F0-9-]{36}"))throw new ApiException(400,"IDEMPOTENCY_REQUIRED","A valid command key is required.",false);
+        try(Connection c=DB.getConnection()){
+            requireMobileControl(c,s,d,x.exchange());
+            if(ServerRoleGuard.state()!=ServerRoleGuard.State.PRIMARY)throw new ApiException(409,"SERVER_ROLE_INACTIVE","Use the active store server.",false);
+            String command=s.userId()+":"+key,fingerprint=id+":"+action;
+            if(webCommands.containsKey(command)){
+                if(!fingerprint.equals(webCommands.get(command)))throw new ApiException(409,"IDEMPOTENCY_CONFLICT","This command key was already used.",false);
+                return ApiResult.ok(webStatusSnapshot(c,true,s.userId()));
+            }
+            auditSecurity(c,"WEB_CONTROL_REQUESTED",d.deviceId(),s.userId(),fingerprint);
+            try{
+                if(id.endsWith("Tunnel"))WebTunnelControl.control(id,action);
+                else if(id.equals("website")){
+                    if(!action.equals("START")&&storefrontRuntime!=null){storefrontRuntime.close();storefrontRuntime=null;}
+                    if(!action.equals("STOP")&&storefrontRuntime==null){storefrontRuntime=StorefrontRuntime.startIfConfigured();
+                        if(storefrontRuntime==null)throw new IllegalStateException("Configure the website in Company Preferences first.");}
+                }else if(id.equals("mobile")){
+                    if(!action.equals("START"))mobileItemWebStop(x);
+                    if(!action.equals("STOP"))mobileItemWebStart(x);
+                }else if(id.equals("scheduler")){
+                    if(!action.equals("START"))schedulerWebStop(x);
+                    if(!action.equals("STOP"))schedulerWebStart(x);
+                }else{
+                    requireAnyPermission(c,s.userId(),"EMPLOYEE_MANAGEMENT");
+                    if(!action.equals("START"))stopEmployeeRegistrationWeb();
+                    if(!action.equals("STOP")&&employeeRegistrationWebServer==null)employeeRegistrationWebServer=EmployeeRegistrationWebServer.start(tlsIdentity,registrationCloud());
+                    try(var p=c.prepareStatement("UPDATE employee_registration_runtime SET enabled=?,changed_by=?,changed_at=CURRENT_TIMESTAMP WHERE runtime_id=1")){
+                        p.setBoolean(1,!action.equals("STOP"));p.setInt(2,s.userId());p.executeUpdate();
+                    }
+                }
+                webCommands.put(command,fingerprint);if(webCommands.size()>256)webCommands.remove(webCommands.keySet().iterator().next());
+                auditSecurity(c,"WEB_CONTROL_COMPLETED",d.deviceId(),s.userId(),fingerprint);
+            }catch(Exception ex){auditSecurity(c,"WEB_CONTROL_FAILED",d.deviceId(),s.userId(),fingerprint);
+                if(ex instanceof ApiException api)throw api;
+                throw new ApiException(409,"WEB_CONTROL_FAILED","The web service could not be changed. Check its configuration and the server account permissions.",false);
+            }
+            return ApiResult.ok(webStatusSnapshot(c,true,s.userId()));
+        }
+    }
+
+    private ApiResult storefrontAdmin(RequestContext x) throws Exception {
+        return timeClockCoreMutation(x,"storefront.admin.v1",(c,d,s,u)->StorefrontAdminService.run(c,x.body(),s.userId(),s.locationId(),displayName(u),d.deviceId(),
+            (token,permission,action,reason)->consumeApproval(c,d,s,token,permission,action,reason)));
+    }
+    private ApiResult storefrontQuoteFile(RequestContext x)throws Exception{
+        requireMethod(x.exchange(),"POST");DevicePrincipal device=authenticateDevice(x.exchange());
+        SessionPrincipal session=authenticateSession(x.exchange(),device,true);
+        try(Connection c=DB.getConnection()){
+            StorefrontAdminService.require(c,session.userId(),"MANAGE_CUSTOM_ORDERS");
+            return ApiResult.ok(Map.of("file",StorefrontQuoteRequests.staffFile(c,session.locationId(),
+                UUID.fromString(required(x.body(),"fileId",36)))));
         }
     }
 
@@ -4229,6 +4893,13 @@ public final class LanApiServer implements AutoCloseable {
         String token = bearer(exchange.getRequestHeaders(), "X-SmartStock-Device");
         if (token == null) throw new ApiException(401, "DEVICE_CREDENTIAL_REQUIRED", "This register is not paired.", false);
         String hash = LanSecurity.sha256(token);
+        try(Connection c=DB.getConnection()) {
+            var studio=StudioDeviceEnrollmentService.authenticate(c,hash,exchange.getRequestURI().getPath());
+            if(studio!=null) {
+                exchange.setAttribute("smartstock.deviceId",studio.deviceId());exchange.setAttribute("smartstock.remoteAdmin",false);
+                return new DevicePrincipal(studio.deviceId(),studio.installationId(),studio.locationId(),false,true);
+            }
+        }
         try (Connection connection = DB.getConnection();
              PreparedStatement ps = connection.prepareStatement("""
                      SELECT device_id, installation_id, last_store_id, COALESCE(access_mode, 'CLIENT') access_mode,
@@ -4283,14 +4954,15 @@ public final class LanApiServer implements AutoCloseable {
                     FROM lan_api_sessions s
                     JOIN users u ON u.user_id = s.user_id
                     JOIN devices d ON d.device_id = s.device_id
-                    WHERE s.session_hash = ? AND s.device_id = ? AND s.revoked_at IS NULL
+                    WHERE s.session_hash = ? AND s.device_id = ? AND s.revoked_at IS NULL AND s.client_application = ?
                     FOR UPDATE OF s
                     """)) {
                 ps.setString(1, hash);
                 ps.setObject(2, device.deviceId());
+                ps.setString(3,device.studio()?"smartstudio":"smartstock");
                 try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) throw new ApiException(401, "SESSION_INVALID", "The employee session is no longer valid.", false);
-                    if (!rs.getBoolean("is_active") || !rs.getBoolean("is_approved") || rs.getBoolean("is_blocked")) {
+                    if (!rs.getBoolean("is_active") || (!device.studio() && !rs.getBoolean("is_approved")) || rs.getBoolean("is_blocked")) {
                         throw new ApiException(403, "SESSION_REVOKED", "Access has been revoked.", false);
                     }
                     Instant now = Instant.now();
@@ -4394,22 +5066,23 @@ public final class LanApiServer implements AutoCloseable {
         }
     }
 
-    private String issueSession(Connection connection, DevicePrincipal device, AuthenticatedUser user, String source) throws SQLException {
+    private static String issueSession(Connection connection, DevicePrincipal device, AuthenticatedUser user, String source) throws SQLException {
         String token = LanSecurity.randomToken();
         Instant now = Instant.now();
         try (PreparedStatement revoke = connection.prepareStatement("""
                 UPDATE lan_api_sessions SET revoked_at = CURRENT_TIMESTAMP
-                WHERE device_id = ? AND user_id = ? AND revoked_at IS NULL
+                WHERE device_id = ? AND user_id = ? AND revoked_at IS NULL AND client_application = ?
                 """)) {
             revoke.setObject(1, device.deviceId());
             revoke.setInt(2, user.userId());
+            revoke.setString(3,device.studio()?"smartstudio":"smartstock");
             revoke.executeUpdate();
         }
         try (PreparedStatement ps = connection.prepareStatement("""
                 INSERT INTO lan_api_sessions (
                     session_hash, device_id, user_id, location_id, expires_at,
-                    absolute_expires_at, auth_source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    absolute_expires_at, auth_source, client_application
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
             ps.setString(1, LanSecurity.sha256(token));
             ps.setObject(2, device.deviceId());
@@ -4418,6 +5091,7 @@ public final class LanApiServer implements AutoCloseable {
             ps.setTimestamp(5, Timestamp.from(now.plus(SESSION_LIFETIME)));
             ps.setTimestamp(6, Timestamp.from(now.plus(SESSION_ABSOLUTE_LIFETIME)));
             ps.setString(7, source);
+            ps.setString(8,device.studio()?"smartstudio":"smartstock");
             ps.executeUpdate();
         }
         try (PreparedStatement ps = connection.prepareStatement("""
@@ -4461,7 +5135,13 @@ public final class LanApiServer implements AutoCloseable {
         }
     }
 
-    private SupabasePasswordResult signInSupabasePassword(String email, String password) {
+    static boolean verifyInstallerPassword(String email, String password) throws IOException {
+        SupabasePasswordResult result = signInSupabasePassword(email, password);
+        if (result.status() == SupabasePasswordStatus.UNAVAILABLE) throw new IOException("Password verification unavailable");
+        return result.status() == SupabasePasswordStatus.SUCCESS;
+    }
+
+    private static SupabasePasswordResult signInSupabasePassword(String email, String password) {
         if (email == null || email.isBlank()) return new SupabasePasswordResult(SupabasePasswordStatus.REJECTED, null, null);
         JsonObject body = new JsonObject();
         body.addProperty("email", email);
@@ -4578,6 +5258,8 @@ public final class LanApiServer implements AutoCloseable {
             outcome = status < 400 ? "SUCCESS" : "DENIED";
             envelope = success(result.data());
             recordRemoteCommand(requestId, exchange);
+        } catch (StudioDeviceEnrollmentService.Denied ex) {
+            status=ex.status; outcome="DENIED"; envelope=failure(ex.code,ex.getMessage(),ex.status==409);
         } catch (ApiException ex) {
             status = ex.status;
             outcome = status == 401 || status == 403 ? "DENIED" : "ERROR";
@@ -4590,6 +5272,7 @@ public final class LanApiServer implements AutoCloseable {
                 status < 400, resultCount);
         bestEffortRequestAudit(requestId, exchange, status, outcome);
         send(exchange, status, envelope);
+        WebRuntimeMetrics.record("lan",exchange);
     }
 
     private void recordRemoteCommand(UUID requestId, HttpExchange exchange) {
@@ -4676,8 +5359,12 @@ public final class LanApiServer implements AutoCloseable {
 
     private static JsonObject readJson(HttpExchange exchange) throws Exception {
         String path = exchange.getRequestURI().getPath();
-        int limit = "/v1/cloud/storage/upload".equals(path) ? MAX_CLOUD_FILE_BODY_BYTES
-                : "/v1/configuration/update".equals(path) ? MAX_IMAGE_BODY_BYTES : MAX_BODY_BYTES;
+        int limit = "/v1/studio/remove-background".equals(path) ? 8 * 1024 * 1024 + 1024
+                : "/v1/products/studio-import".equals(path) ? 4 * 1024 * 1024
+                : "/v1/products/studio-review-upload".equals(path) ? 16 * 1024 * 1024
+                : "/v1/cloud/storage/upload".equals(path) ? MAX_CLOUD_FILE_BODY_BYTES
+                : "/v1/configuration/update".equals(path) ? MAX_IMAGE_BODY_BYTES
+                : "/v1/storefront/mutation".equals(path) ? MAX_STOREFRONT_PROOF_BODY_BYTES : MAX_BODY_BYTES;
         int declared = parseContentLength(exchange.getRequestHeaders().getFirst("Content-Length"));
         if (declared > limit) throw new ApiException(413, "BODY_TOO_LARGE", "The request is too large.", false);
         byte[] bytes = exchange.getRequestBody().readNBytes(limit + 1);
@@ -4725,6 +5412,19 @@ public final class LanApiServer implements AutoCloseable {
     private static int requiredInt(JsonObject object, String key) throws ApiException {
         try { return object.get(key).getAsInt(); }
         catch (Exception ex) { throw new ApiException(400, "VALIDATION_ERROR", key + " is required.", false); }
+    }
+
+    private static long requiredNonNegativeLong(JsonObject object, String key) throws ApiException {
+        if (object == null || !object.has(key) || object.get(key).isJsonNull()) {
+            throw new ApiException(400, "VALIDATION_ERROR", "Missing required field: " + key, false);
+        }
+        try {
+            long value = object.get(key).getAsBigDecimal().longValueExact();
+            if (value < 0) throw new NumberFormatException();
+            return value;
+        } catch (Exception ex) {
+            throw new ApiException(400, "VALIDATION_ERROR", "Invalid value for: " + key, false);
+        }
     }
 
     private static long requiredLong(JsonObject object, String key) throws ApiException {
@@ -4779,6 +5479,8 @@ public final class LanApiServer implements AutoCloseable {
 
     @Override
     public void close() {
+        customOrderMediaMaintenance.close();
+        if(storefrontRuntime!=null)storefrontRuntime.close();
         stopEmployeeRegistrationWeb();
         stopMobileItemWeb();
         server.stop(2);
@@ -4819,7 +5521,9 @@ public final class LanApiServer implements AutoCloseable {
     private record ApiResult(int status, Object data) { static ApiResult ok(Object data) { return new ApiResult(200, data); } }
     private record ApiEnvelope(boolean success, Object data, ApiError error) { }
     private record ApiError(String code, String message, boolean retryable, Map<String, String> fields) { }
-    private record DevicePrincipal(UUID deviceId, String installationId, Integer locationId, boolean remoteAdmin) { }
+    private record DevicePrincipal(UUID deviceId, String installationId, Integer locationId, boolean remoteAdmin, boolean studio) {
+        DevicePrincipal(UUID id,String installation,Integer location,boolean remote) {this(id,installation,location,remote,false);}
+    }
     private record SessionPrincipal(UUID sessionId, int userId, int locationId, String plainToken) { }
     private record AuthenticatedUser(int userId, String username, String fullName, String email, String role,
                                      int locationId, String locationName, String locationTimezone) { }

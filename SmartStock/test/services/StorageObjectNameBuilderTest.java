@@ -7,6 +7,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class StorageObjectNameBuilderTest {
+    @Test void rapidGalleryUploadsGetDistinctNames() {
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (int i = 0; i < 100; i++) {
+            String token = StorageObjectNameBuilder.newProductImageToken();
+            assertTrue(token.matches("\\d{13}-[a-f0-9]{8}"));
+            assertTrue(names.add(StorageObjectNameBuilder.productImageFilename(
+                    "photo.jpg", token, "Water", "", "", "", "")));
+        }
+    }
+
     @Test
     void buildsDescriptiveProductAndVariantNames() {
         assertEquals(

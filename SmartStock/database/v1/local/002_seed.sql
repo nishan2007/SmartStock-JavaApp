@@ -342,7 +342,33 @@ ON CONFLICT (role_id,permission_id) DO NOTHING;
 SELECT pg_catalog.setval(pg_get_serial_sequence('public.permissions','permission_id'),
  GREATEST((SELECT MAX(permission_id) FROM public.permissions),1),TRUE);
 
+INSERT INTO public.permissions(permission_key,permission_name,description,permission_group,permission_subgroup,created_at)
+VALUES ('REMOVE_CUSTOM_ORDER_FILES','Remove Custom Order Files','Allows removing attachments from undelivered custom orders.','Custom Orders','Orders',CURRENT_TIMESTAMP),
+       ('CUSTOM_ORDER_FILE_SIZE_OVERRIDE','Override Custom Order File Size','Allows manager approval for a custom order file above the company size limit.','Custom Orders','Orders',CURRENT_TIMESTAMP)
+ON CONFLICT(permission_key) DO NOTHING;
+INSERT INTO public.role_permissions(role_id,permission_id,updated_at)
+SELECT r.role_id,p.permission_id,CURRENT_TIMESTAMP FROM public.roles r CROSS JOIN public.permissions p
+WHERE UPPER(r.role_name)='ADMIN' AND p.permission_key IN ('REMOVE_CUSTOM_ORDER_FILES','CUSTOM_ORDER_FILE_SIZE_OVERRIDE')
+ON CONFLICT(role_id,permission_id) DO NOTHING;
+
 
 --
 -- PostgreSQL database dump complete
 --
+
+INSERT INTO public.permissions(permission_key,permission_name,description,permission_group,permission_subgroup)
+VALUES ('RECORD_CUSTOM_ORDER_SPOILS','Record Custom Order Spoils','Record internal spoil evidence and consume replacement inventory.','Custom Orders','Orders'),
+ ('REVERSE_CUSTOM_ORDER_SPOILS','Reverse Custom Order Spoils','Reverse a spoil with a reason and restore replacement stock.','Custom Orders','Orders')
+ON CONFLICT(permission_key) DO NOTHING;
+INSERT INTO public.role_permissions(role_id,permission_id,updated_at)
+SELECT r.role_id,p.permission_id,now() FROM public.roles r CROSS JOIN public.permissions p
+WHERE UPPER(r.role_name)='ADMIN' AND p.permission_key IN ('RECORD_CUSTOM_ORDER_SPOILS','REVERSE_CUSTOM_ORDER_SPOILS')
+ON CONFLICT(role_id,permission_id) DO NOTHING;
+
+INSERT INTO public.permissions(permission_key,permission_name,description,permission_group,permission_subgroup)
+VALUES ('MANUAL_CUSTOM_ORDER_ENTRY','Manual Custom Order Entry','Enter order-local custom items and print materials/add-ons with manual prices.','Custom Orders','Orders')
+ON CONFLICT(permission_key) DO NOTHING;
+INSERT INTO public.role_permissions(role_id,permission_id,updated_at)
+SELECT r.role_id,p.permission_id,now() FROM public.roles r CROSS JOIN public.permissions p
+WHERE UPPER(r.role_name)='ADMIN' AND p.permission_key='MANUAL_CUSTOM_ORDER_ENTRY'
+ON CONFLICT(role_id,permission_id) DO NOTHING;

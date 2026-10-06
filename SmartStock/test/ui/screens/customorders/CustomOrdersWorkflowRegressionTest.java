@@ -19,6 +19,40 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 final class CustomOrdersWorkflowRegressionTest {
     @Test
+    void laterPaymentAcceptsFormattedAmountsAndRejectsEmptyOrNonpositiveAmounts() {
+        assertEquals(new BigDecimal("15000.50"),CustomOrders.parseOrderPaymentAmount(" 15,000.50 "));
+        for(String value:new String[]{"", "bad", "0", "-1"})
+            assertThrows(IllegalArgumentException.class,()->CustomOrders.parseOrderPaymentAmount(value));
+    }
+    @Test
+    void editingLineChangesActionAndCancelRestoresAdding() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            var panel = new CustomOrdersNewOrderTabPanel(new NoOpHandler());
+            panel.setEditingLine(true);
+            assertEquals("Update Line", panel.addLineButton.getText());
+            assertTrue(panel.cancelLineEditButton.isVisible());
+            assertFalse(panel.lineQuantityField.isEnabled());
+            panel.setEditingLine(false);
+            assertEquals("Add Line", panel.addLineButton.getText());
+            assertFalse(panel.cancelLineEditButton.isVisible());
+            assertTrue(panel.lineQuantityField.isEnabled());
+        });
+    }
+    @Test
+    void customerItemButtonsOpenTheSameDetailsAction() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            int[] clicks = {0};
+            var panel = new CustomOrdersNewOrderTabPanel(new NoOpHandler() {
+                @Override public void customerItem() { clicks[0]++; }
+            });
+            assertFalse(panel.editCustomerItemButton.isVisible());
+            panel.customerItemButton.doClick();
+            panel.editCustomerItemButton.setVisible(true);
+            panel.editCustomerItemButton.doClick();
+            assertEquals(2, clicks[0]);
+        });
+    }
+    @Test
     void missingPaymentSelectionDoesNotCrashOrderTotalsOrCustomerNext() {
         assertFalse(CustomOrders.requiresPaymentReference(null));
         assertFalse(CustomOrders.requiresPaymentReference("CASH"));
@@ -75,6 +109,15 @@ final class CustomOrdersWorkflowRegressionTest {
     void paletteButtonsUseADelegateThatPaintsTheirBackgroundOnWindows() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             CustomOrdersNewOrderTabPanel panel = new CustomOrdersNewOrderTabPanel(new NoOpHandler());
+            // Window theme refresh replaces delegates before applying preserved colors.
+            SwingUtilities.updateComponentTreeUI(panel);
+            try {
+                var apply = ui.helpers.ThemeManager.class.getDeclaredMethod("applyToComponent", Component.class);
+                apply.setAccessible(true);
+                apply.invoke(null, panel);
+            } catch (ReflectiveOperationException failure) {
+                throw new AssertionError(failure);
+            }
             List<AbstractButton> buttons = new ArrayList<>();
             collectButtons(panel, buttons);
 

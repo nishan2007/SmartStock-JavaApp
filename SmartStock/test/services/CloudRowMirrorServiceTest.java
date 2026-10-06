@@ -70,7 +70,7 @@ class CloudRowMirrorServiceTest {
                 "cash_drawer_device_assignments", "cash_drawer_handovers",
                 "cash_drawer_sessions", "cash_drawers", "change_basket_updates",
                 "cheque_bank_deposits", "company_customization",
-                "custom_order_item_movements", "custom_orders",
+                "custom_order_item_movements", "custom_orders", "custom_order_spoils", "custom_order_spoil_photos",
                 "customer_account_transactions", "email_outbox",
                 "employee_payroll_bonuses", "employee_schedule_assignments",
                 "employee_schedule_shifts", "employee_time_clock", "expenses",

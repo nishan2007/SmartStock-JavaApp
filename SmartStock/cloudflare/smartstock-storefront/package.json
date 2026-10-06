@@ -1,0 +1,1 @@
+{"name":"smartstock-storefront-gateway","private":true,"type":"module","scripts":{"test":"node --test test/*.test.mjs","check:production":"node tools/check-production-config.mjs","deploy:production":"node tools/deploy-production.mjs"},"devDependencies":{"wrangler":"4.137.0"}}

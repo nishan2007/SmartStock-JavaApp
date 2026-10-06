@@ -5,7 +5,7 @@
 
   <groupId>edu.fiu</groupId>
   <artifactId>inventory-management</artifactId>
-  <version>1.0.217</version>
+  <version>1.1.7</version>
 
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
@@ -16,6 +16,11 @@
   </properties>
 
   <dependencies>
+    <dependency>
+      <groupId>com.googlecode.libphonenumber</groupId>
+      <artifactId>libphonenumber</artifactId>
+      <version>9.0.40</version>
+    </dependency>
     <dependency>
       <groupId>net.java.dev.jna</groupId>
       <artifactId>jna-platform</artifactId>
@@ -47,6 +52,11 @@
         <version>2.11.0</version>
     </dependency>
     <dependency>
+      <groupId>com.microsoft.onnxruntime</groupId>
+      <artifactId>onnxruntime</artifactId>
+      <version>1.23.2</version>
+    </dependency>
+    <dependency>
         <groupId>org.bouncycastle</groupId>
         <artifactId>bcprov-jdk18on</artifactId>
         <version>1.84</version>
@@ -73,9 +83,12 @@
         <includes>
           <include>ICONS/**</include>
           <include>Images/**</include>
+          <include>models/catalogue-v1.json</include>
           <include>mobile-web/**</include>
           <include>scheduler-web/**</include>
           <include>employee-registration-web/**</include>
+          <include>storefront-web/**</include>
+          <include>custom-order-portal/**</include>
         </includes>
       </resource>
       <resource>
@@ -85,6 +98,7 @@
           <include>*.sql</include>
           <include>migrations/v1_after/*.sql</include>
           <include>v1/**/*.sql</include>
+          <include>storefront/*.sql</include>
         </includes>
       </resource>
       <resource>
@@ -96,6 +110,23 @@
       </resource>
     </resources>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <id>remove-obsolete-storefront-assets</id>
+            <phase>generate-resources</phase>
+            <goals><goal>run</goal></goals>
+            <configuration>
+              <target>
+                <delete dir="${project.build.outputDirectory}/storefront-web" quiet="true"/>
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>

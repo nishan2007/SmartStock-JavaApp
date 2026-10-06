@@ -15,6 +15,8 @@ class OneDriveImageCloudProviderTest {
         assertEquals("products/a.jpg",OneDriveImageCloudProvider.remotePath(ID,"PRODUCT","products/a.JPG"));
         assertEquals("custom-items/a.png",OneDriveImageCloudProvider.remotePath(ID,"CUSTOM_ITEM","products/a.png"));
         assertEquals("custom-variants/a.webp",OneDriveImageCloudProvider.remotePath(ID,"CUSTOM_VARIANT","products/a.webp"));
+        assertEquals("project-artwork-"+ID+"-cover.png",OneDriveImageCloudProvider.remotePath(ID,"PROJECT","projects/cover.png"));
+        assertEquals("quote-artwork-"+ID+"-proof.pdf",OneDriveImageCloudProvider.remotePath(ID,"QUOTE_ARTWORK","quotes/proof.pdf"));
     }
 
     @Test void keepsReadableSafeNamesAndSanitizesUnknownExtensions(){

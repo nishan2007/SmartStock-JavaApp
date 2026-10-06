@@ -66,7 +66,8 @@ final class LanProductAdminService {
                   COALESCE(p.description,''),COALESCE(p.cost_price,0),COALESCE(p.price,0),
                   COALESCE(p.product_type,'INVENTORY'),COALESCE(i.quantity_on_hand,0),COALESCE(i.reorder_level,0),
                   p.category_id,COALESCE(c.name,''),p.vendor_id,COALESCE(v.name,''),COALESCE(p.image_url,''),
-                  COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(sl.name,''),COALESCE(ssl.name,''),p.is_active,p.color,p.flavor
+                  COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(sl.name,''),COALESCE(ssl.name,''),p.is_active,p.color,p.flavor,
+                  p.additional_image_urls::text
                 FROM products p LEFT JOIN categories c ON c.category_id=p.category_id
                 LEFT JOIN vendors v ON v.vendor_id=p.vendor_id
                 LEFT JOIN inventory i ON i.product_id=p.product_id AND i.location_id=?
@@ -81,7 +82,8 @@ final class LanProductAdminService {
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setInt(1, locationId); ps.setInt(2, locationId); if(exactId==null)ProductSearchHelper.bindTokens(ps, 3, query);
             try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) rows.add(map(
+                while (rs.next()) {
+                    Map<String,Object> row=map(
                         "productId", rs.getInt(1), "name", rs.getString(2), "size", rs.getString(3),
                         "sku", rs.getString(4), "barcode", rs.getString(5), "description", rs.getString(6),
                         "costPrice", rs.getBigDecimal(7), "price", rs.getBigDecimal(8), "productType", rs.getString(9),
@@ -90,7 +92,10 @@ final class LanProductAdminService {
                         "vendorId", nullableInt(rs, 14), "vendorName", rs.getString(15), "imageUrl", rs.getString(16),
                         "itemTypeName", rs.getString(17), "brandName", rs.getString(18), "shelfName", rs.getString(19),
                         "storageShelfName", rs.getString(20), "additionalBarcodes", additionalBarcodes(connection, rs.getInt(1)),
-                        "active",rs.getBoolean(21),"color",rs.getString(22),"flavor",rs.getString(23)));
+                        "active",rs.getBoolean(21),"color",rs.getString(22),"flavor",rs.getString(23));
+                    row.put("additionalImageUrls",CatalogPhotoGalleryService.parse(rs.getString(24)));
+                    rows.add(row);
+                }
             }
         }
         ProductVariantService.annotate(connection,rows);
@@ -149,24 +154,31 @@ final class LanProductAdminService {
         requireAnyPermission(connection, userId, "VIEW_INVENTORY", "EDIT_ITEM", "NEW_ITEM", "MAKE_SALE");
         String query = clean(search, 300);
         String sql = """
-                SELECT item_type,name,size,description,code,price,item_id FROM (
-                  SELECT 'Product' item_type,p.name,COALESCE(p.size,'') size,COALESCE(p.description,'') description,
+                SELECT item_type,name,variant_name,size,color,brand,description,code,price,current_quantity,item_id FROM (
+                  SELECT 'Product' item_type,p.name,'' variant_name,COALESCE(p.size,'') size,COALESCE(p.color,'') color,
+                    COALESCE((SELECT ib.name FROM item_brands ib WHERE ib.brand_id=p.brand_id),'') brand,
+                    COALESCE(p.description,'') description,
                     COALESCE(NULLIF(p.sku,''),NULLIF(p.barcode,''),'PRODUCT-'||p.product_id) code,
-                    COALESCE(p.price,0) price,p.product_id item_id FROM products p WHERE p.sku<>'SMARTSTOCK-MISC' AND %s
+                    COALESCE(p.price,0) price,COALESCE((SELECT i.quantity_on_hand FROM inventory i
+                    WHERE i.product_id=p.product_id AND i.location_id=%d),0) current_quantity,
+                    p.product_id item_id FROM products p WHERE p.sku<>'SMARTSTOCK-MISC' AND %s
                   UNION ALL
-                  SELECT 'Custom item',coi.item_name,'',COALESCE(coi.description,''),
+                  SELECT 'Custom item',coi.item_name,'',COALESCE(coi.size,''),COALESCE(coi.color,''),
+                    COALESCE((SELECT ib.name FROM item_brands ib WHERE ib.brand_id=coi.brand_id),''),COALESCE(coi.description,''),
                     COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),
-                    COALESCE(coi.fixed_price,0),coi.custom_item_id FROM custom_order_items coi
+                    COALESCE(coi.fixed_price,0),COALESCE(coi.quantity_on_hand,0),coi.custom_item_id FROM custom_order_items coi
                     WHERE coi.is_active=TRUE AND COALESCE(coi.has_variants,FALSE)=FALSE AND %s
                   UNION ALL
-                  SELECT 'Custom variant',coi.item_name||' - '||v.variant_name,v.variant_name,
+                  SELECT 'Custom variant',coi.item_name,v.variant_name,
+                    COALESCE(NULLIF(BTRIM(v.size),''),coi.size,''),COALESCE(NULLIF(BTRIM(v.color),''),coi.color,''),
+                    COALESCE((SELECT ib.name FROM item_brands ib WHERE ib.brand_id=COALESCE(v.brand_id,coi.brand_id)),''),
                     COALESCE(coi.description,''),COALESCE(NULLIF(v.sku,''),NULLIF(v.barcode,''),
                     'CUSTOM-'||coi.custom_item_id||'-'||v.custom_variant_id),COALESCE(v.fixed_price,coi.fixed_price,0),
-                    v.custom_variant_id FROM custom_order_item_variants v
+                    COALESCE(v.quantity_on_hand,0),v.custom_variant_id FROM custom_order_item_variants v
                     JOIN custom_order_items coi ON coi.custom_item_id=v.custom_item_id
                     WHERE coi.is_active=TRUE AND v.is_active=TRUE AND %s
                 ) tags ORDER BY name LIMIT 300
-                """.formatted(ProductSearchHelper.predicate("p", locationId, query),
+                """.formatted(locationId,ProductSearchHelper.predicate("p", locationId, query),
                 ProductSearchHelper.customItemPredicate("coi", query),
                 ProductSearchHelper.customVariantPredicate("coi", "v", query));
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -176,8 +188,9 @@ final class LanProductAdminService {
             ProductSearchHelper.bindTokens(ps, index, query);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) rows.add(map("itemType", rs.getString(1), "name", rs.getString(2),
-                        "size", rs.getString(3), "description", rs.getString(4), "code", rs.getString(5),
-                        "price", rs.getBigDecimal(6), "itemId", rs.getLong(7)));
+                        "variantName", rs.getString(3), "size", rs.getString(4), "color", rs.getString(5),
+                        "brand", rs.getString(6), "description", rs.getString(7), "code", rs.getString(8),
+                        "price", rs.getBigDecimal(9), "quantity", rs.getBigDecimal(10), "itemId", rs.getLong(11)));
             }
         }
         return rows;
@@ -237,6 +250,7 @@ final class LanProductAdminService {
         } catch (SQLException ex) { throw friendlyConstraint(ex); }
         saveColor(connection,productId,body);
         saveFlavor(connection,productId,body);
+        CatalogPhotoGalleryService.save(connection,"products","product_id",productId,product.imageUrl(),request.additionalImageUrls());
         if (product.inventoryItem()) {
             try (PreparedStatement ps = connection.prepareStatement("""
                     INSERT INTO inventory(product_id,location_id,quantity_on_hand,reorder_level) VALUES (?,?,?,?)
@@ -280,6 +294,8 @@ final class LanProductAdminService {
         ProductVariantService.validateItemEdit(connection,request.productId(),product.size(),product.productType());
         saveColor(connection,request.productId(),body);
         saveFlavor(connection,request.productId(),body);
+        if(body.has("additionalImageUrls"))
+            CatalogPhotoGalleryService.save(connection,"products","product_id",request.productId(),product.imageUrl(),request.additionalImageUrls());
         InventoryState inventory = lockInventory(connection, request.productId(), locationId);
         boolean adjust = request.adjustQuantity() && product.inventoryItem();
         if (adjust) {
@@ -362,6 +378,7 @@ final class LanProductAdminService {
                 INSERT INTO product_lifecycle_audit(product_id,action_type,reason,user_id,device_id,location_id)
                 VALUES (?,?,?,?,?,?)
                 """)){ps.setInt(1,productId);ps.setString(2,archive?"ARCHIVE":"RESTORE");ps.setString(3,reason.isBlank()?null:reason);ps.setInt(4,userId);ps.setObject(5,deviceId);ps.setInt(6,locationId);ps.executeUpdate();}
+        StorefrontAdminService.unpublishArchivedProduct(connection,productId);
         String event=archive?"PRODUCT_ARCHIVED":"PRODUCT_RESTORED";
         SyncOutboxService.recordEvent(connection,event,map("product_id",productId,"location_id",locationId,"user_id",userId),locationId,deviceId.toString(),userId);
         audit(connection,"LAN_"+event,deviceId,userId,"product_id="+productId+"; location_id="+locationId+"; reason="+reason);
@@ -783,7 +800,7 @@ final class LanProductAdminService {
                                   BigDecimal costPrice,BigDecimal price,String productType,Integer categoryId,Integer vendorId,
                                   String imageUrl,String itemTypeName,String brandName,String shelfName,String storageShelfName,
                                   List<String> additionalBarcodes,int quantity,int reorderLevel,Integer expectedQuantity,
-                                  boolean adjustQuantity) { }
+                                  boolean adjustQuantity,List<String> additionalImageUrls) { }
     private record ValidatedProduct(String name,String size,String sku,String barcode,String description,
                                     BigDecimal costPrice,BigDecimal price,String productType,int categoryId,Integer vendorId,
                                     String imageUrl,int itemTypeId,int brandId,int shelfLocationId,

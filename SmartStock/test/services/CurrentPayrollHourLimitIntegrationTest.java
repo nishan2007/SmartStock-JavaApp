@@ -30,7 +30,7 @@ class CurrentPayrollHourLimitIntegrationTest {
                     assertEquals(EmployeePayrollSettingsService.PeriodType.SEMI_MONTHLY,period.periodType());
                     assertEquals(0,new BigDecimal("60").compareTo(period.workHourLimit()));
                 }
-                assertEquals(0,new BigDecimal("100").compareTo(EmployeePayrollSettingsService.payRateFor(c,user,LocalDate.of(2026,9,2)).rate()));
+                assertEquals(0,new BigDecimal("200").compareTo(EmployeePayrollSettingsService.payRateFor(c,user,LocalDate.of(2026,9,2)).rate()));
                 assertEquals(0,new BigDecimal("200").compareTo(EmployeePayrollSettingsService.payRateFor(c,user,today).rate()));
                 var view=EmployeePayrollSettingsService.loadCurrentAndPending(c,user,today,"HOURLY");
                 assertNotNull(view.pending());assertEquals(EmployeePayrollSettingsService.PeriodType.WEEKLY,view.pending().periodType());

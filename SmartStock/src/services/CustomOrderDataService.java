@@ -57,6 +57,14 @@ public final class CustomOrderDataService {
         return call(() -> LanApiClient.lookupCustomOrderItem(search));
     }
 
+    public static List<ItemSearchOption> searchCustomItems(String search) throws SQLException {
+        return call(() -> LanApiClient.searchCustomOrderItems(search));
+    }
+
+    public record ItemSearchOption(Long customItemId, Long customVariantId, String label) {
+        @Override public String toString() { return label; }
+    }
+
     private static <T> T call(ThrowingSupplier<T> action) throws SQLException {
         try {
             return action.get();
@@ -153,7 +161,18 @@ public final class CustomOrderDataService {
             String lineDiscountByName, String lineDiscountReason, BigDecimal minimumDepositPercent,
             BigDecimal originalBasePrice, BigDecimal priceOverridePrice, String priceOverrideReason,
             Integer priceOverrideByUserId, String priceOverrideByName, List<PrintAddonRequest> printAddons,
-            String lineDiscountApprovalToken, String priceOverrideApprovalToken, String itemSize, String itemColor) {
+            String lineDiscountApprovalToken, String priceOverrideApprovalToken, String itemSize, String itemColor, CustomerSuppliedItem customerItem) {
+        public OrderLineRequest(
+            Long customItemId, Long customVariantId, String itemName, String variantName, String pricingType,
+            BigDecimal unitPrice, String customizationDetails, String orderInstructions, BigDecimal widthValue,
+            BigDecimal lengthValue, String dimensionUnit, BigDecimal areaValue, String areaUnit, BigDecimal areaPrice,
+            BigDecimal baseItemPrice, Long printMaterialId, String printMaterialName, Long printSizePresetId,
+            String printSizeName, BigDecimal printCharge, int printLineCount, BigDecimal originalLineTotal,
+            BigDecimal lineDiscountPercent, BigDecimal lineDiscountAmount, Integer lineDiscountByUserId,
+            String lineDiscountByName, String lineDiscountReason, BigDecimal minimumDepositPercent,
+            BigDecimal originalBasePrice, BigDecimal priceOverridePrice, String priceOverrideReason,
+            Integer priceOverrideByUserId, String priceOverrideByName, List<PrintAddonRequest> printAddons,
+            String lineDiscountApprovalToken, String priceOverrideApprovalToken, String itemSize, String itemColor) { this(customItemId,customVariantId,itemName,variantName,pricingType,unitPrice,customizationDetails,orderInstructions,widthValue,lengthValue,dimensionUnit,areaValue,areaUnit,areaPrice,baseItemPrice,printMaterialId,printMaterialName,printSizePresetId,printSizeName,printCharge,printLineCount,originalLineTotal,lineDiscountPercent,lineDiscountAmount,lineDiscountByUserId,lineDiscountByName,lineDiscountReason,minimumDepositPercent,originalBasePrice,priceOverridePrice,priceOverrideReason,priceOverrideByUserId,priceOverrideByName,printAddons,lineDiscountApprovalToken,priceOverrideApprovalToken,itemSize,itemColor,null); }
         public OrderLineRequest(Long customItemId,Long customVariantId,String itemName,String variantName,String pricingType,BigDecimal unitPrice,String customizationDetails,String orderInstructions,BigDecimal widthValue,BigDecimal lengthValue,String dimensionUnit,BigDecimal areaValue,String areaUnit,BigDecimal areaPrice,BigDecimal baseItemPrice,Long printMaterialId,String printMaterialName,Long printSizePresetId,String printSizeName,BigDecimal printCharge,int printLineCount,BigDecimal originalLineTotal,BigDecimal lineDiscountPercent,BigDecimal lineDiscountAmount,Integer lineDiscountByUserId,String lineDiscountByName,String lineDiscountReason,BigDecimal minimumDepositPercent,BigDecimal originalBasePrice,BigDecimal priceOverridePrice,String priceOverrideReason,Integer priceOverrideByUserId,String priceOverrideByName,List<PrintAddonRequest>printAddons,String lineDiscountApprovalToken,String priceOverrideApprovalToken){this(customItemId,customVariantId,itemName,variantName,pricingType,unitPrice,customizationDetails,orderInstructions,widthValue,lengthValue,dimensionUnit,areaValue,areaUnit,areaPrice,baseItemPrice,printMaterialId,printMaterialName,printSizePresetId,printSizeName,printCharge,printLineCount,originalLineTotal,lineDiscountPercent,lineDiscountAmount,lineDiscountByUserId,lineDiscountByName,lineDiscountReason,minimumDepositPercent,originalBasePrice,priceOverridePrice,priceOverrideReason,priceOverrideByUserId,priceOverrideByName,printAddons,lineDiscountApprovalToken,priceOverrideApprovalToken,null,null);}
     }
 

@@ -17,33 +17,21 @@ import java.util.Map;
 final class CrossStoreCustomerHistoryService {
     private CrossStoreCustomerHistoryService() { }
 
-    static RefreshResult refreshAll(Connection c, int currentLocationId) throws SQLException {
-        int stores=0,rows=0,failed=0;
-        for (CrossStoreInventoryService.Store store:CrossStoreInventoryService.stores(c,currentLocationId)) {
-            try { int count=refreshStore(c,store);rows+=count;stores++;mark(c,store,count,"CURRENT",null); }
-            catch (SQLException ex) { failed++; mark(c,store,count(c,store.locationId()),"STALE",safe(ex)); }
-        }
-        return new RefreshResult(stores,rows,failed);
-    }
 
-    private static int refreshStore(Connection c,CrossStoreInventoryService.Store store)throws SQLException{
-        CloudSyncManifest manifest;
-        try { manifest=CloudSyncManifest.fetchStoreSnapshot(store.locationId()); }
-        catch(java.io.IOException ex){throw new SQLException("The verified snapshot for "+store.name()+" is unavailable.",ex);}
-        String generation=manifest.snapshotGenerationId();
+    static int rebuild(Connection c,CrossStoreInventoryService.Store store,Map<String,List<JsonObject>> source)throws SQLException{
         List<Event> events=new ArrayList<>();
-        for(JsonObject x:CrossStoreInventoryService.fetchTable(store.locationId(),generation,"customer_account_transactions")){
+        for(JsonObject x:source.get("customer_account_transactions")){
             if(integer(x,"location_id")!=store.locationId())continue;
-            long id=longValue(x,"transaction_id");Long source=firstLong(x,"invoice_id","custom_order_id","sale_id","sales_order_id");
+            long id=longValue(x,"transaction_id");Long sourceId=firstLong(x,"invoice_id","custom_order_id","sale_id","sales_order_id");
             String number=firstText(x,"payment_id","payment_reference");
-            events.add(new Event("LEDGER:"+id,integer(x,"customer_id"),text(x,"transaction_type"),source,number,
+            events.add(new Event("LEDGER:"+id,integer(x,"customer_id"),text(x,"transaction_type"),sourceId,number,
                     time(text(x,"created_at")),text(x,"user_name"),firstText(x,"device_name","device_id"),text(x,"cash_drawer_name"),
                     text(x,"payment_method"),text(x,"payment_reference"),decimal(x,"amount"),decimal(x,"credit_applied_amount"),"","",BigDecimal.ZERO,BigDecimal.ZERO,text(x,"note")));
         }
-        addDocuments(events,store,generation,"sales","SALE","sale_id","receipt_number","total_amount","payment_status","status","user_name","created_at");
-        addDocuments(events,store,generation,"custom_orders","CUSTOM_ORDER","custom_order_id","order_number","total_amount","payment_status","status","taken_by_name","created_at");
-        addDocuments(events,store,generation,"quotations","QUOTATION","quotation_id","quotation_number","total_amount",null,"status","created_by_name","created_at");
-        addDocuments(events,store,generation,"invoices","INVOICE","invoice_id","invoice_number","total_amount","payment_status","status","created_by_name","created_at");
+        addDocuments(events,store,source,"sales","SALE","sale_id","receipt_number","total_amount","payment_status","status","user_name","created_at");
+        addDocuments(events,store,source,"custom_orders","CUSTOM_ORDER","custom_order_id","order_number","total_amount","payment_status","status","taken_by_name","created_at");
+        addDocuments(events,store,source,"quotations","QUOTATION","quotation_id","quotation_number","total_amount",null,"status","created_by_name","created_at");
+        addDocuments(events,store,source,"invoices","INVOICE","invoice_id","invoice_number","total_amount","payment_status","status","created_by_name","created_at");
         boolean auto=c.getAutoCommit();c.setAutoCommit(false);try{
             try(PreparedStatement ps=c.prepareStatement("DELETE FROM sync_cross_store_customer_history_cache WHERE source_location_id=?")){ps.setInt(1,store.locationId());ps.executeUpdate();}
             try(PreparedStatement ps=c.prepareStatement("""
@@ -57,13 +45,13 @@ final class CrossStoreCustomerHistoryService {
                     ps.setString(n++,store.name());ps.setString(n++,e.user);ps.setString(n++,e.device);ps.setString(n++,e.drawer);ps.setString(n++,e.method);
                     ps.setString(n++,e.reference);ps.setBigDecimal(n++,e.amount);ps.setBigDecimal(n++,e.creditApplied);ps.setString(n++,e.paymentStatus);ps.setString(n++,e.documentStatus);
                     ps.setBigDecimal(n++,e.total);ps.setBigDecimal(n++,e.balance);ps.setString(n,e.note);ps.addBatch();}ps.executeBatch();}
-            c.commit();return events.size();
-        }catch(SQLException ex){c.rollback();throw ex;}finally{c.setAutoCommit(auto);}
+            if(auto)c.commit();return events.size();
+        }catch(SQLException ex){if(auto)c.rollback();throw ex;}finally{if(auto)c.setAutoCommit(true);}
     }
 
-    private static void addDocuments(List<Event> out,CrossStoreInventoryService.Store store,String generation,String table,String type,
+    private static void addDocuments(List<Event> out,CrossStoreInventoryService.Store store,Map<String,List<JsonObject>> source,String table,String type,
                                      String idKey,String numberKey,String totalKey,String paymentStatusKey,String statusKey,String userKey,String createdKey)throws SQLException{
-        for(JsonObject x:CrossStoreInventoryService.fetchTable(store.locationId(),generation,table)){
+        for(JsonObject x:source.get(table)){
             if(integer(x,"location_id")!=store.locationId()||integer(x,"customer_id")<=0)continue;
             long id=longValue(x,idKey);BigDecimal total=decimal(x,totalKey);
             out.add(new Event(type+":"+id,integer(x,"customer_id"),type,id,text(x,numberKey),time(text(x,createdKey)),text(x,userKey),
@@ -91,15 +79,6 @@ final class CrossStoreCustomerHistoryService {
         SELECT NOT EXISTS (SELECT 1 FROM locations l WHERE l.location_id<>?
           AND NOT EXISTS (SELECT 1 FROM sync_cross_store_customer_history_status s WHERE s.source_location_id=l.location_id AND s.status='CURRENT'))
         """ )){ps.setInt(1,currentLocationId);try(ResultSet rs=ps.executeQuery()){return rs.next()&&rs.getBoolean(1);}}}
-    private static void mark(Connection c,CrossStoreInventoryService.Store store,int count,String status,String error)throws SQLException{
-        try(PreparedStatement ps=c.prepareStatement("""
-          INSERT INTO sync_cross_store_customer_history_status(source_location_id,store_name,row_count,status,last_error,refreshed_at)
-          VALUES(?,?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(source_location_id) DO UPDATE SET store_name=EXCLUDED.store_name,row_count=EXCLUDED.row_count,
-            status=EXCLUDED.status,last_error=EXCLUDED.last_error,refreshed_at=CURRENT_TIMESTAMP
-          """)){ps.setInt(1,store.locationId());ps.setString(2,store.name());ps.setInt(3,count);ps.setString(4,status);ps.setString(5,error);ps.executeUpdate();}
-        try(PreparedStatement ps=c.prepareStatement("UPDATE sync_cross_store_customer_history_cache SET cache_status=? WHERE source_location_id=?")){ps.setString(1,status);ps.setInt(2,store.locationId());ps.executeUpdate();}}
-    private static int count(Connection c,int location)throws SQLException{try(PreparedStatement ps=c.prepareStatement("SELECT COUNT(*) FROM sync_cross_store_customer_history_cache WHERE source_location_id=?")){ps.setInt(1,location);try(ResultSet rs=ps.executeQuery()){rs.next();return rs.getInt(1);}}}
-    private static String safe(Exception ex){String x=ex.getMessage();if(x==null)x=ex.getClass().getSimpleName();return x.substring(0,Math.min(500,x.length()));}
     private static int integer(JsonObject x,String k){return x.has(k)&&!x.get(k).isJsonNull()?x.get(k).getAsInt():0;}
     private static long longValue(JsonObject x,String k){return x.has(k)&&!x.get(k).isJsonNull()?x.get(k).getAsLong():0;}
     private static Long firstLong(JsonObject x,String...keys){for(String k:keys)if(x.has(k)&&!x.get(k).isJsonNull())return x.get(k).getAsLong();return null;}

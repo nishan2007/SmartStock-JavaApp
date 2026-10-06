@@ -37,7 +37,7 @@ public class DeviceManagement extends JFrame {
     private String pendingMutationFingerprint;
 
     private final DefaultTableModel deviceTableModel = new DefaultTableModel(
-            new Object[]{"Device", "Status", "Sales", "Orders", "Last User", "Store", "Last Seen", "Sessions"}, 0
+            new Object[]{"Device", "Status", "Sales", "Orders", "Studio", "Last User", "Store", "Last Seen", "Sessions"}, 0
     ) {
         @Override
         public boolean isCellEditable(int row, int column) {
@@ -84,6 +84,7 @@ public class DeviceManagement extends JFrame {
             new JLabel("Stay Signed In overrides automatic logout on this device.");
     private final JCheckBox allowSalesBox = new JCheckBox("Allow Sales");
     private final JCheckBox allowOrdersBox = new JCheckBox("Allow Orders");
+    private final JCheckBox allowStudioBox = new JCheckBox("Allow Studio");
     private final JLabel summaryLabel = new JLabel("Loading devices...");
     private final JButton saveApprovalButton = new JButton("Save Access Settings");
     private final JButton saveNameButton = new JButton("Save Name");
@@ -180,6 +181,8 @@ public class DeviceManagement extends JFrame {
         allowSalesBox.setFont(new Font("SansSerif", Font.BOLD, 13));
         allowOrdersBox.setOpaque(false);
         allowOrdersBox.setFont(new Font("SansSerif", Font.BOLD, 13));
+        allowStudioBox.setOpaque(false);
+        allowStudioBox.setFont(new Font("SansSerif", Font.BOLD, 13));
 
         JPanel detailsPanel = new JPanel(new BorderLayout(10, 10));
         detailsPanel.setBorder(BorderFactory.createTitledBorder("Device Details"));
@@ -222,6 +225,8 @@ public class DeviceManagement extends JFrame {
         noteHeaderPanel.add(allowSalesBox);
         noteHeaderPanel.add(Box.createVerticalStrut(6));
         noteHeaderPanel.add(allowOrdersBox);
+        noteHeaderPanel.add(Box.createVerticalStrut(6));
+        noteHeaderPanel.add(allowStudioBox);
         noteHeaderPanel.add(Box.createVerticalStrut(8));
         noteHeaderPanel.add(notesLabel);
         notesPanel.add(noteHeaderPanel, BorderLayout.NORTH);
@@ -330,6 +335,7 @@ public class DeviceManagement extends JFrame {
                     device.getStatusLabel(),
                     device.isAllowSales() ? "Allowed" : "Off",
                     device.isAllowOrders() ? "Allowed" : "Off",
+                    device.isAllowStudio() && !device.isBlocked() ? "Allowed" : "Off",
                     defaultText(device.getLastUserName()),
                     defaultText(device.getLastStoreName()),
                     formatTimestamp(device.getLastSeen()),
@@ -349,6 +355,7 @@ public class DeviceManagement extends JFrame {
             autoLogoutOverrideLabel.setVisible(false);
             allowSalesBox.setSelected(false);
             allowOrdersBox.setSelected(false);
+            allowStudioBox.setSelected(false);
             sessionTableModel.setRowCount(0);
         }
 
@@ -422,6 +429,7 @@ public class DeviceManagement extends JFrame {
             staySignedInBox.setSelected(false);
             allowSalesBox.setSelected(false);
             allowOrdersBox.setSelected(false);
+            allowStudioBox.setSelected(false);
             sessionTableModel.setRowCount(0);
             setButtonState();
             return;
@@ -442,6 +450,7 @@ public class DeviceManagement extends JFrame {
         autoLogoutMinutesSpinner.setValue(device.getAutoLogoutMinutes());
         allowSalesBox.setSelected(device.isAllowSales() && !device.isBlocked());
         allowOrdersBox.setSelected(device.isAllowOrders() && !device.isBlocked());
+        allowStudioBox.setSelected(device.isAllowStudio() && !device.isBlocked());
         loadSessionHistory(device.getDeviceId());
         setButtonState();
     }
@@ -455,6 +464,7 @@ public class DeviceManagement extends JFrame {
                 + "Receipt Device Code: " + defaultText(device.getReceiptDeviceCode()) + "\n"
                 + "Allow Sales: " + yesNo(device.isAllowSales()) + "\n"
                 + "Allow Orders: " + yesNo(device.isAllowOrders()) + "\n"
+                + "Allow Studio: " + yesNo(device.isAllowStudio()) + "\n"
                 + "Last User: " + defaultText(device.getLastUserName()) + "\n"
                 + "Last Store: " + defaultText(device.getLastStoreName()) + "\n"
                 + "First Seen: " + formatTimestamp(device.getFirstSeen()) + "\n"
@@ -511,7 +521,8 @@ public class DeviceManagement extends JFrame {
                 + "Inactivity Timeout: " + autoLogoutMinutes + " minute(s)"
                 + (allowStaySignedIn && autoLogoutEnabled ? " (overridden by Stay Signed In)" : "") + "\n"
                 + "Allow Sales: " + yesNo(allowSales) + "\n"
-                + "Allow Orders: " + yesNo(allowOrders) + "\n\n";
+                + "Allow Orders: " + yesNo(allowOrders) + "\n"
+                + "Allow Studio: " + yesNo(allowStudioBox.isSelected()) + "\n\n";
 
         int result = JOptionPane.showConfirmDialog(
                 this,
@@ -528,7 +539,7 @@ public class DeviceManagement extends JFrame {
         String targetDeviceId=selectedDevice.getDeviceId();
         LanApiClient.DeviceAdminUpdate request=new LanApiClient.DeviceAdminUpdate(
                 "ACCESS",targetDeviceId,approved,allowStaySignedIn,autoLogoutEnabled,
-                autoLogoutMinutes,allowSales,allowOrders,notesArea.getText(),null,null);
+                autoLogoutMinutes,allowSales,allowOrders,notesArea.getText(),null,null,allowStudioBox.isSelected());
         updateDeviceAsync("devices.save-access",request,()->{
             if (targetDeviceId != null && targetDeviceId.equals(SessionManager.getCurrentDeviceId())) {
                 if (approved && allowStaySignedIn) {
@@ -798,6 +809,7 @@ public class DeviceManagement extends JFrame {
                 && autoLogoutBox.isSelected() && !selectedDevice.isBlocked());
         allowSalesBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
         allowOrdersBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
+        allowStudioBox.setEnabled(hasSelection && !selectedDevice.isBlocked());
         saveApprovalButton.setEnabled(hasSelection && !selectedDevice.isBlocked());
         deviceNameField.setEnabled(hasSelection && !selectedDevice.isBlocked());
         saveNameButton.setEnabled(hasSelection && !selectedDevice.isBlocked());

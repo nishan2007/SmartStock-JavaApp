@@ -25,6 +25,8 @@ public class HardwareSettingsPanel extends JPanel {
     private final JCheckBox automaticCutBox = new JCheckBox("Automatic cut", true);
     private final JCheckBox cashDrawerBox = new JCheckBox("Cash drawer");
     private final JCheckBox dialogFallbackBox = new JCheckBox("Print dialog fallback", true);
+    private final JComboBox<HardwareSettingsManager.ReceiptPrinterDestination> orderSlipDestinationBox = new JComboBox<>(HardwareSettingsManager.ReceiptPrinterDestination.values());
+    private final JComboBox<HardwareSettingsManager.ReceiptPrinterDestination> orderLabelDestinationBox = new JComboBox<>(HardwareSettingsManager.ReceiptPrinterDestination.values());
     private final JCheckBox nativeEthernetBox = new JCheckBox("Native Ethernet ESC/POS");
     private final JComboBox<HardwareSettingsManager.ReceiptPrinterDestination> receiptDestinationBox =
             new JComboBox<>(HardwareSettingsManager.ReceiptPrinterDestination.values());
@@ -124,6 +126,16 @@ public class HardwareSettingsPanel extends JPanel {
         printerControls.setOpaque(false);
         printerControls.add(epsonPanel);
         printerControls.add(ethernetPanel);
+        JPanel orderSlipPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        orderSlipPanel.setOpaque(false);
+        orderSlipPanel.add(new JLabel("Default order slip printer:"));
+        orderSlipPanel.add(orderSlipDestinationBox);
+        printerControls.add(orderSlipPanel);
+        JPanel orderLabelPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        orderLabelPanel.setOpaque(false);
+        orderLabelPanel.add(new JLabel("Default order label printer:"));
+        orderLabelPanel.add(orderLabelDestinationBox);
+        printerControls.add(orderLabelPanel);
         printerControls.add(badgePrinterPanel);
         localSettingsPanel.add(printerControls, BorderLayout.CENTER);
         localSettingsPanel.add(configPathField, BorderLayout.SOUTH);
@@ -201,12 +213,14 @@ public class HardwareSettingsPanel extends JPanel {
                     var configured=UiTaskRunner.supplyAsync(HardwareSettingsManager::getConfiguredPrinters);
                     var epson=UiTaskRunner.supplyAsync(HardwareSettingsManager::getEpsonSettings);
                     var ethernet=UiTaskRunner.supplyAsync(HardwareSettingsManager::getNativeEthernetPrinterSettings);
+                    var orderLabelDestination=UiTaskRunner.supplyAsync(HardwareSettingsManager::getDefaultOrderLabelPrinterDestination);
+                    var orderSlipDestination=UiTaskRunner.supplyAsync(HardwareSettingsManager::getDefaultOrderSlipPrinterDestination);
                     var receiptDestination=UiTaskRunner.supplyAsync(HardwareSettingsManager::getDefaultReceiptPrinterDestination);
                     var badge=UiTaskRunner.supplyAsync(HardwareSettingsManager::getBadgePrinterSettings);
                     var badgeSettings=badge.join();
                     boolean badgeAvailable=badgeSettings.enabled() && installed.join().contains(badgeSettings.systemName());
-                    return new HardwareSnapshot(installed.join(),configured.join(),epson.join(),ethernet.join(),receiptDestination.join(),badgeSettings,badgeAvailable);
-                },snapshot->{installedPrinterModel.clear();snapshot.installed().forEach(installedPrinterModel::addElement);applyInstalledBadgePrinters(snapshot.installed());applyConfiguredPrinters(snapshot.configured());applyEpsonSettings(snapshot.epson());applyEthernetSettings(snapshot.ethernet());receiptDestinationBox.setSelectedItem(snapshot.receiptDestination());applyBadgePrinterSettings(snapshot.badge(),snapshot.badgeAvailable());});
+                    return new HardwareSnapshot(installed.join(),configured.join(),epson.join(),ethernet.join(),receiptDestination.join(),orderSlipDestination.join(),orderLabelDestination.join(),badgeSettings,badgeAvailable);
+                },snapshot->{installedPrinterModel.clear();snapshot.installed().forEach(installedPrinterModel::addElement);applyInstalledBadgePrinters(snapshot.installed());applyConfiguredPrinters(snapshot.configured());applyEpsonSettings(snapshot.epson());applyEthernetSettings(snapshot.ethernet());receiptDestinationBox.setSelectedItem(snapshot.receiptDestination());orderSlipDestinationBox.setSelectedItem(snapshot.orderSlipDestination());orderLabelDestinationBox.setSelectedItem(snapshot.orderLabelDestination());applyBadgePrinterSettings(snapshot.badge(),snapshot.badgeAvailable());});
     }
 
     private void loadConfiguredPrinters() {
@@ -300,10 +314,20 @@ public class HardwareSettingsPanel extends JPanel {
                     && !nativeEthernetBox.isSelected()) {
                 throw new IllegalArgumentException("Enable Native Ethernet ESC/POS before making it the default receipt printer.");
             }
+            var orderSlipDestination = (HardwareSettingsManager.ReceiptPrinterDestination) orderSlipDestinationBox.getSelectedItem();
+            if (orderSlipDestination == HardwareSettingsManager.ReceiptPrinterDestination.ETHERNET && !nativeEthernetBox.isSelected()) {
+                throw new IllegalArgumentException("Enable Native Ethernet ESC/POS before making it the default order slip printer.");
+            }
+            var orderLabelDestination = (HardwareSettingsManager.ReceiptPrinterDestination) orderLabelDestinationBox.getSelectedItem();
+            if (orderLabelDestination == HardwareSettingsManager.ReceiptPrinterDestination.ETHERNET && !nativeEthernetBox.isSelected()) {
+                throw new IllegalArgumentException("Enable Native Ethernet ESC/POS before making it the default order label printer.");
+            }
             HardwareSettingsManager.saveConfiguredPrinters(printers);
             HardwareSettingsManager.saveEpsonSettings(readEpsonSettings());
             HardwareSettingsManager.saveNativeEthernetPrinterSettings(readEthernetSettings());
             HardwareSettingsManager.saveDefaultReceiptPrinterDestination(destination);
+            HardwareSettingsManager.saveDefaultOrderSlipPrinterDestination(orderSlipDestination);
+            HardwareSettingsManager.saveDefaultOrderLabelPrinterDestination(orderLabelDestination);
             HardwareSettingsManager.saveBadgePrinterSettings(readBadgePrinterSettings());
             SessionDataCache.invalidate("workstation:hardware");
             JOptionPane.showMessageDialog(this, "Hardware settings saved.");
@@ -472,6 +496,8 @@ public class HardwareSettingsPanel extends JPanel {
                                     HardwareSettingsManager.EpsonSettings epson,
                                     HardwareSettingsManager.NativeEthernetPrinterSettings ethernet,
                                     HardwareSettingsManager.ReceiptPrinterDestination receiptDestination,
+                                    HardwareSettingsManager.ReceiptPrinterDestination orderSlipDestination,
+                                    HardwareSettingsManager.ReceiptPrinterDestination orderLabelDestination,
                                     HardwareSettingsManager.BadgePrinterSettings badge,
                                     boolean badgeAvailable) { }
 }

@@ -1,0 +1,7 @@
+SmartStock 1.0.234
+
+Adds secure LAN server support for the dedicated SmartStudio desktop app. Approved computers can load their store's company name, motto, and logo for the staff login screen. Staff use their existing SmartStock accounts. Background removal requires an authenticated staff session and item or custom-order permissions, runs offline on the store server, and returns a transparent PNG at the original dimensions.
+
+Browser and desktop studio clients share one bounded processing worker. PNG/JPEG uploads are limited to 6 MB and 12 megapixels. SmartStudio pairs with its own device identity so it can run alongside a SmartStock register without replacing that register's enrollment.
+
+Includes the current application source and previous update improvements. Windows update ZIP only; no installer is included. SmartStudio is a separate portable application. Apply this update on the store server before connecting SmartStudio.

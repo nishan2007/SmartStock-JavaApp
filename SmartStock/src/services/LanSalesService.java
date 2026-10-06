@@ -32,6 +32,11 @@ final class LanSalesService {
     static Map<String, Object> checkout(Connection connection, JsonObject body, UUID deviceId,
                                         int userId, String userName, int locationId,
                                         ApprovalConsumer approvalConsumer) throws Exception {
+        return checkoutLockedStorefront(connection,body,deviceId,userId,userName,locationId,approvalConsumer,null);
+    }
+
+    static Map<String,Object> checkoutLockedStorefront(Connection connection,JsonObject body,UUID deviceId,int userId,String userName,int locationId,ApprovalConsumer approvalConsumer,JsonObject lockedQuote)throws Exception {
+        StorefrontService.lock(connection,locationId);
         CheckoutRequest request = GSON.fromJson(body, CheckoutRequest.class);
         validateRequest(request);
         Set<String> permissions = loadPermissions(connection, userId);
@@ -62,12 +67,12 @@ final class LanSalesService {
         BigDecimal customerSaleDiscount=loadCustomerSaleDiscount(connection,request.customerId(),request.applyCustomerDiscount());
         BigDecimal saleDiscount=manualSaleDiscount.max(customerSaleDiscount);
         Approval saleApproval = null;
-        if (manualSaleDiscount.compareTo(config.discountLimit()) > 0) {
+        if (lockedQuote==null && manualSaleDiscount.compareTo(config.discountLimit()) > 0) {
             if (!canOverrideSaleDiscount) {
                 saleApproval = approvalConsumer.consume(request.saleDiscountApprovalToken(),
                         "SALE_DISCOUNT_OVERRIDE", "Sale Discount Override", request.saleDiscountOverrideReason());
             }
-        } else if (manualSaleDiscount.signum() > 0 && !canDiscount) {
+        } else if (lockedQuote==null && manualSaleDiscount.signum() > 0 && !canDiscount) {
             saleApproval = approvalConsumer.consume(request.saleDiscountApprovalToken(),
                     "APPLY_SALE_DISCOUNT", "Sale Discount Approval", request.saleDiscountOverrideReason());
         }
@@ -95,7 +100,7 @@ final class LanSalesService {
             Approval discountApproval = null;
             if (!requested.miscItem()
                     && enteredPrice.compareTo(normalizeCheckoutUnitPrice(catalog.catalogPrice(), false)) != 0
-                    && !canChangePrice) {
+                    && !canChangePrice && lockedQuote==null) {
                 priceApproval = approvalConsumer.consume(requested.priceApprovalToken(),
                         "CHANGE_SALE_ITEM_PRICE", "Price Override", requested.priceOverrideReason());
             }
@@ -103,12 +108,16 @@ final class LanSalesService {
                 discountApproval = approvalConsumer.consume(requested.discountApprovalToken(),
                         "APPLY_SALE_DISCOUNT", "Item Discount Override", requested.discountOverrideReason());
             }
+            if("INVENTORY".equals(catalog.productType())) StorefrontAdminService.protectReservations(connection,locationId,catalog.productId(),quantity);
             BigDecimal gross = money(enteredPrice.multiply(BigDecimal.valueOf(quantity)));
             BigDecimal lineDiscountAmount = money(gross.multiply(lineDiscount).divide(HUNDRED, 2, RoundingMode.HALF_UP));
             BigDecimal net = money(gross.subtract(lineDiscountAmount).max(BigDecimal.ZERO));
             BigDecimal vatRate = requested.miscItem() ? BigDecimal.ZERO : config.vatEnabled()
                     ? (config.departmentVat() ? catalog.departmentVatRate() : config.fixedVatRate())
                     : BigDecimal.ZERO;
+            if(lockedQuote!=null) for(var e:lockedQuote.getAsJsonArray("lines")) {
+                var l=e.getAsJsonObject();if(l.get("id").getAsInt()==catalog.productId())vatRate=l.get("vatRate").getAsBigDecimal();
+            }
             vatBeforeSaleDiscount = vatBeforeSaleDiscount.add(
                     money(net.multiply(vatRate).divide(HUNDRED, 2, RoundingMode.HALF_UP)));
             grossSubtotal = grossSubtotal.add(gross);
@@ -124,6 +133,7 @@ final class LanSalesService {
         BigDecimal vatAmount = money(vatBeforeSaleDiscount.multiply(saleMultiplier));
         BigDecimal unroundedTotal = money(preVatTotal.add(vatAmount));
         BigDecimal total = roundSaleTotal(unroundedTotal, config.roundToNearestTwenty());
+        if(lockedQuote!=null) total=lockedQuote.get("total").getAsBigDecimal();
         if (total.signum() <= 0) throw new SQLException("Sale total must be greater than zero.");
         BigDecimal cashCollected = money(request.cashCollected());
         if (cashPayment && cashCollected.compareTo(total) < 0) {

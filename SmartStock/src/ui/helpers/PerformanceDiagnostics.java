@@ -18,6 +18,7 @@ import java.util.Map;
 public final class PerformanceDiagnostics {
     private static final long SLOW_MILLIS = Long.getLong("smartstock.slowOperationMillis", 500L);
     private static final long MAX_CHECKOUT_LOG_BYTES = 1_048_576L;
+    private static final long MAX_CONNECTION_LOG_BYTES = 1_048_576L;
 
     private PerformanceDiagnostics() { }
 
@@ -49,6 +50,28 @@ public final class PerformanceDiagnostics {
                 // Invalid paths or denied property access must never interrupt a committed sale.
             }
         }
+    }
+
+    /** Bounded local evidence for intermittent LAN failures; no URL, token, or request body. */
+    public static void recordLanConnectionFailure(String operation, long startedNanos,
+                                                   Throwable failure, String probeFailureType) {
+        long elapsedMillis = Math.max(0L, (System.nanoTime() - startedNanos) / 1_000_000L);
+        String line = String.format(Locale.ROOT,
+                "SmartStock LAN failure operation=%s durationMs=%d cause=%s probeFailure=%s%n",
+                safe(operation), elapsedMillis, safe(rootCauseName(failure)), safe(probeFailureType));
+        System.err.print(line);
+        try {
+            appendCheckoutTiming(Path.of(System.getProperty("user.home"), ".smartstock",
+                    "lan-connection.log"), line, MAX_CONNECTION_LOG_BYTES);
+        } catch (RuntimeException ignored) {
+            // Diagnostics must not interrupt register work.
+        }
+    }
+
+    private static String rootCauseName(Throwable failure) {
+        Throwable cause = failure;
+        while (cause != null && cause.getCause() != null) cause = cause.getCause();
+        return cause == null ? "unknown" : cause.getClass().getSimpleName();
     }
 
     /** Best-effort, bounded local diagnostics; never includes requests or exception messages. */

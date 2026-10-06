@@ -1,0 +1,11 @@
+{
+  "name": "smartstock-installer-portal",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{"pattern":"downloads.deckers.gy","custom_domain":true}],
+  "vars": {"INSTALLERS_JSON":"{}"},
+  "secrets": {"required":["INSTALLER_PUBLISH_KEY"]},
+  "r2_buckets": [{"binding":"UPDATE_BUCKET","bucket_name":"smartstock-updates"}]
+}

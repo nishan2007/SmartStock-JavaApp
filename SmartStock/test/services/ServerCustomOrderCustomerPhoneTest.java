@@ -35,14 +35,14 @@ class ServerCustomOrderCustomerPhoneTest {
                     return defaultValue(method.getReturnType());
                 });
         var selected = new ServerCustomOrderDataService.CustomerOption(
-                42, "Customer", "old-number", "CA-42", "customer@example.com");
+                42, "Customer", "6145030", "CA-42", "customer@example.com");
 
         int customerId = ServerCustomOrderDataService.resolveOrderCustomerId(
-                connection, selected, "Customer", "new-number");
+                connection, selected, "Customer", "705 8194");
 
         assertEquals(42, customerId);
         assertTrue(sql.get().contains("UPDATE customer_accounts SET phone = ?"));
-        assertEquals("new-number", parameters.get(1));
+        assertEquals("+5927058194", parameters.get(1));
         assertEquals(42, parameters.get(2));
     }
 

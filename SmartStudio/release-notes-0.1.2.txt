@@ -1,0 +1,6 @@
+SmartStudio 0.1.2
+- Adds offline Fast and Best quality modes and optional edge cleanup.
+- Adds white, black and checkerboard result previews; PNG exports retain original dimensions and transparency.
+- Adds the SmartStudio paintbrush app/desktop icon in Deckers colours.
+- Adds Check for updates with verified downloads and installer handoff through the paired SmartStock server.
+- Requires SmartStock 1.0.236 for Best quality and separated update-feed support. Install this initial updater release manually; future releases can be installed from the app.

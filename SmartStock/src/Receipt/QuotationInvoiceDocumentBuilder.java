@@ -9,6 +9,9 @@ public final class QuotationInvoiceDocumentBuilder {
     private QuotationInvoiceDocumentBuilder() { }
     public static String buildQuotation(long id)throws SQLException{return load("QUOTATION",id);}
     public static String buildInvoice(long id)throws SQLException{return load("INVOICE",id);}
+    public static String buildQuotation(long id,boolean compact)throws SQLException{return load("QUOTATION",id,compact);}
+    public static String buildInvoice(long id,boolean compact)throws SQLException{return load("INVOICE",id,compact);}
+    private static String load(String type,long id,boolean compact)throws SQLException{try{return LanApiClient.loadQuotationDocument(type,id,compact);}catch(Exception e){throw new SQLException(e.getMessage(),e);}}
     public static String buildDelivery(long id)throws SQLException{return load("DELIVERY",id);}
     public static String buildSampleQuotation(CompanyCustomizationManager.ReceiptSettings receipt,CompanyCustomizationManager.QuotationInvoicePrintSettings print){return ServerQuotationInvoiceDocumentBuilder.buildSampleQuotation(receipt,print);}
     public static String buildSampleInvoice(CompanyCustomizationManager.ReceiptSettings receipt,CompanyCustomizationManager.QuotationInvoicePrintSettings print){return ServerQuotationInvoiceDocumentBuilder.buildSampleInvoice(receipt,print);}

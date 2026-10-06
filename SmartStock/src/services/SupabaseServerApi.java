@@ -57,6 +57,59 @@ final class SupabaseServerApi {
         return new Response(response.statusCode(), response.body());
     }
 
+    static Response insertIgnoreDuplicates(String table, JsonObject row, String conflictColumns)
+            throws IOException, InterruptedException {
+        if (table == null || !table.matches("[a-z][a-z0-9_]{0,100}")
+                || conflictColumns == null
+                || !conflictColumns.matches("[a-z_]+(?:,[a-z_]+)*")) {
+            throw new IllegalArgumentException("Invalid Supabase table or conflict columns.");
+        }
+        HttpRequest request = authenticatedBuilder("/rest/v1/" + table
+                        + "?on_conflict=" + conflictColumns)
+                .timeout(Duration.ofSeconds(30))
+                .header("Content-Type", "application/json")
+                .header("Prefer", "resolution=ignore-duplicates,return=minimal")
+                .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(row),
+                        StandardCharsets.UTF_8))
+                .build();
+        HttpResponse<String> response = HTTP.send(request,
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        return new Response(response.statusCode(), response.body());
+    }
+
+    /** Shares only public OneDrive identifiers; certificate and private key remain on each server. */
+    static Response upsertOneDriveIdentifiers(JsonObject row)throws IOException,InterruptedException{
+        HttpRequest request=authenticatedBuilder("/rest/v1/image_cloud_configuration?on_conflict=provider")
+                .timeout(Duration.ofSeconds(30))
+                .header("Content-Type","application/json")
+                .header("Prefer","resolution=merge-duplicates,return=minimal")
+                .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(row),StandardCharsets.UTF_8)).build();
+        HttpResponse<String> response=HTTP.send(request,HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        return new Response(response.statusCode(),response.body());
+    }
+
+    /** Narrow, credential-free employee-role history used by the one-time store repair. */
+    static Response getRoleRecoveryHistory(int locationId, Long beforeSequence, int offset, int limit)
+            throws IOException, InterruptedException {
+        if (locationId <= 0 || offset < 0 || limit < 1 || limit > 1_000
+                || beforeSequence != null && beforeSequence <= 0) {
+            throw new IllegalArgumentException("Invalid role recovery history request.");
+        }
+        String select = "cloud_sequence,location_id,created_at,"
+                + "user_id:payload->row_data->>user_id,role_name:payload->row_data->>role_name,"
+                + "auth_user_id:payload->row_data->>auth_user_id";
+        String route = "/rest/v1/sync_outbox?select="
+                + java.net.URLEncoder.encode(select, StandardCharsets.UTF_8)
+                + "&location_id=eq." + locationId
+                + "&event_type=eq.REFERENCE_ROW_CHANGED&payload-%3E%3Etable_name=eq.users"
+                + (beforeSequence == null ? "" : "&cloud_sequence=lt." + beforeSequence)
+                + "&order=cloud_sequence.asc&offset=" + offset + "&limit=" + limit;
+        HttpResponse<String> response = HTTP.send(authenticatedBuilder(route)
+                .timeout(Duration.ofSeconds(30)).header("Accept", "application/json").GET().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        return new Response(response.statusCode(), response.body());
+    }
+
     private static HttpRequest.Builder authenticatedBuilder(String route) {
         SupabaseProjectConfig project = SupabaseProjectConfig.load();
         HttpRequest.Builder builder = HttpRequest.newBuilder()

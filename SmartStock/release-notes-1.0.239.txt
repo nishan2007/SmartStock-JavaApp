@@ -1,0 +1,7 @@
+SmartStock 1.0.239
+- Checks server reachability twice on independent verified connections before returning a register to Welcome after a transport failure.
+- Tries the certificate-covered computer name when a resolving .local address cannot be reached, and retains the working endpoint for subsequent requests.
+- Keeps certificate rejection immediate and never automatically repeats a sale, payment, or other interrupted operation.
+- Includes the recent 1.0.238 printer defaults, Web Status, other-store synchronization and transfer measurement improvements, plus the completed fixes in the current source.
+- Bundles ordered schema upgrades, both offline photo models and the pinned Cloudflare runtime.
+Update store servers before registers. Live register/server connection verification and physical printer, cash drawer, NFC, installed-service and two-store workflow checks remain separate deployment checks.

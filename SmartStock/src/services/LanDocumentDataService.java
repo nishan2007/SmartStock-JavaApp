@@ -78,7 +78,7 @@ final class LanDocumentDataService {
                        co.due_date,co.created_at,co.taken_by_name,co.location_name,co.device_name,
                        co.payment_method,co.payment_reference,co.payment_status,co.total_amount,co.amount_paid,
                        co.balance_due,co.order_notes,col.item_name,
-                       CONCAT_WS(' / ',NULLIF(col.variant_name,''),CASE WHEN NULLIF(col.item_size,'') IS NULL THEN NULL ELSE 'Size: '||col.item_size END,CASE WHEN NULLIF(col.item_color,'') IS NULL THEN NULL ELSE 'Color: '||col.item_color END),col.customization_details,
+                       CONCAT_WS(' / ',NULLIF(col.variant_name,''),CASE WHEN NULLIF(col.item_size,'') IS NULL THEN NULL ELSE 'Size: '||col.item_size END,CASE WHEN NULLIF(col.item_color,'') IS NULL THEN NULL ELSE 'Color: '||col.item_color END),CONCAT_WS(E'\\n',NULLIF(col.customization_details,''),(SELECT string_agg(CONCAT_WS(' | ',a.print_material_name,NULLIF(a.print_size_name,''),NULLIF(a.print_description,''),'Price: $'||a.print_charge::text),E'\\n' ORDER BY a.sort_order,a.custom_order_line_print_addon_id) FROM custom_order_line_print_addons a WHERE a.custom_order_line_id=col.custom_order_line_id)),
                        col.order_instructions,col.line_total
                 FROM custom_orders co
                 LEFT JOIN customer_accounts ca ON ca.customer_id=co.customer_id

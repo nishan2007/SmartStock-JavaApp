@@ -99,8 +99,8 @@ public final class ServerImageAssetService {
             ps.setString(6, clean(contentType, 200, "application/octet-stream"));
             ps.setLong(7, bytes.length);
             ps.setString(8, hash);
-            boolean scoped=isOneDriveCategory(category);
-            ps.setString(9,scoped&&phase(conn)==OneDrivePhase.ACTIVE?"ONEDRIVE":"SUPABASE");
+            boolean scoped=isOneDriveCategory(category)||isPrivateCreativeCategory(category);
+            ps.setString(9,isPrivateCreativeCategory(category)||scoped&&phase(conn)==OneDrivePhase.ACTIVE?"ONEDRIVE":"SUPABASE");
             ps.setString(10,scoped?"PENDING":"NOT_REQUIRED");
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) throw new SQLException("Image manifest row was not created.");
@@ -111,23 +111,106 @@ public final class ServerImageAssetService {
     }
 
     public static AssetBytes load(String reference) throws Exception {
+        return load(reference, false);
+    }
+
+    /** Public storefront callers may load only active retail product assets. */
+    public static AssetBytes loadStorefrontProduct(String reference) throws Exception {
+        return load(reference, true);
+    }
+
+    /** Trusted snapshot metadata only; callers must remove it from public catalog JSON. */
+    static JsonObject storefrontManifest(Connection conn, String reference) throws SQLException {
+        return storefrontManifest(conn,reference,"PRODUCT");
+    }
+    static JsonObject storefrontManifest(Connection conn,String reference,String category) throws SQLException {
+        UUID id = null;
+        if (ImageAssetReference.isAssetReference(reference)) id = ImageAssetReference.assetId(reference);
+        else {
+            LegacyLocation legacy = parseLegacyUrl(reference);
+            if (legacy != null) try (var query = conn.prepareStatement(
+                    "SELECT asset_id FROM image_assets WHERE bucket_name=? AND object_path=?")) {
+                query.setString(1, legacy.bucket());query.setString(2, legacy.path());
+                try (var result = query.executeQuery()) { if (result.next()) id = result.getObject(1, UUID.class); }
+            }
+        }
+        AssetRow row = id == null ? null : find(conn, id);
+        if (row == null || !category.equals(row.category()) || !storefrontPublicAssetAllowed(row.category(), row.lifecycleStatus(), row.contentType())) return null;
+        return new com.google.gson.Gson().toJsonTree(row).getAsJsonObject();
+    }
+
+    static AssetBytes loadStorefrontSnapshot(JsonObject manifest) throws Exception {
+        return loadStorefrontSnapshot(manifest, imageRoot().resolve("storefront"), row->{
+            Path local=mirrorPath(row.bucket(),row.objectPath());
+            if(Files.isRegularFile(local)){
+                byte[] bytes=readStorefrontFile(local);
+                if(row.sha256().equals(sha256(bytes)))return bytes;
+            }
+            return downloadCloud(row,BoundedImageBody.STOREFRONT_LIMIT);
+        });
+    }
+
+    @FunctionalInterface interface StorefrontDownload { byte[] download(AssetRow row) throws Exception; }
+
+    static AssetBytes loadStorefrontSnapshot(JsonObject manifest, Path cache, StorefrontDownload downloader) throws Exception {
+        AssetRow row = new com.google.gson.Gson().fromJson(manifest, AssetRow.class);
+        if (row == null || row.id() == null || !storefrontPublicAssetAllowed(row.category(), row.lifecycleStatus(), row.contentType())
+                || row.sha256() == null || !row.sha256().matches("[a-f0-9]{64}")
+                || !("SUPABASE".equals(row.cloudProvider()) || "ONEDRIVE".equals(row.cloudProvider())))
+            throw new IOException("The product image manifest is unavailable.");
+        validateLocation(row.bucket(), row.objectPath());
+        // Content-addressed files keep replicas separate from their authoritative image registry.
+        byte[] cached = StorefrontImageCache.read(cache,row.sha256());
+        if(cached!=null)return new AssetBytes(cached,row.contentType(),row.sha256());
+        byte[] bytes = downloader.download(row);
+        if (bytes == null || bytes.length>BoundedImageBody.STOREFRONT_LIMIT || !row.sha256().equals(sha256(bytes))) throw new IOException("The product image checksum or size did not match.");
+        StorefrontImageCache.write(cache,row.sha256(),bytes,StorefrontImageCache.LIMIT);
+        return new AssetBytes(bytes, row.contentType(), row.sha256());
+    }
+
+    static boolean storefrontPublicAssetAllowed(String category,String lifecycle,String contentType) {
+        return ("PRODUCT".equals(category)||"COMPANY_LOGO".equals(category)||"PROJECT".equals(category)) && "ACTIVE".equals(lifecycle)
+            && java.util.Set.of("image/png","image/jpeg","image/webp","image/gif").contains(contentType);
+    }
+    static boolean storefrontAssetAllowed(String category, String lifecycle, String contentType) {
+        return "PRODUCT".equals(category) && "ACTIVE".equals(lifecycle)
+                && java.util.Set.of("image/png", "image/jpeg", "image/webp", "image/gif").contains(contentType);
+    }
+
+    private static byte[] readStorefrontFile(Path path)throws IOException{
+        try(var input=Files.newInputStream(path)){
+            byte[] bytes=input.readNBytes(BoundedImageBody.STOREFRONT_LIMIT+1);
+            if(bytes.length>BoundedImageBody.STOREFRONT_LIMIT)throw new IOException("Product image exceeds 12 MiB.");
+            return bytes;
+        }
+    }
+
+    private static AssetBytes load(String reference, boolean storefront) throws Exception {
         try (Connection conn = DB.getConnection()) {
+            return load(conn,reference,storefront);
+        }
+    }
+
+    static AssetBytes load(Connection conn,String reference)throws Exception {return load(conn,reference,false);}
+
+    private static AssetBytes load(Connection conn,String reference,boolean storefront)throws Exception {
             ensureSchema(conn);
             AssetRow row = find(conn, ImageAssetReference.assetId(reference));
-            if (row == null || "DELETED".equals(row.lifecycleStatus())) {
+            if (row == null || "DELETED".equals(row.lifecycleStatus())
+                    || (storefront && !storefrontAssetAllowed(row.category(), row.lifecycleStatus(), row.contentType()))) {
                 throw new IOException("The requested image is unavailable.");
             }
             Path path = mirrorPath(row.bucket(), row.objectPath());
             if (Files.isRegularFile(path)) {
-                byte[] bytes = Files.readAllBytes(path);
+                byte[] bytes = storefront?readStorefrontFile(path):Files.readAllBytes(path);
                 if (row.sha256().isBlank() || row.sha256().equals(sha256(bytes))) {
                     recordLocalBytes(conn, row.id(), bytes);
                     return new AssetBytes(bytes, row.contentType(), sha256(bytes));
                 }
                 touchLocal(conn, row.id(), "CORRUPT", "Local image checksum did not match the manifest.");
             }
-            byte[] downloaded = restoreFromLegacyCache(row);
-            if (downloaded == null) downloaded = downloadCloud(row);
+            byte[] downloaded = restoreFromLegacyCache(row,storefront);
+            if (downloaded == null) downloaded = downloadCloud(row,storefront?BoundedImageBody.STOREFRONT_LIMIT:Integer.MAX_VALUE);
             if (downloaded == null || downloaded.length == 0) throw new IOException("The image is missing locally and in cloud storage.");
             if (!row.sha256().isBlank() && !row.sha256().equals(sha256(downloaded))) {
                 touchLocal(conn, row.id(), "CORRUPT", "Cloud image checksum did not match the manifest.");
@@ -136,7 +219,6 @@ public final class ServerImageAssetService {
             writeAtomically(path, downloaded);
             recordLocalBytes(conn, row.id(), downloaded);
             return new AssetBytes(downloaded, row.contentType(), sha256(downloaded));
-        }
     }
 
     public static boolean isEmployeePhoto(Connection conn, String reference) throws SQLException {
@@ -382,6 +464,58 @@ public final class ServerImageAssetService {
                     upsertReference(conn, id, source.table(), rs.getString(1), source.column());
                     markReferenceSeen(conn, source.table(), rs.getString(1), source.column());
                     active++;
+                }
+            }
+        }
+        for (ReferenceSource source : List.of(
+                new ReferenceSource("products","product_id","additional_image_urls","PRODUCT"),
+                new ReferenceSource("custom_order_items","custom_item_id","additional_image_urls","CUSTOM_ITEM"),
+                new ReferenceSource("custom_order_item_variants","custom_variant_id","additional_image_urls","CUSTOM_VARIANT"))) {
+            if (!hasColumns(conn,source.table(),source.key(),source.column())) continue;
+            String sql="SELECT "+quote(source.key())+"::text, jsonb_array_elements_text("+quote(source.column())+") FROM "+quote(source.table());
+            try(PreparedStatement ps=conn.prepareStatement(sql);ResultSet rs=ps.executeQuery()){
+                java.util.Map<String,Integer> positions=new java.util.HashMap<>();
+                while(rs.next()){
+                    String value=rs.getString(2),sourceKey=rs.getString(1);
+                    UUID id=ImageAssetReference.isAssetReference(value)
+                            ?ImageAssetReference.assetId(value):registerLegacy(conn,source.category(),value);
+                    if(id==null)continue;
+                    int position=positions.merge(sourceKey,1,Integer::sum)-1;
+                    String column=source.column()+":"+position;
+                    upsertReference(conn,id,source.table(),sourceKey,column);
+                    markReferenceSeen(conn,source.table(),sourceKey,column);
+                    active++;
+                }
+            }
+        }
+        // Published and draft project covers remain referenced by the private storefront schema.
+        try (PreparedStatement exists=conn.prepareStatement("SELECT to_regclass('storefront.projects') IS NOT NULL");ResultSet present=exists.executeQuery()) {
+            present.next();if(present.getBoolean(1))try(PreparedStatement ps=conn.prepareStatement("SELECT project_id::text,cover_reference FROM storefront.projects WHERE cover_reference<>''");ResultSet rs=ps.executeQuery()){
+                while(rs.next()){
+                    String reference=rs.getString(2);if(!ImageAssetReference.isAssetReference(reference))continue;
+                    UUID id=ImageAssetReference.assetId(reference);
+                    upsertReference(conn,id,"storefront.projects",rs.getString(1),"cover_reference");
+                    markReferenceSeen(conn,"storefront.projects",rs.getString(1),"cover_reference");active++;
+                }
+            }
+        }
+        try (PreparedStatement exists=conn.prepareStatement("SELECT to_regclass('storefront.project_media') IS NOT NULL");ResultSet present=exists.executeQuery()) {
+            present.next();if(present.getBoolean(1))try(PreparedStatement ps=conn.prepareStatement("SELECT media_id::text,asset_reference FROM storefront.project_media");ResultSet rs=ps.executeQuery()){
+                while(rs.next()){
+                    String reference=rs.getString(2);if(!ImageAssetReference.isAssetReference(reference))continue;
+                    UUID id=ImageAssetReference.assetId(reference);
+                    upsertReference(conn,id,"storefront.project_media",rs.getString(1),"asset_reference");
+                    markReferenceSeen(conn,"storefront.project_media",rs.getString(1),"asset_reference");active++;
+                }
+            }
+        }
+        try (PreparedStatement exists=conn.prepareStatement("SELECT to_regclass('storefront.quote_files') IS NOT NULL");ResultSet present=exists.executeQuery()) {
+            present.next();if(present.getBoolean(1))try(PreparedStatement ps=conn.prepareStatement("SELECT file_id::text,asset_reference FROM storefront.quote_files");ResultSet rs=ps.executeQuery()){
+                while(rs.next()){
+                    String reference=rs.getString(2);if(!ImageAssetReference.isAssetReference(reference))continue;
+                    UUID id=ImageAssetReference.assetId(reference);
+                    upsertReference(conn,id,"storefront.quote_files",rs.getString(1),"asset_reference");
+                    markReferenceSeen(conn,"storefront.quote_files",rs.getString(1),"asset_reference");active++;
                 }
             }
         }
@@ -635,6 +769,9 @@ public final class ServerImageAssetService {
     }
 
     private static byte[] restoreFromLegacyCache(AssetRow row) {
+        return restoreFromLegacyCache(row,false);
+    }
+    private static byte[] restoreFromLegacyCache(AssetRow row,boolean storefront) {
         try {
             String route = "PUBLIC".equals(row.accessLevel())
                     ? "/storage/v1/object/public/" : "/storage/v1/object/authenticated/";
@@ -643,10 +780,10 @@ public final class ServerImageAssetService {
             String cachedName = sha256(url.getBytes(StandardCharsets.UTF_8)) + "." + extension;
             Path profileCache = EnvironmentProfile.active().directory()
                     .resolve("image-cache").resolve(cachedName);
-            if (Files.isRegularFile(profileCache)) return Files.readAllBytes(profileCache);
+            if (Files.isRegularFile(profileCache)) return storefront?readStorefrontFile(profileCache):Files.readAllBytes(profileCache);
             Path legacyCache = Path.of(System.getProperty("user.home"), ".smartstock",
                     "image-cache", cachedName);
-            return Files.isRegularFile(legacyCache) ? Files.readAllBytes(legacyCache) : null;
+            return Files.isRegularFile(legacyCache) ? (storefront?readStorefrontFile(legacyCache):Files.readAllBytes(legacyCache)) : null;
         } catch (Exception ex) {
             return null;
         }
@@ -665,6 +802,9 @@ public final class ServerImageAssetService {
     }
 
     private static byte[] downloadSupabase(AssetRow row) throws Exception {
+        return downloadSupabase(row,Integer.MAX_VALUE);
+    }
+    private static byte[] downloadSupabase(AssetRow row,int maxBytes) throws Exception {
         boolean publicAsset = "PUBLIC".equals(row.accessLevel());
         String credential = publicAsset
                 ? SupabaseSessionManager.getSupabasePublishableKey()
@@ -676,7 +816,7 @@ public final class ServerImageAssetService {
         if (publicAsset) request.header("apikey", credential);
         else ServerSupabaseCredentials.applyTo(request);
         HttpResponse<byte[]> response = HTTP.send(request.GET().build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+                BoundedImageBody.handler(maxBytes));
         if (response.statusCode() == 404) return null;
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new IOException("Cloud image download failed with HTTP " + response.statusCode() + ".");
@@ -700,15 +840,20 @@ public final class ServerImageAssetService {
                 ||"CUSTOM_VARIANT".equalsIgnoreCase(category)||"CUSTOMER_PHOTO".equalsIgnoreCase(category);
     }
 
+    private static boolean isPrivateCreativeCategory(String category){
+        return "PROJECT".equalsIgnoreCase(category)||"QUOTE_ARTWORK".equalsIgnoreCase(category);
+    }
+
     private static boolean needsCloudWork(AssetRow row,OneDrivePhase phase){
         if(!"PRESENT".equals(row.cloudStatus()))return true;
-        return isOneDriveCategory(row.category())&&phase!=OneDrivePhase.DISABLED
+        return (isPrivateCreativeCategory(row.category())||isOneDriveCategory(row.category())&&phase!=OneDrivePhase.DISABLED)
                 &&!"VERIFIED".equals(row.migrationStatus());
     }
 
     private static void synchronizeCloud(Connection conn,AssetRow row,byte[] bytes,OneDrivePhase phase)throws Exception{
-        if(!isOneDriveCategory(row.category())||phase==OneDrivePhase.DISABLED){uploadSupabase(row,bytes);return;}
-        if(phase==OneDrivePhase.MIGRATING&&(!"PRESENT".equals(row.cloudStatus())||"ONEDRIVE".equals(row.cloudProvider())))
+        boolean privateCreative=isPrivateCreativeCategory(row.category());
+        if(!privateCreative&&(!isOneDriveCategory(row.category())||phase==OneDrivePhase.DISABLED)){uploadSupabase(row,bytes);return;}
+        if(!privateCreative&&phase==OneDrivePhase.MIGRATING&&(!"PRESENT".equals(row.cloudStatus())||"ONEDRIVE".equals(row.cloudProvider())))
             uploadSupabase(row,bytes);
         String sourcePath=desiredProductImagePath(conn,row);
         ImageCloudProvider.RemoteObject remote=ONEDRIVE.upload(row.id(),row.category(),sourcePath,row.contentType(),bytes);
@@ -722,7 +867,7 @@ public final class ServerImageAssetService {
                 """)){
             ps.setString(1,remote.driveId());ps.setString(2,remote.itemId());ps.setString(3,remote.path());
             ps.setString(4,remote.eTag());ps.setString(5,filename(sourcePath));
-            ps.setString(6,phase==OneDrivePhase.ACTIVE?"ONEDRIVE":"SUPABASE");ps.setObject(7,row.id());ps.executeUpdate();
+            ps.setString(6,privateCreative||phase==OneDrivePhase.ACTIVE?"ONEDRIVE":"SUPABASE");ps.setObject(7,row.id());ps.executeUpdate();
         }
         if(!blank(row.remoteItemId())&&!row.remoteItemId().equals(remote.itemId())&&!blank(row.remotePath())
                 &&!row.remotePath().equals(remote.path()))
@@ -756,7 +901,7 @@ public final class ServerImageAssetService {
         try(PreparedStatement ps=conn.prepareStatement(sql)){ps.setObject(1,row.id());try(ResultSet rs=ps.executeQuery()){
             if(!rs.next())return fallbackProductImagePath(row);
             String original=rs.getString(6);java.sql.Timestamp created=rs.getTimestamp(7);
-            java.util.regex.Matcher matcher=java.util.regex.Pattern.compile("(?:^|-)(\\d{13})(?:-|\\.)").matcher(original==null?"":original);
+            java.util.regex.Matcher matcher=java.util.regex.Pattern.compile("(?:^|-)(\\d{13}(?:-[a-z0-9]{8})?)(?:-|\\.)").matcher(original==null?"":original);
             String token=matcher.find()?matcher.group(1):Long.toString(created==null?System.currentTimeMillis():created.toInstant().toEpochMilli());
             return "products/"+StorageObjectNameBuilder.productImageFilename(original,token,
                     rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getString(5));
@@ -765,7 +910,7 @@ public final class ServerImageAssetService {
 
     private static String fallbackProductImagePath(AssetRow row){
         String original=filename(row.objectPath());
-        java.util.regex.Matcher matcher=java.util.regex.Pattern.compile("(?:^|-)(\\d{13})(?:-|\\.)").matcher(original);
+        java.util.regex.Matcher matcher=java.util.regex.Pattern.compile("(?:^|-)(\\d{13}(?:-[a-z0-9]{8})?)(?:-|\\.)").matcher(original);
         String token=matcher.find()?matcher.group(1):Long.toString(System.currentTimeMillis());
         return "products/"+StorageObjectNameBuilder.productImageFilename(original,token,"","","","","");
     }
@@ -773,16 +918,19 @@ public final class ServerImageAssetService {
     private static boolean blank(String value){return value==null||value.isBlank();}
 
     private static byte[] downloadCloud(AssetRow row)throws Exception{
-        if(isOneDriveCategory(row.category())&&"ONEDRIVE".equals(row.cloudProvider())){
-            byte[] bytes=ONEDRIVE.download(row.id(),row.category(),row.objectPath(),row.remoteItemId(),row.remotePath());
+        return downloadCloud(row,Integer.MAX_VALUE);
+    }
+    private static byte[] downloadCloud(AssetRow row,int maxBytes)throws Exception{
+        if((isOneDriveCategory(row.category())||isPrivateCreativeCategory(row.category()))&&"ONEDRIVE".equals(row.cloudProvider())){
+            byte[] bytes=ONEDRIVE.download(row.id(),row.category(),row.objectPath(),row.remoteItemId(),row.remotePath(),maxBytes);
             if(bytes!=null)return bytes;
-            return downloadSupabase(row); // retained rollback copy during the cutover window
+            return downloadSupabase(row,maxBytes); // retained rollback copy during the cutover window
         }
-        return downloadSupabase(row);
+        return downloadSupabase(row,maxBytes);
     }
 
     private static void deleteCloud(AssetRow row)throws Exception{
-        if(isOneDriveCategory(row.category())&&"ONEDRIVE".equals(row.cloudProvider()))
+        if((isOneDriveCategory(row.category())||isPrivateCreativeCategory(row.category()))&&"ONEDRIVE".equals(row.cloudProvider()))
             ONEDRIVE.delete(row.id(),row.category(),row.objectPath(),row.remoteItemId(),row.remotePath());
         else deleteSupabase(row);
     }
@@ -872,6 +1020,48 @@ public final class ServerImageAssetService {
             if(userId==null)ps.setNull(4,java.sql.Types.INTEGER);else ps.setInt(4,userId);
             ps.setString(5,userName);ps.executeUpdate();
         }
+    }
+
+    /** Synchronize shareable IDs only. Each server keeps its own certificate and private key. */
+    public static void synchronizeSharedOneDriveIdentifiers(Connection conn)throws SQLException{
+        String[] local=null;
+        try(PreparedStatement ps=conn.prepareStatement(
+                "SELECT tenant_id,client_id,drive_id FROM image_cloud_configuration WHERE provider='ONEDRIVE'");
+            ResultSet rs=ps.executeQuery()){
+            if(rs.next())local=new String[]{rs.getString(1),rs.getString(2),rs.getString(3)};
+        }
+        try{
+            SupabaseServerApi.Response response=SupabaseServerApi.getTablePage("image_cloud_configuration",0,1);
+            if(!response.successful())throw new SQLException(SupabaseServerApi.failureMessage("Shared OneDrive configuration",response));
+            JsonArray rows=JsonParser.parseString(response.body()).getAsJsonArray();
+            if(rows.isEmpty()){
+                if(local!=null)publishCloudOneDriveIdentifiers(local[0],local[1],local[2]);
+                return;
+            }
+            JsonObject cloud=rows.get(0).getAsJsonObject();
+            if(!"ONEDRIVE".equals(cloud.get("provider").getAsString()))
+                throw new SQLException("The shared OneDrive provider is invalid.");
+            String[] shared={cloud.get("tenant_id").getAsString(),cloud.get("client_id").getAsString(),
+                    cloud.get("drive_id").getAsString()};
+            if(local==null){
+                publishOneDriveIdentifiers(conn,shared[0],shared[1],shared[2],null,"Shared OneDrive configuration");
+                hydrateOneDriveConfiguration(conn);
+            }else if(!java.util.Arrays.equals(local,shared)){
+                throw new SQLException("This store's OneDrive identifiers differ from the shared configuration. Review OneDrive setup on this server.");
+            }
+        }catch(InterruptedException ex){Thread.currentThread().interrupt();throw new SQLException("Shared OneDrive configuration was interrupted.",ex);}
+        catch(IOException|RuntimeException ex){throw new SQLException("Shared OneDrive configuration could not be synchronized.",ex);}
+    }
+
+    static void publishCloudOneDriveIdentifiers(String tenantId,String clientId,String driveId)throws SQLException{
+        JsonObject row=new JsonObject();row.addProperty("provider","ONEDRIVE");
+        row.addProperty("tenant_id",tenantId);row.addProperty("client_id",clientId);
+        row.addProperty("drive_id",driveId);row.addProperty("updated_at",Instant.now().toString());
+        try{
+            SupabaseServerApi.Response response=SupabaseServerApi.upsertOneDriveIdentifiers(row);
+            if(!response.successful())throw new SQLException(SupabaseServerApi.failureMessage("Share OneDrive identifiers",response));
+        }catch(InterruptedException ex){Thread.currentThread().interrupt();throw new SQLException("Sharing OneDrive identifiers was interrupted.",ex);}
+        catch(IOException ex){throw new SQLException("OneDrive identifiers could not be shared.",ex);}
     }
 
     private static boolean hydrateOneDriveConfiguration(Connection conn)throws SQLException{
@@ -1076,7 +1266,7 @@ public final class ServerImageAssetService {
     private record ReferenceSource(String table, String key, String column, String category) { }
     private record CloudPrefix(String bucket, String prefix, String category, String accessLevel) { }
     private record LegacyLocation(String bucket, String path, boolean authenticated) { }
-    private record AssetRow(UUID id,String category,String bucket,String objectPath,String accessLevel,String contentType,
+    record AssetRow(UUID id,String category,String bucket,String objectPath,String accessLevel,String contentType,
                             String sha256,String lifecycleStatus,String localStatus,String cloudStatus,String cloudProvider,
                             String remoteDriveId,String remoteItemId,String remotePath,String cloudEtag,String migrationStatus) { }
     public record AssetBytes(byte[] bytes, String contentType, String sha256) { }

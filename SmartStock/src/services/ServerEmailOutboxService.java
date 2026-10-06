@@ -204,6 +204,69 @@ public final class ServerEmailOutboxService {
         }
     }
 
+    static void queueStorefrontOrder(Connection c,int location,String recipient,String order,String status,String deadline)throws SQLException {
+        StoreEmailSettings settings=loadSettings(c,location);
+        String company="Your store";
+        try(var query=c.prepareStatement("SELECT company_name FROM company_info WHERE company_info_id=1");var result=query.executeQuery()){
+            if(result.next()&&!isBlank(result.getString(1)))company=result.getString(1).replaceAll("[\\r\\n]"," ");
+        }
+        String text="Your "+company+" order "+order+" is "+status.toLowerCase(java.util.Locale.ROOT).replace('_',' ')+"."
+            +(deadline.isBlank()?"":"\nPickup deadline: "+deadline)+"\nPayment is collected in store.";
+        EmailDraft draft=new EmailDraft(settings,recipient,company+" order update",text,"<p>"+htmlEscape(text)+"</p>",null,null,null,"STOREFRONT_ORDER",order);
+        long id=insertDraft(c,draft);recordEvent(c,id,"QUEUED","Storefront order notification queued.");
+        if(isBlank(settings.senderEmail())){
+            try(var update=c.prepareStatement("UPDATE email_outbox SET status='FAILED',last_error='STOREFRONT_SENDER_REQUIRED: Configure the store email sender; this notification will resume automatically.' WHERE email_outbox_id=?")){
+                update.setLong(1,id);update.executeUpdate();
+            }
+            recordEvent(c,id,"FAILED","Storefront notification is waiting for the store email sender configuration.");
+        }
+    }
+
+    static void queueStorefrontProof(Connection c,int location,String recipient,String request,int revision)throws SQLException {
+        StoreEmailSettings settings=loadSettings(c,location);
+        String message="Your design is ready for review. Sign in to your Deckers account, open Design Approvals, and review revision "
+            +revision+" for request "+request+". Production will wait for your approval or change request.";
+        EmailDraft draft=new EmailDraft(settings,recipient,"Your design is ready",message,
+            "<p>"+htmlEscape(message)+"</p>",null,null,null,"STOREFRONT_PROOF",request+":"+revision);
+        long id=insertDraft(c,draft);recordEvent(c,id,"QUEUED","Design proof notification queued.");
+        if(isBlank(settings.senderEmail())){
+            try(var update=c.prepareStatement("UPDATE email_outbox SET status='FAILED',last_error='STOREFRONT_SENDER_REQUIRED: Configure the store email sender; this notification will resume automatically.' WHERE email_outbox_id=?")){
+                update.setLong(1,id);update.executeUpdate();
+            }
+            recordEvent(c,id,"FAILED","Design proof notification is waiting for the store email sender configuration.");
+        }
+    }
+
+    static void queueCustomOrderDesignProof(Connection c,int location,String recipient,String orderNumber,int revision,String approvalUrl)throws SQLException {
+        if(isBlank(recipient))return;
+        StoreEmailSettings settings=loadSettings(c,location);
+        String message="A design preview for custom order "+orderNumber+" is ready. Review revision "+revision
+            +", then approve it or describe the changes you need: "+approvalUrl;
+        EmailDraft draft=new EmailDraft(settings,recipient,"Review your custom order design",message,
+            "<p>Review your custom order design and approve it or request changes.</p><p><a href=\""
+                +htmlEscape(approvalUrl)+"\">Open design preview</a></p>",null,null,null,
+            "CUSTOM_ORDER_DESIGN_PROOF",orderNumber+":"+revision);
+        long id=insertDraft(c,draft);recordEvent(c,id,"QUEUED","Custom order design preview notification queued.");
+        if(isBlank(settings.senderEmail())){
+            try(var update=c.prepareStatement("UPDATE email_outbox SET status='FAILED',last_error='SENDER_REQUIRED: Configure the store email sender; this notification will resume automatically.' WHERE email_outbox_id=?")){
+                update.setLong(1,id);update.executeUpdate();
+            }
+            recordEvent(c,id,"FAILED","Design preview notification is waiting for the store email sender configuration.");
+        }
+    }
+
+    /** Resume durable notifications after configuration, without recreating their outbox rows. */
+    static int resumeStorefrontNotifications(Connection c)throws SQLException{
+        try(var update=c.prepareStatement("""
+            UPDATE email_outbox e SET sender_email=btrim(s.email_sender_address),
+              sender_name=COALESCE(s.email_sender_name,''),bcc_email=NULLIF(btrim(s.email_bcc_address),''),
+              status='QUEUED',last_error=NULL
+            FROM locations s WHERE s.location_id=e.location_id
+              AND e.document_type IN ('STOREFRONT_ORDER','STOREFRONT_PROOF','CUSTOM_ORDER_DESIGN_PROOF') AND btrim(e.sender_email)=''
+              AND e.status IN ('QUEUED','FAILED') AND COALESCE(btrim(s.email_sender_address),'')<>''
+            """)){return update.executeUpdate();}
+    }
+
     static long queueSchedulerLinkChanged(Connection conn, int locationId, String recipient, String schedulerUrl) throws SQLException {
         EmailSchemaInstaller.ensureSchema(conn);
         StoreEmailSettings settings = loadSettings(conn, locationId);
@@ -227,11 +290,13 @@ public final class ServerEmailOutboxService {
             Connection conn = lease.connection();
             EmailSchemaInstaller.ensureSchema(conn);
             recoverConflictingApiKeyFailures(conn);
+            resumeStorefrontNotifications(conn);
             String sql = """
                     SELECT email_outbox_id
                     FROM email_outbox
                     WHERE status IN ('QUEUED', 'FAILED')
                       AND attempts < max_attempts
+                      AND NOT (document_type IN ('STOREFRONT_ORDER','STOREFRONT_PROOF','CUSTOM_ORDER_DESIGN_PROOF') AND btrim(sender_email)='')
                       AND COALESCE(last_error, '') NOT LIKE 'GMAIL_AUTHORIZATION_REQUIRED:%'
                       AND (attempts=0 OR updated_at <= CURRENT_TIMESTAMP
                            - make_interval(secs => LEAST(300, CAST(power(2, attempts) AS INTEGER))))
@@ -558,6 +623,7 @@ public final class ServerEmailOutboxService {
                     WHERE email_outbox_id = ?
                       AND status IN ('QUEUED', 'FAILED')
                       AND attempts < max_attempts
+                      AND NOT (document_type IN ('STOREFRONT_ORDER','STOREFRONT_PROOF','CUSTOM_ORDER_DESIGN_PROOF') AND btrim(sender_email)='')
                     FOR UPDATE
                     """;
             try (PreparedStatement ps = conn.prepareStatement(selectSql)) {

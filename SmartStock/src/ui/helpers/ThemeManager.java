@@ -180,6 +180,7 @@ public final class ThemeManager {
     static void applyToComponent(Component component) {
         if (component instanceof JComponent themedComponent
                 && Boolean.TRUE.equals(themedComponent.getClientProperty("SmartStock.preserveThemeColors"))) {
+            restorePaletteButtons(themedComponent);
             return;
         }
         boolean dark = isDarkModeEnabled();
@@ -345,6 +346,16 @@ public final class ThemeManager {
      * Keeps text buttons readable even when a screen supplies its own accent.
      * WCAG's 4.5:1 normal-text threshold is used as a practical Swing UI guard.
      */
+    private static void restorePaletteButtons(Component component) {
+        if (component instanceof AbstractButton button && (button instanceof JButton || (button instanceof JToggleButton && !(button instanceof JCheckBox) && !(button instanceof JRadioButton)))) {
+            button.setUI(button instanceof JToggleButton ? new javax.swing.plaf.basic.BasicToggleButtonUI() : new BasicButtonUI());
+            button.setOpaque(true);
+            button.setContentAreaFilled(true);
+            ensureReadableButtonColors(button);
+        }
+        if (component instanceof Container container) for (Component child : container.getComponents()) restorePaletteButtons(child);
+    }
+
     public static void ensureReadableButtonColors(AbstractButton button) {
         if (button == null
                 || Boolean.TRUE.equals(button.getClientProperty("SmartStock.customPaintedButton"))

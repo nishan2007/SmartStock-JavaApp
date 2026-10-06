@@ -60,6 +60,7 @@ public final class ServerSetupWizard extends JFrame {
     private final JPasswordField cloudPassword = new JPasswordField();
     private final JLabel cloudState = new JLabel("Cloud schema has not been checked.");
     private boolean cloudReady;
+    private boolean cloudInitializationNeeded;
 
     private final JLabel localJava = new JLabel();
     private final JLabel localPostgres = new JLabel();
@@ -239,7 +240,7 @@ public final class ServerSetupWizard extends JFrame {
 
     private JPanel buildAdministratorPage() {
         JPanel page = page();
-        JButton open = new JButton("Transfer or Create First Administrator");
+        JButton open = new JButton("Set Up Store Administrator");
         DeckersSwing.styleUtilityButton(open, DeckersPalette.MAGENTA);
         open.addActionListener(event -> openAdministratorSetup());
         JPanel center = DeckersSwing.panel();
@@ -249,9 +250,9 @@ public final class ServerSetupWizard extends JFrame {
         center.add(adminState);
         center.add(Box.createVerticalStrut(22));
         center.add(open);
-        page.add(note("Transfer an active Development administrator while preserving the "
-                + "badge identity, or create a new administrator. Passwords are entered "
-                + "privately and are never copied from another project."), BorderLayout.NORTH);
+        page.add(note("Use an existing online administrator from this Supabase project, "
+                + "transfer from another database, or create a new administrator. "
+                + "This store needs its own administrator assignment."), BorderLayout.NORTH);
         page.add(center, BorderLayout.CENTER);
         return page;
     }
@@ -361,7 +362,7 @@ public final class ServerSetupWizard extends JFrame {
             case 2 -> "Initialize Cloud";
             case 3 -> "Prepare Local Database";
             case 4 -> "Create or Select Store";
-            case 5 -> "Create First Administrator";
+            case 5 -> "Set Up Store Administrator";
             default -> "Start and Verify Server";
         });
         subtitleLabel.setText(switch (step) {
@@ -375,7 +376,8 @@ public final class ServerSetupWizard extends JFrame {
         backButton.setVisible(step > 1);
         nextButton.setText(switch (step) {
             case 1 -> "Test and Continue";
-            case 2 -> cloudReady ? "Continue" : "Initialize and Continue";
+            case 2 -> cloudReady ? "Continue"
+                    : cloudInitializationNeeded ? "Initialize and Continue" : "Retry Cloud Check";
             case 3 -> "Prepare and Continue";
             case 4 -> "Save Store and Continue";
             case 5 -> "Continue";
@@ -446,29 +448,39 @@ public final class ServerSetupWizard extends JFrame {
     private void checkCloudSchema() {
         cloudState.setText("… Checking the SmartStock cloud schema...");
         cloudCredentialPanel.setVisible(false);
-        SwingWorker<Boolean, Void> worker = new SwingWorker<>() {
+        SwingWorker<String, Void> worker = new SwingWorker<>() {
             @Override
-            protected Boolean doInBackground() {
+            protected String doInBackground() {
                 try {
                     CloudSyncManifest.fetch();
-                    return true;
+                    CloudSyncManifest.verifySchemaReady();
+                    return null;
                 } catch (Exception ex) {
-                    return false;
+                    return ex.getMessage() == null ? "The cloud check failed."
+                            : ex.getMessage();
                 }
             }
 
             @Override
             protected void done() {
+                String problem;
                 try {
-                    cloudReady = get();
+                    problem = get();
                 } catch (Exception ex) {
-                    cloudReady = false;
+                    problem = "The cloud check could not finish. Retry the connection.";
                 }
+                cloudReady = problem == null;
+                cloudInitializationNeeded = !cloudReady && (problem.contains("HTTP 404")
+                        || problem.startsWith("Cloud schema is unavailable"));
                 cloudState.setText(cloudReady
-                        ? "✓ SmartStock cloud schema is current and the API-only sync functions respond."
-                        : "! This project needs SmartStock initialization or an update.");
-                cloudCredentialPanel.setVisible(!cloudReady);
-                nextButton.setText(cloudReady ? "Continue" : "Initialize and Continue");
+                        ? "✓ SmartStock cloud schema responds and is ready."
+                        : cloudInitializationNeeded
+                        ? "! SmartStock cloud initialization is needed. " + problem
+                        : "! Cloud connection check failed: " + problem);
+                cloudState.setToolTipText(cloudReady ? null : problem);
+                cloudCredentialPanel.setVisible(cloudInitializationNeeded);
+                nextButton.setText(cloudReady ? "Continue" : cloudInitializationNeeded
+                        ? "Initialize and Continue" : "Retry Cloud Check");
                 cardHost.revalidate();
             }
         };
@@ -478,6 +490,10 @@ public final class ServerSetupWizard extends JFrame {
     private void initializeCloud() {
         if (cloudReady) {
             showStep(3);
+            return;
+        }
+        if (!cloudInitializationNeeded) {
+            checkCloudSchema();
             return;
         }
         char[] password = cloudPassword.getPassword();
@@ -503,6 +519,7 @@ public final class ServerSetupWizard extends JFrame {
                 try {
                     var result = get();
                     cloudReady = true;
+                    cloudInitializationNeeded = false;
                     statusLabel.setText(result.message());
                     showStep(3);
                 } catch (Exception ex) {
@@ -582,7 +599,8 @@ public final class ServerSetupWizard extends JFrame {
             protected List<ServerStoreSetupService.Store> doInBackground() throws Exception {
                 Map<Integer, ServerStoreSetupService.Store> available = new LinkedHashMap<>();
                 for (var store : ServerStoreSetupService.list()) {
-                    available.put(store.locationId(), store);
+                    var reconciled = ServerStoreSetupService.reconcileLocalIdentity(store);
+                    available.put(reconciled.locationId(), reconciled);
                 }
                 for (var store : ServerStoreSetupService.listCloud()) {
                     available.putIfAbsent(store.locationId(), store);
@@ -638,9 +656,13 @@ public final class ServerSetupWizard extends JFrame {
                         "Select an existing store or choose Create a new store.");
                 ServerStoreSetupService.Store local =
                         ServerStoreSetupService.find(String.valueOf(selected.locationId()));
+                if (local != null && !local.storeCode().equalsIgnoreCase(selected.storeCode())) {
+                    ServerStoreSetupService.reconcileLocalIdentity(local);
+                    local = null;
+                }
                 selected = local == null
                         ? ServerStoreSetupService.restoreFromCloud(selected)
-                        : local;
+                        : ServerStoreSetupService.reconcileLocalIdentity(local);
             }
             DatabaseConfig current = DatabaseConfig.load();
             services.ServerStoreSwitchService.Preflight switchPreflight=null;
@@ -759,7 +781,7 @@ public final class ServerSetupWizard extends JFrame {
         boolean complete = ServerFirstAdministratorService.isComplete();
         adminState.setText(complete
                 ? "✓ A linked store administrator is ready"
-                : "! Create or transfer the first administrator");
+                : "! Assign an administrator to this store");
         nextButton.setText(complete ? "Continue" : "Set Up Administrator");
     }
 

@@ -1,0 +1,5 @@
+SmartStock 1.0.233
+
+Local photo studio for computers and phones: Open in browser and Copy activation link in the Mobile Item Web App dialog. Supports a private studio.deckers.gy address through store-local DNS, with a separate browser certificate that preserves register pairing. Public and forwarded proxy requests are rejected. Includes the current application source and the previous update improvements.
+
+Use the new local-web configuration on the store server after DNS is ready. Staff browsers need to trust the verified store browser certificate. Update ZIP only; no installer is included.

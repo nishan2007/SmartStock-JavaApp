@@ -40,7 +40,7 @@ class MultistoreSalesReturnsArchitectureTest {
         assertTrue(history.contains("ReceiptBuilder.loadSaleReceipt"));
         assertTrue(history.contains("new ReceiptPreview(receipt, true)"));
         assertTrue(history.contains("Receipts can only be reprinted at the store where the sale was completed."));
-        assertTrue(sync.contains("CrossStoreSalesService.refreshAll"));
+        assertTrue(sync.contains("CrossStoreRefreshCoordinator.requestRefresh"));
         assertTrue(sync.contains("CrossStoreRefundService.synchronize"));
     }
 

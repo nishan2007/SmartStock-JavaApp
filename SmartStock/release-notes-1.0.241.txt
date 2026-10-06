@@ -1,0 +1,8 @@
+SmartStock 1.0.241
+- Repairs the Windows server launcher, scheduled task and server shortcut together before updating server application files.
+- Uses the absolute bundled Java runtime and original user profile, with a stable launcher that follows the installed application version.
+- Captures background server startup output and exit codes in sync-service.log.
+- Waits for the expected application version, local schema readiness, certificate-verified HTTPS health and matching LAN discovery before reporting update success.
+- Shows a visible failure and retains the installation backup when the background server does not become ready. It does not silently downgrade application files after database startup.
+- Includes the installation progress window and previous register connection improvements.
+This is a Windows update only. Update store servers before registers. Cross-device LAN access, production services, printers, drawers, NFC and macOS remain separate deployment checks.

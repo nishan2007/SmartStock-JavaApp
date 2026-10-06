@@ -1,0 +1,8 @@
+SmartStock 1.0.223 — Product photo review
+
+Five AI-created product photos are ready for review on this computer in Inventory > Create Product Photos.
+Approving a photo now makes it the main catalogue photo and keeps the previous main photo as a secondary photo.
+Each approval is checked by the authenticated store server against the source photo that was reviewed.
+Rejected and pending previews do not change the catalogue.
+
+The image files remain in the local review queue and are not included in the updater.

@@ -30,6 +30,8 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
     private final JTextArea documentArea = new JTextArea();
     private final JEditorPane documentPane = new JEditorPane();
     private String documentText = "";
+    private boolean compactTemplate;
+    private final JComboBox<String> templateBox = new JComboBox<>(new String[]{"Grid", "Compact"});
     private final String emailDocumentType;
     private final Long emailDocumentId;
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
@@ -94,6 +96,25 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
             buttons.add(emailButton);
             buttons.add(whatsappButton);
         }
+        if (loadDocument && ("QUOTATION".equals(emailDocumentType) || "INVOICE".equals(emailDocumentType))) {
+            buttons.add(new JLabel("Print layout:"));
+            buttons.add(templateBox);
+            templateBox.setEnabled(false);
+            templateBox.addActionListener(event -> {
+                compactTemplate = templateBox.getSelectedIndex() == 1;
+                templateBox.setEnabled(false);
+                printButton.setEnabled(false);
+                ui.helpers.UiTaskRunner.submit(this, "document-template.load",
+                        () -> buildDocument(emailDocumentType, emailDocumentId), text -> {
+                            applyDocument(text);
+                            templateBox.setEnabled(true);
+                            printButton.setEnabled(true);
+                        }, error -> {
+                            templateBox.setEnabled(true);
+                            JOptionPane.showMessageDialog(this, error.getMessage(), "Template", JOptionPane.ERROR_MESSAGE);
+                        });
+            });
+        }
         buttons.add(printButton);
         buttons.add(closeButton);
         JPanel footerPanel = new JPanel(new BorderLayout());
@@ -115,6 +136,7 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
                         emailButton.setEnabled(true);
                         whatsappButton.setEnabled(true);
                         printButton.setEnabled(true);
+                        templateBox.setEnabled(true);
                         if (showPrintDialogOnOpen) openPrintDialogLater();
                     });
         } else {
@@ -126,8 +148,8 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
 
     private String buildDocument(String type, long id) throws Exception {
         return switch (type == null ? "" : type) {
-            case "QUOTATION" -> QuotationInvoiceDocumentBuilder.buildQuotation(id);
-            case "INVOICE" -> QuotationInvoiceDocumentBuilder.buildInvoice(id);
+            case "QUOTATION" -> QuotationInvoiceDocumentBuilder.buildQuotation(id, compactTemplate);
+            case "INVOICE" -> QuotationInvoiceDocumentBuilder.buildInvoice(id, compactTemplate);
             case "DELIVERY_BILL" -> QuotationInvoiceDocumentBuilder.buildDelivery(id);
             default -> throw new IllegalArgumentException("Unsupported document preview type.");
         };
@@ -305,7 +327,7 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
                 g2.scale(1.0, scaleY);
                 pagePane.printAll(g2);
                 g2.setTransform(pageTransform);
-                drawHeaderLogo(g2, loadedImages, renderWidth);
+                drawHeaderLogo(g2, loadedImages, renderWidth, pageHtml.contains("data-template='compact'"));
                 loadedImages.size();
                 return PAGE_EXISTS;
             } finally {
@@ -334,7 +356,7 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
             return IMG_SRC_PATTERN.matcher(html == null ? "" : html).replaceAll("");
         }
 
-        private void drawHeaderLogo(Graphics2D g2, List<ImageIcon> loadedImages, int renderWidth) {
+        private void drawHeaderLogo(Graphics2D g2, List<ImageIcon> loadedImages, int renderWidth, boolean compact) {
             if (loadedImages == null || loadedImages.isEmpty()) {
                 return;
             }
@@ -348,12 +370,12 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
             g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
             int pagePadding = 14;
             int leftHeaderWidth = Math.max(1, (int) Math.round(renderWidth * 0.70));
-            int maxWidth = Math.min(390, leftHeaderWidth - (pagePadding * 2));
-            int maxHeight = 92;
+            int maxWidth = Math.min(compact ? 210 : 390, leftHeaderWidth - (pagePadding * 2));
+            int maxHeight = compact ? 44 : 92;
             double logoScale = Math.min(maxWidth / (double) sourceWidth, maxHeight / (double) sourceHeight);
             int drawWidth = Math.max(1, (int) Math.round(sourceWidth * logoScale));
             int drawHeight = Math.max(1, (int) Math.round(sourceHeight * logoScale));
-            int drawX = pagePadding + Math.max(0, (leftHeaderWidth - (pagePadding * 2) - drawWidth) / 2);
+            int drawX = compact ? pagePadding : pagePadding + Math.max(0, (leftHeaderWidth - (pagePadding * 2) - drawWidth) / 2);
             int drawY = pagePadding + 2;
             g2.drawImage(icon.getImage(), drawX, drawY, drawWidth, drawHeight, null);
             if (oldInterpolation == null) {

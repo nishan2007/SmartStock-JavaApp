@@ -41,6 +41,7 @@ public final class DeviceManagementService {
                        COALESCE(d.is_blocked, false) AS is_blocked,
                        COALESCE(d.allow_sales, true) AS allow_sales,
                        COALESCE(d.allow_orders, true) AS allow_orders,
+                       COALESCE(d.allow_studio, false) AS allow_studio,
                        d.first_seen,
                        d.last_seen,
                        d.approved_at,
@@ -75,6 +76,7 @@ public final class DeviceManagementService {
                     ORDER BY ds.login_time DESC NULLS LAST, ds.session_id DESC
                     LIMIT 1
                 ) latest_session ON TRUE
+                WHERE NOT EXISTS (SELECT 1 FROM studio_device_clients sc WHERE sc.legacy_device_id=d.device_id)
                 ORDER BY COALESCE(d.last_seen, d.first_seen) DESC NULLS LAST, d.device_name, d.hostname
                 """;
 
@@ -105,6 +107,7 @@ public final class DeviceManagementService {
                         rs.getBoolean("is_blocked"),
                         rs.getBoolean("allow_sales"),
                         rs.getBoolean("allow_orders"),
+                        rs.getBoolean("allow_studio"),
                         rs.getTimestamp("first_seen"),
                         rs.getTimestamp("last_seen"),
                         rs.getTimestamp("approved_at"),
@@ -237,6 +240,7 @@ public final class DeviceManagementService {
                     auto_logout_enabled = FALSE,
                     allow_sales = FALSE,
                     allow_orders = FALSE,
+                    allow_studio = FALSE,
                     blocked_at = CURRENT_TIMESTAMP,
                     blocked_by_user_id = ?,
                     status_notes = ?

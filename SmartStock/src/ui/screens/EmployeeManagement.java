@@ -2173,7 +2173,7 @@ public class EmployeeManagement extends JFrame {
 
         int confirm = JOptionPane.showConfirmDialog(
                 this,
-                "Deactivate this employee? Their POS history and store assignments will be kept, but their Supabase auth account will be removed so they cannot sign in.",
+                "Deactivate this employee? Their POS history and store assignments will be kept, and their sign-in will be blocked.",
                 "Confirm Deactivation",
                 JOptionPane.YES_NO_OPTION,
                 JOptionPane.WARNING_MESSAGE

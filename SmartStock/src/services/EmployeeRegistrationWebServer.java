@@ -33,7 +33,7 @@ public final class EmployeeRegistrationWebServer implements AutoCloseable {
         String origin=EmploymentPortalConfig.origin();
         HttpsServer s=HttpsServer.create(new InetSocketAddress("127.0.0.1",PORT),20);
         ExecutorService e=new ThreadPoolExecutor(4,4,0,TimeUnit.SECONDS,new ArrayBlockingQueue<>(16),r->{Thread t=new Thread(r,"employment-portal");t.setDaemon(true);return t;},new ThreadPoolExecutor.AbortPolicy());
-        try{s.setHttpsConfigurator(new HttpsConfigurator(tls.sslContext()));s.setExecutor(e);var app=new EmployeeRegistrationWebServer(s,e,origin);s.createContext("/",app::dispatch);s.start();return app;}
+        try{s.setHttpsConfigurator(new HttpsConfigurator(tls.sslContext()));s.setExecutor(e);var app=new EmployeeRegistrationWebServer(s,e,origin);s.createContext("/",app::dispatch);s.start();WebRuntimeMetrics.started("registration");return app;}
         catch(Exception ex){s.stop(0);e.shutdownNow();throw ex;}
     }
     public String url(){return origin+"/register";}
@@ -101,7 +101,7 @@ public final class EmployeeRegistrationWebServer implements AutoCloseable {
         catch(JsonParseException e){safeSend(x,400,"The request contains invalid JSON.");}
         catch(IllegalArgumentException e){safeSend(x,400,"Check your details. "+Objects.toString(e.getMessage(),"Invalid request."));}
         catch(Exception e){safeSend(x,503,"The request could not be completed. Your last saved application is safe. Please retry.");}
-        finally{x.close();}
+        finally{WebRuntimeMetrics.record("registration",x);x.close();}
     }
     private void auth(HttpExchange x,String route,JsonObject body)throws Exception {
         if("session".equals(route)){Session s=requireSession(x,false);json(x,Map.of("csrfToken",s.csrf));return;}

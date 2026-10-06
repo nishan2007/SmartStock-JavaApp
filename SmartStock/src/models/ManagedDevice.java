@@ -24,6 +24,7 @@ public class ManagedDevice {
     private final boolean blocked;
     private final boolean allowSales;
     private final boolean allowOrders;
+    private final boolean allowStudio;
     private final Timestamp firstSeen;
     private final Timestamp lastSeen;
     private final Timestamp approvedAt;
@@ -59,6 +60,7 @@ public class ManagedDevice {
             boolean blocked,
             boolean allowSales,
             boolean allowOrders,
+            boolean allowStudio,
             Timestamp firstSeen,
             Timestamp lastSeen,
             Timestamp approvedAt,
@@ -93,6 +95,7 @@ public class ManagedDevice {
         this.blocked = blocked;
         this.allowSales = allowSales;
         this.allowOrders = allowOrders;
+        this.allowStudio = allowStudio;
         this.firstSeen = firstSeen;
         this.lastSeen = lastSeen;
         this.approvedAt = approvedAt;
@@ -128,6 +131,7 @@ public class ManagedDevice {
     public boolean isBlocked() { return blocked; }
     public boolean isAllowSales() { return allowSales; }
     public boolean isAllowOrders() { return allowOrders; }
+    public boolean isAllowStudio() { return allowStudio; }
     public Timestamp getFirstSeen() { return firstSeen; }
     public Timestamp getLastSeen() { return lastSeen; }
     public Timestamp getApprovedAt() { return approvedAt; }
@@ -156,6 +160,7 @@ public class ManagedDevice {
             return "Blocked";
         }
         if (!approved) {
+            if (allowStudio) return "Studio Only";
             return "Pending Approval";
         }
         return "Approved";

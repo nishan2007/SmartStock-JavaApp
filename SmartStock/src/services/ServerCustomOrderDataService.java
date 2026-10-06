@@ -260,6 +260,11 @@ public final class ServerCustomOrderDataService {
     }
 
     public static int resolveOrderCustomerId(Connection conn, CustomerOption selectedCustomer, String name, String phone) throws SQLException {
+        try {
+            phone = utils.CustomerPhoneNumber.normalize(phone);
+        } catch (IllegalArgumentException ex) {
+            throw new SQLException(ex.getMessage(), "22023", ex);
+        }
         if (selectedCustomer != null && selectedCustomer.customerId() != null) {
             updateCustomerPhone(conn, selectedCustomer.customerId(), phone);
             return selectedCustomer.customerId();
@@ -392,7 +397,7 @@ public final class ServerCustomOrderDataService {
                 orderPs.setString(1, orderNumber);
                 orderPs.setInt(2, customerId);
                 orderPs.setString(3, request.customerName());
-                orderPs.setString(4, request.customerPhone());
+                orderPs.setString(4, utils.CustomerPhoneNumber.normalize(request.customerPhone()));
                 if (request.dueDate() == null) {
                     orderPs.setNull(5, Types.DATE);
                 } else {
@@ -478,6 +483,7 @@ public final class ServerCustomOrderDataService {
 
                 int sortOrder = 1;
                 for (OrderLineRequest line : request.lines()) {
+                    CustomerSuppliedItem.validate(line);
                     ItemAttributes attributes = resolveItemAttributes(conn, line.customItemId(), line.customVariantId(), line.itemSize(), line.itemColor());
                     setNullableLong(linePs, 2, line.customItemId());
                     linePs.setLong(1, orderId);
@@ -556,6 +562,7 @@ public final class ServerCustomOrderDataService {
                     }
                 }
                 addonPs.executeBatch();
+                CustomOrderDesignService.createForOrder(conn,orderId);
                 itemSoldPs.executeBatch();
                 variantSoldPs.executeBatch();
                 refreshParentPs.executeBatch();
@@ -694,9 +701,16 @@ public final class ServerCustomOrderDataService {
     }
 
     public static LookupResult lookupCustomItem(Connection conn, String search) throws SQLException {
+        List<ItemSearchOption> matches = searchCustomItems(conn, search);
+        return matches.isEmpty() ? null : new LookupResult(matches.get(0).customItemId(), matches.get(0).customVariantId());
+    }
+
+    public record ItemSearchOption(Long customItemId, Long customVariantId, String label) { }
+
+    public static List<ItemSearchOption> searchCustomItems(Connection conn, String search) throws SQLException {
         String value = search == null ? "" : search.trim();
         if (value.isEmpty()) {
-            return null;
+            return List.of();
         }
         String sql = """
                 WITH matches AS (
@@ -765,28 +779,44 @@ public final class ServerCustomOrderDataService {
                       AND coiv.is_active = TRUE
                       AND %s
                 )
-                SELECT custom_item_id, custom_variant_id
-                FROM matches
-                ORDER BY rank
-                LIMIT 1
+                SELECT m.custom_item_id, m.custom_variant_id, coi.item_name,
+                       coiv.variant_name,
+                       COALESCE(NULLIF(coiv.size,''),coi.size,'') AS size,
+                       COALESCE(NULLIF(coiv.color,''),coi.color,'') AS color,
+                       COALESCE(NULLIF(coiv.sku,''),coi.sku,'') AS sku
+                FROM (SELECT custom_item_id, custom_variant_id, MIN(rank) AS rank
+                      FROM matches GROUP BY custom_item_id, custom_variant_id) m
+                JOIN custom_order_items coi ON coi.custom_item_id=m.custom_item_id
+                LEFT JOIN custom_order_item_variants coiv ON coiv.custom_variant_id=m.custom_variant_id
+                ORDER BY m.rank, coi.item_name, coiv.variant_name, m.custom_item_id, m.custom_variant_id
+                LIMIT 20
                 """.formatted(
                         ProductSearchHelper.customItemPredicate("coi", value),
                         ProductSearchHelper.customVariantPredicate("coi", "coiv", value));
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setQueryTimeout(10);
             for (int i = 1; i <= 6; i++) {
                 ps.setString(i, value);
             }
             int parameterIndex = ProductSearchHelper.bindTokens(ps, 7, value);
             ProductSearchHelper.bindTokens(ps, parameterIndex, value);
             try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
+                List<ItemSearchOption> options = new ArrayList<>();
+                while (rs.next()) {
                     long itemId = rs.getLong("custom_item_id");
                     long variantId = rs.getLong("custom_variant_id");
-                    return new LookupResult(itemId, rs.wasNull() ? null : variantId);
+                    Long variant = rs.wasNull() ? null : variantId;
+                    String name = rs.getString("item_name");
+                    String variantName = rs.getString("variant_name");
+                    if (variant != null && variantName != null && !variantName.isBlank()) name += " / " + variantName;
+                    String label = attributeLabel(name, rs.getString("size"), rs.getString("color"));
+                    String sku = rs.getString("sku");
+                    if (sku != null && !sku.isBlank()) label += " [" + sku + "]";
+                    options.add(new ItemSearchOption(itemId, variant, label));
                 }
+                return options;
             }
         }
-        return null;
     }
 
     public record CustomItemOption(Long customItemId, String name, String size, String color, String sku, String productType, String pricingType,
@@ -931,7 +961,47 @@ public final class ServerCustomOrderDataService {
             String priceOverrideApprovalToken,
             String itemSize,
             String itemColor
-    ) {
+    , CustomerSuppliedItem customerItem) {
+        public OrderLineRequest(
+            Long customItemId,
+            Long customVariantId,
+            String itemName,
+            String variantName,
+            String pricingType,
+            BigDecimal unitPrice,
+            String customizationDetails,
+            String orderInstructions,
+            BigDecimal widthValue,
+            BigDecimal lengthValue,
+            String dimensionUnit,
+            BigDecimal areaValue,
+            String areaUnit,
+            BigDecimal areaPrice,
+            BigDecimal baseItemPrice,
+            Long printMaterialId,
+            String printMaterialName,
+            Long printSizePresetId,
+            String printSizeName,
+            BigDecimal printCharge,
+            int printLineCount,
+            BigDecimal originalLineTotal,
+            BigDecimal lineDiscountPercent,
+            BigDecimal lineDiscountAmount,
+            Integer lineDiscountByUserId,
+            String lineDiscountByName,
+            String lineDiscountReason,
+            BigDecimal minimumDepositPercent,
+            BigDecimal originalBasePrice,
+            BigDecimal priceOverridePrice,
+            String priceOverrideReason,
+            Integer priceOverrideByUserId,
+            String priceOverrideByName,
+            List<PrintAddonRequest> printAddons,
+            String lineDiscountApprovalToken,
+            String priceOverrideApprovalToken,
+            String itemSize,
+            String itemColor
+    ) { this(customItemId,customVariantId,itemName,variantName,pricingType,unitPrice,customizationDetails,orderInstructions,widthValue,lengthValue,dimensionUnit,areaValue,areaUnit,areaPrice,baseItemPrice,printMaterialId,printMaterialName,printSizePresetId,printSizeName,printCharge,printLineCount,originalLineTotal,lineDiscountPercent,lineDiscountAmount,lineDiscountByUserId,lineDiscountByName,lineDiscountReason,minimumDepositPercent,originalBasePrice,priceOverridePrice,priceOverrideReason,priceOverrideByUserId,priceOverrideByName,printAddons,lineDiscountApprovalToken,priceOverrideApprovalToken,itemSize,itemColor,null); }
     }
 
     public record PrintAddonRequest(

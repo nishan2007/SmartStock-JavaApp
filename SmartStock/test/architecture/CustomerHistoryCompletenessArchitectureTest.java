@@ -19,7 +19,7 @@ class CustomerHistoryCompletenessArchitectureTest {
         String remote=read("src/services/CrossStoreCustomerHistoryService.java");
         assertTrue(remote.contains("source_location_id<>?"),"The current store must not be returned from its own remote cache");
         String sync=read("src/services/SyncWorker.java");
-        assertTrue(sync.contains("CrossStoreCustomerHistoryService.refreshAll"));
+        assertTrue(sync.contains("CrossStoreRefreshCoordinator.requestRefresh"));
     }
 
     @Test void apiAndUiExposeStoreAndDocumentIdentity()throws Exception{

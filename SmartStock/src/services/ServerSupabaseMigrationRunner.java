@@ -15,6 +15,12 @@ import java.util.Objects;
 /** Installs the immutable Supabase v1 baseline and ordered post-v1 migrations. */
 public final class ServerSupabaseMigrationRunner {
     private static final long ADVISORY_LOCK = 0x534D41525453544FL;
+    private static final String HISTORICAL_PERMISSION_MIGRATION =
+            "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql";
+    private static final String HISTORICAL_PERMISSION_CHECKSUM =
+            "1deeb7f89f9964a161ecee3faf02f8d783e6a7b69652bc6a6bcf5a62834948f7";
+    private static final String CURRENT_PERMISSION_CHECKSUM =
+            "a9aa3656cbee7d49e96e9a86e6698e4d392b130eec0ee11c4029f94b0d77c8cb";
 
     private ServerSupabaseMigrationRunner() {
     }
@@ -79,7 +85,7 @@ public final class ServerSupabaseMigrationRunner {
                     String checksum = sha256(sql);
                     String existing = appliedChecksum(connection, resource);
                     if (existing != null) {
-                        if (!checksum.equals(existing)) {
+                        if (!matchesAppliedChecksum(resource, checksum, existing)) {
                             throw new SQLException("Applied migration is immutable but its packaged checksum changed: " + resource);
                         }
                         continue;
@@ -183,7 +189,7 @@ public final class ServerSupabaseMigrationRunner {
             } catch (Exception ex) {
                 throw new SQLException("Packaged migration is unreadable: " + resource, ex);
             }
-            if (!expected.equals(checksum)) {
+            if (!matchesAppliedChecksum(resource, expected, checksum)) {
                 throw new SQLException("Applied migration is immutable but its packaged checksum changed: "
                         + resource);
             }
@@ -232,6 +238,13 @@ public final class ServerSupabaseMigrationRunner {
                 return rows.next() ? rows.getString(1) : null;
             }
         }
+    }
+
+    static boolean matchesAppliedChecksum(String resource, String packaged, String applied) {
+        return packaged.equals(applied)
+                || (HISTORICAL_PERMISSION_MIGRATION.equals(resource)
+                    && CURRENT_PERMISSION_CHECKSUM.equals(packaged)
+                    && HISTORICAL_PERMISSION_CHECKSUM.equals(applied));
     }
 
     private static void applyOne(Connection connection, String resource, String sql,

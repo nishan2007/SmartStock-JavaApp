@@ -56,6 +56,7 @@ public class DatabaseSetup extends JFrame {
     private JButton startLanServiceButton;
     private JButton stopLanServiceButton;
     private JButton refreshServicesButton;
+    private JButton repairLanFirewallButton;
     private JButton setupStoreButton;
     private JButton initializeSupabaseButton;
     private JButton setupFirstAdministratorButton;
@@ -135,6 +136,7 @@ public class DatabaseSetup extends JFrame {
         startLanServiceButton = new JButton("Start LAN Service");
         stopLanServiceButton = new JButton("Stop LAN Service");
         refreshServicesButton = new JButton("Refresh Service Status");
+        repairLanFirewallButton = new JButton("Repair LAN Firewall");
         setupStoreButton = new JButton("Validate or Create Store");
         initializeSupabaseButton = new JButton("Initialize Supabase Project");
         setupFirstAdministratorButton = new JButton("Set Up First Administrator");
@@ -161,6 +163,7 @@ public class DatabaseSetup extends JFrame {
                 "Stop the LAN service? Connected registers will immediately lose their SmartStock connection.",
                 "Stopping LAN service...", PostgresRuntimeService::stopLanService));
         refreshServicesButton.addActionListener(e -> refreshServerServiceStatus());
+        repairLanFirewallButton.addActionListener(e -> repairLanFirewall());
         setupStoreButton.addActionListener(e -> setUpStore());
         initializeSupabaseButton.addActionListener(e -> initializeSupabaseProject());
         setupFirstAdministratorButton.addActionListener(e -> openFirstAdministratorSetup());
@@ -193,6 +196,7 @@ public class DatabaseSetup extends JFrame {
                 "Provides the secure register connection and runs background cloud synchronization.",
                 operationRow(startLanServiceButton, "Connect registers and resume background synchronization."),
                 operationRow(stopLanServiceButton, "Disconnect registers and pause background synchronization."),
+                operationRow(repairLanFirewallButton, "Request Windows administrator approval and repair private-LAN access."),
                 operationRow(installSyncServiceButton, PostgresRuntimeService.isWindowsRuntime()
                         ? "Save production settings, request Windows administrator approval, install automatic startup, and restrict port 8443 to the store LAN."
                         : "Install or update the automatic LAN and sync service.")));
@@ -334,6 +338,7 @@ public class DatabaseSetup extends JFrame {
         startLanServiceButton.setVisible(server);
         stopLanServiceButton.setVisible(server);
         refreshServicesButton.setVisible(server);
+        repairLanFirewallButton.setVisible(server && PostgresRuntimeService.isWindowsRuntime());
         setupStoreButton.setVisible(server);
         initializeSupabaseButton.setVisible(server);
         setupFirstAdministratorButton.setVisible(server);
@@ -1000,6 +1005,21 @@ public class DatabaseSetup extends JFrame {
         worker.execute();
     }
 
+    private void repairLanFirewall() {
+        String scope = lanSubnetField.getText().trim();
+        try {
+            PostgresRuntimeService.CommandResult result = ResponsiveTask.await(this,
+                    "Repairing LAN firewall; approve the Windows administrator prompt...",
+                    () -> PostgresRuntimeService.repairLanFirewall(scope));
+            if (result == null) return;
+            statusLabel.setText(result.success() ? "Status: LAN firewall rules repaired and verified."
+                    : "Status: LAN firewall repair failed.");
+            showCommandOutput("Repair LAN Firewall", result.output());
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, rootCauseMessage(ex), "Repair LAN Firewall", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
     private void refreshServerServiceStatus() {
         if (selectedMode() != DatabaseMode.SERVER) return;
         refreshServicesButton.setEnabled(false);
@@ -1035,7 +1055,8 @@ public class DatabaseSetup extends JFrame {
         if ("postgres".equals(serviceName)) {
             return value.contains("started") || value.matches("(?s).*postgresql[^\\n]*\\brunning\\b.*");
         }
-        return value.contains("state = running") || value.matches("(?s).*status:\\s+running.*");
+        return value.contains("state = running")
+                || value.matches("(?s).*(?:state|status)\\s*:\\s*running\\b.*");
     }
 
     private void setServiceButtonsEnabled(boolean enabled) {

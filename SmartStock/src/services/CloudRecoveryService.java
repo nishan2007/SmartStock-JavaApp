@@ -73,6 +73,7 @@ final class CloudRecoveryService {
         try {
             SupabaseServerApi.Response response = SupabaseServerApi.postRpc(
                     "smartstock_store_user_credentials", body);
+            CloudTransferMetrics.record(target,"recovery_user_credentials",locationId,body.toString(),response.body());
             if (!response.successful()) {
                 throw new SQLException(SupabaseServerApi.failureMessage(
                         "Protected user credential recovery", response));
@@ -201,6 +202,17 @@ final class CloudRecoveryService {
         return insertRows(target, table, writableColumnTypes(target, table), rows);
     }
 
+    static void restoreRoleCatalog(Connection target, Map<String, JsonArray> tables) throws SQLException {
+        for (String table : List.of("roles", "permissions", "mobile_permissions")) {
+            JsonArray rows = tables.get(table);
+            if (rows == null) throw new SQLException("Role recovery catalog is incomplete.");
+            Map<String, String> columns = writableColumnTypes(target, table);
+            if ("roles".equals(table)) columns = without(columns, "role_id");
+            if ("permissions".equals(table)) columns = without(columns, "permission_id");
+            insertRows(target, table, columns, rows);
+        }
+    }
+
     private static int restoreMirroredTable(Connection target, int locationId,
                                             String generationId, String table,
                                             RecoveryReferences references,
@@ -220,7 +232,7 @@ final class CloudRecoveryService {
                 }
             }
             while (true) {
-                JsonObject page = fetchMirrorPage(locationId, generationId, table, cursor);
+                JsonObject page = fetchMirrorPage(target, locationId, generationId, table, cursor);
                 JsonArray envelopeRows = page.getAsJsonArray("rows");
                 if (envelopeRows == null || envelopeRows.isEmpty()) break;
                 JsonArray activeRows = new JsonArray();
@@ -525,8 +537,13 @@ final class CloudRecoveryService {
 
     private record SequenceColumn(String table, String column, String sequence) { }
 
-    private static JsonObject fetchMirrorPage(int locationId, String generationId,
+    static JsonObject fetchMirrorPage(int locationId, String generationId,
                                               String table, long cursor)
+            throws SQLException {
+        return fetchMirrorPage(null,locationId,generationId,table,cursor);
+    }
+
+    private static JsonObject fetchMirrorPage(Connection target, int locationId,String generationId,String table,long cursor)
             throws SQLException {
         JsonObject body = new JsonObject();
         body.addProperty("p_location_id", locationId);
@@ -537,6 +554,7 @@ final class CloudRecoveryService {
         try {
             SupabaseServerApi.Response response =
                     SupabaseServerApi.postRpc("smartstock_store_table_snapshot", body);
+            if(target!=null) CloudTransferMetrics.record(target,"recovery_table_snapshot",locationId,body.toString(),response.body());
             if (!response.successful()) {
                 throw new SQLException(SupabaseServerApi.failureMessage(
                         "Cloud mirror recovery for " + table, response));

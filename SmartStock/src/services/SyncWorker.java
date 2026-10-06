@@ -123,8 +123,6 @@ public final class SyncWorker {
             }
             try (SyncLockService.SyncLease ignored = lease.get()) {
                 int automaticClosures = TimeClockAutoCloseService.processExpiredOpenPunches(local);
-                ServerImageAssetService.SyncResult imageSync =
-                        ServerImageAssetService.synchronize(local);
                 ignored.heartbeat();
                 int pushed;
                 int downloadedEvents = 0;
@@ -134,16 +132,28 @@ public final class SyncWorker {
                             "Supabase Server Key and Store Location ID are required for cloud synchronization.");
                 }
                 try {
-                    CloudSyncManifest.fetch();
+                    CloudSyncManifest.verifySchemaReady();
                 } catch (java.io.IOException ex) {
                     throw new SQLException(
-                            "Cloud schema v1 could not be verified; synchronization is disabled.", ex);
+                            "Cloud schema v1 could not be verified: " + ex.getMessage(), ex);
                 }
+                StoreRoleRecoveryService.repairIfNeeded(local, config.locationId());
+                StoreCatalogRecoveryService.repairIfNeeded(local, config.locationId());
+                CrossStoreTransferSyncService.announcePending(local,config.locationId());
+                CrossStoreReferenceSyncService.announceChanges(local,config.locationId());
+                // Deliver operational changes before supplementary image, recovery,
+                // and cache work so their failures cannot prevent event delivery.
+                CloudSyncApi.ExchangeResult exchange =
+                        CloudSyncApi.exchange(local, config.locationId());
+                CrossStoreTransferSyncService.applyInbox(local,config.locationId());
+                CrossStoreReferenceSyncService.applyInbox(local,config.locationId());
+                ignored.heartbeat();
+                ServerImageAssetService.SyncResult imageSync =
+                        ServerImageAssetService.synchronize(local);
+                ServerImageAssetService.synchronizeSharedOneDriveIdentifiers(local);
                 CloudRowMirrorService.MirrorResult mirror =
                         CloudRowMirrorService.synchronize(local, config.locationId());
                 mirroredRows = mirror.uploaded();
-                CrossStoreTransferSyncService.announcePending(local,config.locationId());
-                CrossStoreReferenceSyncService.announceChanges(local,config.locationId());
                 try {
                     RegisterTransferService.synchronizeCompleted(local,config.locationId());
                 } catch (SQLException registerTransferFailure) {
@@ -153,22 +163,18 @@ public final class SyncWorker {
                             + registerTransferFailure.getMessage());
                 }
                 ignored.heartbeat();
-                CrossStoreInventoryService.RefreshResult crossStore =
-                        CrossStoreInventoryService.refreshAll(local, config.locationId());
-                ignored.heartbeat();
-                CrossStoreSalesService.RefreshResult crossStoreSales =
-                        CrossStoreSalesService.refreshAll(local, config.locationId());
-                ignored.heartbeat();
-                CrossStoreCustomerHistoryService.RefreshResult customerHistory =
-                        CrossStoreCustomerHistoryService.refreshAll(local, config.locationId());
+                CrossStoreRefreshCoordinator.Result cache =
+                        CrossStoreRefreshCoordinator.requestRefresh();
+                CrossStoreInventoryService.RefreshResult crossStore = new CrossStoreInventoryService.RefreshResult(
+                        cache.stores(),cache.inventoryRows(),cache.failures());
+                CrossStoreSalesService.RefreshResult crossStoreSales = new CrossStoreSalesService.RefreshResult(
+                        cache.stores(),cache.salesRows(),cache.failures());
+                CrossStoreCustomerHistoryService.RefreshResult customerHistory = new CrossStoreCustomerHistoryService.RefreshResult(
+                        cache.stores(),cache.historyRows(),cache.failures());
                 ignored.heartbeat();
                 CrossStoreRefundService.QueueResult crossStoreRefunds =
                         CrossStoreRefundService.synchronize(local,config.locationId());
                 ignored.heartbeat();
-                CloudSyncApi.ExchangeResult exchange =
-                        CloudSyncApi.exchange(local, config.locationId());
-                CrossStoreTransferSyncService.applyInbox(local,config.locationId());
-                CrossStoreReferenceSyncService.applyInbox(local);
                 pushed = mirror.uploaded() + exchange.acknowledged();
                 downloadedEvents = exchange.downloaded();
                 ImageCacheWarmupService.warmLocalCache(local);

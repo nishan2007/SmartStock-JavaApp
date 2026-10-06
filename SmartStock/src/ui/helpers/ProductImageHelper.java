@@ -9,6 +9,8 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 public final class ProductImageHelper {
     private static final String PRODUCT_IMAGE_BUCKET = getConfig("PRODUCT_IMAGE_BUCKET", "Product Images");
@@ -59,6 +61,13 @@ public final class ProductImageHelper {
         return uploadProductImage(imageFile,naming,category);
     }
 
+    public static List<String> uploadAdditionalImages(List<String> images, ProductImageNaming naming,
+                                                       String category) throws Exception {
+        List<String> uploaded = new ArrayList<>();
+        for (String image : images) uploaded.add(uploadLocalImageIfNeeded(image, naming, category));
+        return List.copyOf(uploaded);
+    }
+
     public static void setPreviewImage(JLabel label, String imageUrl, int width, int height) {
         if (imageUrl == null || imageUrl.isBlank()) {
             label.setIcon(null);
@@ -107,6 +116,8 @@ public final class ProductImageHelper {
         private final Component parent;
         private final JTextField imageUrlField;
         private final JLabel previewLabel;
+        private final List<String> additionalImages = new ArrayList<>();
+        private final JButton galleryButton = new JButton("Photos (0)...");
 
         private ImageSelector(Component parent, boolean simplePresentation) {
             super(new BorderLayout(8, 8));
@@ -115,6 +126,7 @@ public final class ProductImageHelper {
 
             previewLabel = createImagePreview("", 150, 110);
             imageUrlField = new JTextField();
+            galleryButton.addActionListener(e -> manageGallery());
 
             if (simplePresentation) {
                 buildSimplePresentation();
@@ -134,6 +146,7 @@ public final class ProductImageHelper {
             buttonPanel.add(browseButton);
             buttonPanel.add(previewButton);
             buttonPanel.add(clearButton);
+            buttonPanel.add(galleryButton);
             fieldPanel.add(buttonPanel, BorderLayout.SOUTH);
 
             JPanel wrapper = new JPanel(new BorderLayout(8, 8));
@@ -163,6 +176,7 @@ public final class ProductImageHelper {
             buttonPanel.add(chooseButton);
             buttonPanel.add(urlButton);
             buttonPanel.add(removeButton);
+            buttonPanel.add(galleryButton);
 
             JPanel actionsPanel = new JPanel(new BorderLayout(0, 10));
             actionsPanel.setOpaque(false);
@@ -179,6 +193,14 @@ public final class ProductImageHelper {
 
         public String getImageUrl() {
             return imageUrlField.getText().trim();
+        }
+
+        public List<String> getAdditionalImageUrls() { return List.copyOf(additionalImages); }
+
+        public void setAdditionalImageUrls(List<String> images) {
+            additionalImages.clear();
+            if (images != null) additionalImages.addAll(images);
+            galleryButton.setText("Photos (" + additionalImages.size() + ")...");
         }
 
         public void setImageUrl(String imageUrl) {
@@ -216,6 +238,60 @@ public final class ProductImageHelper {
             }
         }
 
+        private void manageGallery() {
+            final String[] primary = { getImageUrl() };
+            DefaultListModel<String> model = new DefaultListModel<>();
+            additionalImages.forEach(model::addElement);
+            JList<String> list = new JList<>(model);
+            list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            JLabel preview = createImagePreview("", 220, 160);
+            list.addListSelectionListener(e -> {
+                if (!e.getValueIsAdjusting()) setPreviewImage(preview, list.getSelectedValue(), 220, 160);
+            });
+            JButton addFile = new JButton("Add files");
+            JButton addUrl = new JButton("Add URL");
+            JButton remove = new JButton("Remove");
+            JButton makePrimary = new JButton("Make primary");
+            JButton up = new JButton("Move up");
+            JButton down = new JButton("Move down");
+            addFile.addActionListener(e -> {
+                JFileChooser chooser = new JFileChooser();
+                chooser.setMultiSelectionEnabled(true);
+                chooser.setFileFilter(new FileNameExtensionFilter("Image files", "png", "jpg", "jpeg", "gif", "bmp", "webp"));
+                if (chooser.showOpenDialog(parent) == JFileChooser.APPROVE_OPTION)
+                    for (File file : chooser.getSelectedFiles()) if (model.size() < 20) model.addElement(file.getAbsolutePath());
+            });
+            addUrl.addActionListener(e -> {
+                String url = JOptionPane.showInputDialog(parent, "Image URL:");
+                if (url != null && !url.isBlank() && model.size() < 20) model.addElement(url.trim());
+            });
+            remove.addActionListener(e -> { int i=list.getSelectedIndex(); if(i>=0) model.remove(i); });
+            makePrimary.addActionListener(e -> {
+                int i=list.getSelectedIndex();
+                if(i<0)return;
+                String previous=primary[0],selected=model.remove(i);
+                if(!previous.isBlank())model.add(0,previous);
+                primary[0]=selected;
+                list.setSelectedIndex(Math.min(i,model.size()-1));
+            });
+            up.addActionListener(e -> { int i=list.getSelectedIndex(); if(i>0){String value=model.remove(i);model.add(i-1,value);list.setSelectedIndex(i-1);} });
+            down.addActionListener(e -> { int i=list.getSelectedIndex(); if(i>=0&&i<model.size()-1){String value=model.remove(i);model.add(i+1,value);list.setSelectedIndex(i+1);} });
+            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            for (JButton button : new JButton[]{addFile,addUrl,remove,makePrimary,up,down}) buttons.add(button);
+            JPanel panel = new JPanel(new BorderLayout(8,8));
+            panel.add(new JScrollPane(list), BorderLayout.CENTER);
+            panel.add(preview, BorderLayout.EAST);
+            panel.add(buttons, BorderLayout.SOUTH);
+            panel.setPreferredSize(new Dimension(680,320));
+            if (JOptionPane.showConfirmDialog(parent,panel,"Additional photos",JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
+                List<String> values = new ArrayList<>();
+                for(int i=0;i<model.size();i++) values.add(model.get(i));
+                setImageUrl(primary[0]);
+                setAdditionalImageUrls(values);
+            }
+        }
+
         private java.util.List<Component> getAllChildren(Container container) {
             java.util.List<Component> children = new java.util.ArrayList<>();
             for (Component child : container.getComponents()) {
@@ -241,7 +317,7 @@ public final class ProductImageHelper {
         )) {
             ProductImageNaming safeNaming = naming == null ? ProductImageNaming.empty() : naming;
             String filename = StorageObjectNameBuilder.productImageFilename(
-                    optimizedImage.filename(), Long.toString(System.currentTimeMillis()),
+                    optimizedImage.filename(), StorageObjectNameBuilder.newProductImageToken(),
                     safeNaming.productName(), safeNaming.brand(), safeNaming.type(), safeNaming.size(),
                     safeNaming.variantName());
             String objectPath = "products/" + filename;

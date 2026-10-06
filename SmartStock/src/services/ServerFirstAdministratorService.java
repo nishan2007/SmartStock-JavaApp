@@ -7,6 +7,12 @@ import data.EnvironmentProfile;
 import utils.SecureCredentialStore;
 
 import java.io.InputStream;
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.Date;
@@ -17,6 +23,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
@@ -27,6 +35,8 @@ import java.util.UUID;
  * SmartStock tables, and the store server's local database.
  */
 public final class ServerFirstAdministratorService {
+    private static final HttpClient AUTH_HTTP = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15)).build();
     private ServerFirstAdministratorService() {
     }
 
@@ -66,19 +76,24 @@ public final class ServerFirstAdministratorService {
     }
 
     static boolean isComplete(Connection connection) throws SQLException {
+        Integer locationId = data.DatabaseConfig.load().locationId();
+        if (locationId == null) return false;
         try (PreparedStatement statement = connection.prepareStatement("""
                 SELECT EXISTS (
                     SELECT 1
                     FROM users u
                     JOIN roles r ON r.role_id=u.role_id
                     JOIN user_locations ul ON ul.user_id=u.user_id
-                    WHERE COALESCE(u.is_active, TRUE)=TRUE
+                    WHERE ul.location_id=?
+                      AND COALESCE(u.is_active, TRUE)=TRUE
                       AND UPPER(r.role_name)='ADMIN'
                       AND u.auth_user_id IS NOT NULL
                 )
-                """);
-             ResultSet rows = statement.executeQuery()) {
-            return rows.next() && rows.getBoolean(1);
+                """)) {
+            statement.setInt(1, locationId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() && rows.getBoolean(1);
+            }
         }
     }
 
@@ -205,6 +220,14 @@ public final class ServerFirstAdministratorService {
                 }
                 authId = pending.authUserId();
             } else {
+                SupabaseServerApi.Response existingUsers = SupabaseServerApi.getTablePage("users", 0, 1);
+                if (!existingUsers.successful()) throw new IOException(SupabaseServerApi.failureMessage(
+                        "Checking existing online administrators", existingUsers));
+                if (!com.google.gson.JsonParser.parseString(existingUsers.body())
+                        .getAsJsonArray().isEmpty()) {
+                    throw new IllegalStateException("This Supabase project already has users. "
+                            + "Use an existing online administrator for this store.");
+                }
                 authId = SupabaseAuthAdminClient.createConfirmedUser(
                         identity.email(), copy.clone(), identity.fullName());
                 savePending(local, identity.email(), authId);
@@ -220,6 +243,131 @@ public final class ServerFirstAdministratorService {
             java.util.Arrays.fill(copy, '\0');
             if (password != null) java.util.Arrays.fill(password, '\0');
         }
+    }
+
+    /** Adds an authenticated, existing cloud ADMIN to this store without creating a second Auth user. */
+    public static BootstrapResult linkExistingOnlineAdministrator(String email, char[] password)
+            throws Exception {
+        String cleanEmail = required(email, "Administrator email").toLowerCase(Locale.ROOT);
+        char[] copy = password == null ? new char[0] : password.clone();
+        try {
+            if (copy.length == 0) throw new IllegalArgumentException("Enter the administrator password.");
+            UUID authId = authenticateExistingUser(cleanEmail, copy);
+            JsonObject cloudUser = cloudUser(authId);
+            if (!cleanEmail.equalsIgnoreCase(text(cloudUser, "email"))) {
+                throw new IllegalStateException("The online account does not match the selected administrator.");
+            }
+            if (!cloudUser.has("is_active") || !cloudUser.get("is_active").getAsBoolean()
+                    || !cloudRoleIsAdmin(cloudUser.get("role_id").getAsInt())) {
+                throw new IllegalStateException("This online account is not an active SmartStock administrator.");
+            }
+            int userId = cloudUser.get("user_id").getAsInt();
+            Identity identity = new Identity(text(cloudUser, "username"), cleanEmail,
+                    text(cloudUser, "full_name"), nullableText(cloudUser, "nickname"),
+                    nullableDate(cloudUser, "date_of_birth"), nullableText(cloudUser, "badge_id"),
+                    nullableText(cloudUser, "badge_secret_salt"),
+                    nullableText(cloudUser, "badge_secret_hash"),
+                    nullableTimestamp(cloudUser, "badge_generated_at"), true);
+            try (Connection local = DB.getConnection()) {
+                ensureSetupState(local);
+                Store store = requireStore(local);
+                PendingAuth pending = pendingAuth(local);
+                if (pending != null && !authId.equals(pending.authUserId())) {
+                    throw new SQLException("A different administrator setup is already pending on this server.");
+                }
+                assignCloudStore(userId, store.locationId());
+                savePending(local, cleanEmail, authId);
+                installLocal(local, userId, authId, identity, store.locationId());
+                markComplete(local, cleanEmail, authId, userId);
+                return new BootstrapResult(userId, authId, true,
+                        "The existing administrator can now access this store with the same login.");
+            }
+        } finally {
+            java.util.Arrays.fill(copy, '\0');
+            if (password != null) java.util.Arrays.fill(password, '\0');
+        }
+    }
+
+    private static UUID authenticateExistingUser(String email, char[] password)
+            throws IOException, InterruptedException {
+        SupabaseProjectConfig project = SupabaseProjectConfig.load();
+        JsonObject body = new JsonObject();
+        body.addProperty("email", email);
+        body.addProperty("password", new String(password));
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(project.url() + "/auth/v1/token?grant_type=password"))
+                .timeout(Duration.ofSeconds(30))
+                .header("apikey", project.publishableKey())
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
+                .build();
+        HttpResponse<String> response = AUTH_HTTP.send(request,
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalArgumentException("The existing administrator login was not accepted.");
+        }
+        JsonObject result = com.google.gson.JsonParser.parseString(response.body()).getAsJsonObject();
+        if (!result.has("user") || !result.get("user").isJsonObject()) {
+            throw new IOException("The administrator login returned no account.");
+        }
+        return UUID.fromString(result.getAsJsonObject("user").get("id").getAsString());
+    }
+
+    private static JsonObject cloudUser(UUID authId) throws Exception {
+        for (int offset = 0; ; offset += 1_000) {
+            SupabaseServerApi.Response response = SupabaseServerApi.getTablePage("users", offset, 1_000);
+            if (!response.successful()) throw new IOException(SupabaseServerApi.failureMessage(
+                    "Loading existing administrator", response));
+            com.google.gson.JsonArray rows = com.google.gson.JsonParser.parseString(
+                    response.body()).getAsJsonArray();
+            for (var row : rows) {
+                JsonObject user = row.getAsJsonObject();
+                if (authId.toString().equalsIgnoreCase(text(user, "auth_user_id"))) return user;
+            }
+            if (rows.size() < 1_000) break;
+        }
+        throw new IllegalStateException("This online account is not a SmartStock administrator.");
+    }
+
+    private static boolean cloudRoleIsAdmin(int roleId) throws Exception {
+        SupabaseServerApi.Response response = SupabaseServerApi.getTablePage("roles", 0, 1_000);
+        if (!response.successful()) throw new IOException(SupabaseServerApi.failureMessage(
+                "Checking administrator role", response));
+        for (var row : com.google.gson.JsonParser.parseString(response.body()).getAsJsonArray()) {
+            JsonObject role = row.getAsJsonObject();
+            if (role.get("role_id").getAsInt() == roleId
+                    && "ADMIN".equalsIgnoreCase(text(role, "role_name"))) return true;
+        }
+        return false;
+    }
+
+    private static void assignCloudStore(int userId, int locationId) throws Exception {
+        JsonObject assignment = new JsonObject();
+        assignment.addProperty("user_id", userId);
+        assignment.addProperty("location_id", locationId);
+        SupabaseServerApi.Response response = SupabaseServerApi.insertIgnoreDuplicates(
+                "user_locations", assignment, "user_id,location_id");
+        if (!response.successful()) throw new IOException(SupabaseServerApi.failureMessage(
+                "Assigning existing administrator to this store", response));
+    }
+
+    private static String text(JsonObject row, String field) {
+        return nullableText(row, field) == null ? "" : nullableText(row, field);
+    }
+
+    private static String nullableText(JsonObject row, String field) {
+        return !row.has(field) || row.get(field).isJsonNull()
+                ? null : row.get(field).getAsString();
+    }
+
+    private static Date nullableDate(JsonObject row, String field) {
+        String value = nullableText(row, field);
+        return value == null ? null : Date.valueOf(value);
+    }
+
+    private static Timestamp nullableTimestamp(JsonObject row, String field) {
+        String value = nullableText(row, field);
+        return value == null ? null : Timestamp.from(Instant.parse(value));
     }
 
     private static int bootstrapCloud(Identity identity, UUID authId, Store store)
@@ -298,6 +446,14 @@ public final class ServerFirstAdministratorService {
                             SELECT setval(pg_get_serial_sequence('users','user_id'),
                                 GREATEST((SELECT COALESCE(MAX(user_id),1) FROM users),1), true)
                             """);
+                }
+            } else {
+                try (PreparedStatement statement = connection.prepareStatement("""
+                        UPDATE users SET role_id=?, is_active=TRUE WHERE user_id=?
+                        """)) {
+                    statement.setInt(1, adminRole(connection));
+                    statement.setInt(2, userId);
+                    statement.executeUpdate();
                 }
             }
             try (PreparedStatement statement = connection.prepareStatement("""

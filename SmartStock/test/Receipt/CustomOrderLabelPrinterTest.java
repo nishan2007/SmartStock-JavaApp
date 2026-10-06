@@ -102,6 +102,31 @@ class CustomOrderLabelPrinterTest {
         assertEquals(3, occurrences(bytes, new byte[]{0x1D, 0x56, 0x42, 0x00}));
     }
 
+    @Test
+    void sendsAllLabelCopiesDirectlyToEthernetWithoutAPrinterQueue() throws Exception {
+        var data = sample("CO-12", "Customer", null);
+        try (var server = new java.net.ServerSocket(0)) {
+            server.setSoTimeout(3000);
+            var received = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try (var socket = server.accept()) {
+                    socket.setSoTimeout(3000);
+                    return socket.getInputStream().readAllBytes();
+                } catch (Exception ex) { throw new RuntimeException(ex); }
+            });
+            CustomOrderLabelPrinter.printToEthernet(data, 3,
+                    new managers.HardwareSettingsManager.NativeEthernetPrinterSettings(true, "127.0.0.1", server.getLocalPort(), 2000));
+            org.junit.jupiter.api.Assertions.assertArrayEquals(CustomOrderLabelPrinter.formatEscPosReceiptLabels(data, 3),
+                    received.get(4, java.util.concurrent.TimeUnit.SECONDS));
+        }
+    }
+
+    @Test
+    void refusesDisabledEthernetInsteadOfPrintingElsewhere() {
+        assertThrows(javax.print.PrintException.class, () -> CustomOrderLabelPrinter.printToEthernet(
+                sample("CO-12", "Customer", null), 1,
+                managers.HardwareSettingsManager.NativeEthernetPrinterSettings.defaults()));
+    }
+
     private static int occurrences(byte[] content, byte[] needle) {
         int count = 0;
         for (int i = 0; i <= content.length - needle.length; i++) {

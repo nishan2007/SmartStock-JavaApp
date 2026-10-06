@@ -10,10 +10,10 @@ public final class RemoteAdminPolicy {
     private static final Set<String> BLOCKED_PREFIXES = Set.of(
             "/v1/cash/", "/v1/cash-drawers/", "/v1/held-carts/",
             "/v1/time-clock/punch", "/v1/employees/badge-",
-            "/v1/workstation/", "/v1/sync/run", "/v1/sync/resolve"
+            "/v1/workstation/", "/v1/sync/run", "/v1/sync/resolve", "/v1/sync/billing-period"
     );
     private static final Set<String> BLOCKED_EXACT = Set.of(
-            "/v1/sales/checkout", "/v1/sales/refund", "/v1/inventory/receive",
+            "/v1/web/mutation", "/v1/storefront/mutation", "/v1/sales/checkout", "/v1/sales/refund", "/v1/inventory/receive",
             "/v1/transfers/receive", "/v1/cloud/storage/upload"
     );
     private static final Set<String> OFFLINE_SAFE_PREFIXES = Set.of(
@@ -42,6 +42,7 @@ public final class RemoteAdminPolicy {
 
     public static boolean isMutation(String path) {
         if (path == null) return false;
+        if(path.equals("/v1/sync/billing-period"))return true;
         return path.endsWith("/update") || path.endsWith("/save") || path.endsWith("/create")
                 || path.endsWith("/assign") || path.endsWith("/unassign") || path.endsWith("/adjust")
                 || path.endsWith("/add") || path.endsWith("/delete") || path.endsWith("/deactivate")

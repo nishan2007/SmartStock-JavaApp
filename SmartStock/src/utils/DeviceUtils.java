@@ -59,7 +59,8 @@ public class DeviceUtils {
     }
 
     private static String getOrCreateInstallationId() {
-        Preferences prefs = Preferences.userRoot().node(PREF_NODE);
+        // Companion apps on one computer must enroll independently of the register.
+        Preferences prefs = Preferences.userRoot().node(installationPreferenceNode());
         String installationId = prefs.get(PREF_INSTALLATION_ID, null);
 
         if (installationId == null || installationId.isBlank()) {
@@ -68,6 +69,10 @@ public class DeviceUtils {
         }
 
         return installationId;
+    }
+
+    public static String installationPreferenceNode() {
+        return "smartstudio".equals(System.getProperty("smartstock.client.application")) ? "smartstudio" : PREF_NODE;
     }
 
     private static String getHostName() {

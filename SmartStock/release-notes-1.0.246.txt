@@ -1,0 +1,1 @@
+Fixes Rosehall catalog recovery JSON conversion, including product-group barcode arrays and product photo galleries. Preserves transaction rollback and collision safeguards.

@@ -35,7 +35,11 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     final DatePickerField dueDateField;
     final JTextArea orderNotesArea;
     final JTextField itemLookupField;
+    private CustomOrderItemSearch itemSearch;
     final JComboBox<CustomItemOption> orderItemBox;
+    final JButton customerItemButton = new JButton("Customer Item");
+    final JButton editCustomerItemButton = new JButton("Edit Details");
+    final JLabel customerItemSummary = new JLabel(" ");
     final JComboBox<VariantOption> variantBox;
     final JTextField linePriceField;
     final JLabel priceRateUnitLabel;
@@ -62,6 +66,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     final DefaultTableModel orderLineModel;
     final JTable orderLineTable;
     final JButton addLineButton;
+    final JButton cancelLineEditButton = new JButton("Cancel Edit");
+    final JLabel fileSummaryLabel = new JLabel("No files attached.");
     final JLabel lineCountLabel;
     final JLabel orderTotalLabel;
     final JLabel minimumDepositLabel;
@@ -143,7 +149,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         orderTotalLabel = summaryTile("Order Total", "$0", ACCENT);
         minimumDepositLabel = summaryTile("Minimum Deposit", "$0", AMBER);
 
-        orderLineModel = new DefaultTableModel(new Object[]{"Item ID", "Variant ID", "Item", "Size / Variant", "Pricing", "Total", "Details", "Notes", "Width", "Length", "Dimension Unit", "Area", "Area Unit", "Area Price", "Print Material ID", "Print Material", "Print Preset ID", "Print Size", "Print Charge", "Base Price", "Print Lines", "Print Add Ons", "Print Add On Data", "Original Total", "Discount %", "Discount Amount", "Discount Reason", "Min Deposit %", "Original Base Price", "Override Price", "Override Reason"}, 0) {
+        orderLineModel = new DefaultTableModel(new Object[]{"Item ID", "Variant ID", "Item", "Size / Variant", "Pricing", "Total", "Details", "Notes", "Width", "Length", "Dimension Unit", "Area", "Area Unit", "Area Price", "Print Material ID", "Print Material", "Print Preset ID", "Print Size", "Print Charge", "Base Price", "Print Lines", "Print Add Ons", "Print Add On Data", "Original Total", "Discount %", "Discount Amount", "Discount Reason", "Min Deposit %", "Original Base Price", "Override Price", "Override Reason", "Files"}, 0) {
             @Override public boolean isCellEditable(int row, int column) { return false; }
         };
         orderLineTable = new JTable(orderLineModel);
@@ -235,7 +241,26 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         topFields.setOpaque(false);
         GridBagConstraints topGbc = formGbc();
         addField(topFields, topGbc, 0, "Search / Scan:", buildLookupPanel(itemLookupButton));
-        addField(topFields, topGbc, 1, "Item:", orderItemBox);
+        JPanel itemSelection = new JPanel(new BorderLayout(8, 0));
+        itemSelection.setOpaque(false);
+        itemSelection.add(orderItemBox, BorderLayout.CENTER);
+        JPanel customerActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        customerActions.setOpaque(false);
+        styleButton(customerItemButton, ACCENT_DARK);
+        styleButton(editCustomerItemButton, ACCENT_DARK);
+        JButton manual = new JButton("Manual Item...");
+        styleButton(manual, ACCENT_DARK);
+        manual.setVisible(managers.PermissionManager.hasPermission("MANUAL_CUSTOM_ORDER_ENTRY"));
+        manual.addActionListener(e -> handler.manualEntry(false));
+        customerActions.add(manual);
+        customerActions.add(customerItemButton);
+        customerActions.add(editCustomerItemButton);
+        editCustomerItemButton.setVisible(false);
+        customerItemButton.addActionListener(e -> handler.customerItem());
+        editCustomerItemButton.addActionListener(e -> handler.customerItem());
+        itemSelection.add(customerActions, BorderLayout.EAST);
+        itemSelection.add(customerItemSummary, BorderLayout.SOUTH);
+        addField(topFields, topGbc, 1, "Item:", itemSelection);
         addField(topFields, topGbc, 2, "Variant:", variantBox);
 
         addField(leftColumn, leftGbc, 0, "Price / Rate:", buildPriceRatePanel());
@@ -256,7 +281,24 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         JPanel lineButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         lineButtons.setOpaque(false);
         lineButtons.add(printSheetButton);
+
+        JButton attachFilesButton = new JButton("Attach Files...");
+        styleButton(attachFilesButton, PANEL_ALT);
+        lineButtons.add(attachFilesButton);
+        lineButtons.add(fileSummaryLabel);
         lineButtons.add(addLineButton);
+        JButton editLineButton = new JButton("Edit Line");
+        styleButton(editLineButton, PANEL_ALT);
+        lineButtons.add(editLineButton);
+        editLineButton.addActionListener(e -> handler.editOrderLine());
+        styleButton(cancelLineEditButton, PANEL_ALT);
+        cancelLineEditButton.setVisible(false);
+        lineButtons.add(cancelLineEditButton);
+        cancelLineEditButton.addActionListener(e -> handler.cancelLineEdit());
+        JButton editFilesButton = new JButton("Edit Cart Files...");
+        styleButton(editFilesButton, PANEL_ALT);
+        lineButtons.add(editFilesButton);
+        editFilesButton.addActionListener(e -> handler.editLineFiles());
         lineButtons.add(discountButton);
         lineButtons.add(removeLineButton);
         JLabel quantityNote = new JLabel("Each quantity is added as a separate line.");
@@ -324,6 +366,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         addPlacementButton.addActionListener(e -> handler.addPlacement());
         printSheetButton.addActionListener(e -> openPrintAddonSheet(handler));
         addLineButton.addActionListener(e -> handler.addOrderLine());
+        attachFilesButton.addActionListener(e -> handler.selectLineFiles());
         discountButton.addActionListener(e -> handler.editLineDiscount());
         removeLineButton.addActionListener(e -> handler.removeOrderLine());
         return panel;
@@ -481,8 +524,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
 
     private void wire(Handler handler, JButton itemLookupButton) {
         orderItemBox.addActionListener(e -> handler.orderItemChanged());
-        itemLookupField.addActionListener(e -> handler.orderLookup());
-        itemLookupButton.addActionListener(e -> handler.orderLookup());
+        itemSearch = new CustomOrderItemSearch(itemLookupField, handler::orderItemSelected, handler::orderLookup);
+        itemLookupButton.addActionListener(e -> itemSearch.lookup());
         variantBox.addActionListener(e -> handler.variantChanged());
         printMaterialBox.addActionListener(e -> handler.printMaterialChanged());
         printSizePresetBox.addActionListener(e -> handler.printPresetChanged());
@@ -575,6 +618,11 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         addTrackedField(printAddOnComponents, form, gbc, 4, "Description:", printDescriptionField);
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         buttons.setOpaque(false);
+        JButton manual = new JButton("Manual Add-on...");
+        styleButton(manual, TEAL);
+        manual.setVisible(managers.PermissionManager.hasPermission("MANUAL_CUSTOM_ORDER_ENTRY"));
+        manual.addActionListener(e -> handler.manualEntry(true));
+        buttons.add(manual);
         buttons.add(addPrintAddonButton);
         buttons.add(removePrintAddonButton);
         JPanel addOnsPanel = buildPrintAddonsPanel(buttons);
@@ -872,9 +920,20 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         };
     }
 
+    void setEditingLine(boolean editing) {
+        addLineButton.setText(editing ? "Update Line" : "Add Line");
+        cancelLineEditButton.setVisible(editing);
+        lineQuantityField.setEnabled(!editing);
+        lineQuantityField.setText("1");
+    }
     interface Handler {
+        default void editOrderLine() { }
+        default void cancelLineEdit() { }
+        default void customerItem() { }
+        default void manualEntry(boolean addon) { }
         void orderItemChanged();
         void orderLookup();
+        default void orderItemSelected(services.CustomOrderDataService.ItemSearchOption option) { }
         void variantChanged();
         void printMaterialChanged();
         void printPresetChanged();
@@ -892,6 +951,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         boolean canLeaveStep(int step);
         void enterStep(int step);
         void saveOrder(boolean printOrderSlip);
+        default void selectLineFiles() { }
+        default void editLineFiles() { }
         void clearOrder();
     }
 }

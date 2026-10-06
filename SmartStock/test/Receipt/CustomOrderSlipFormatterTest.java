@@ -77,6 +77,43 @@ class CustomOrderSlipFormatterTest {
                 "40-column output must include separate ESC/POS raster commands for the logo and order barcode");
     }
 
+
+    @Test
+    void signaturesAreIndependentAndCustomerSignsAfterDisclosure() {
+        var receipt = new CompanyCustomizationManager.ReceiptSettings("Deckers", "", "", "", "", "", "", "",
+                "", "", "", "", "", false, true, true, true, true, true, true,
+                false, false, BigDecimal.ZERO, 1, BigDecimal.ZERO, false,
+                CompanyCustomizationManager.AccountPaymentReceiptSettings.defaults());
+        for (boolean team : new boolean[]{false, true}) {
+            for (boolean customer : new boolean[]{false, true}) {
+                var settings = new CompanyCustomizationManager.CustomOrderSlipSettings(true, false,
+                        "ORDER SLIP", "", "", "Disclosure note", 0, false, true, true, true, true,
+                        true, true, true, true, true, true, false, false, true, team, customer);
+                String text = CustomOrderSlipFormatter.format40Column(sampleData(), receipt, settings);
+                org.junit.jupiter.api.Assertions.assertEquals(team, text.contains("TEAM MEMBER SIGNATURE:"));
+                org.junit.jupiter.api.Assertions.assertEquals(customer, text.contains("CUSTOMER SIGNATURE:"));
+                if (team) assertTrue(text.indexOf("TEAM MEMBER SIGNATURE:") < text.indexOf("Disclosure note"));
+                if (customer) assertTrue(text.indexOf("Disclosure note") < text.indexOf("CUSTOMER SIGNATURE:"));
+                var restored = new com.google.gson.Gson().fromJson(
+                        new com.google.gson.Gson().toJson(settings),
+                        CompanyCustomizationManager.CustomOrderSlipSettings.class);
+                org.junit.jupiter.api.Assertions.assertEquals(team, restored.showTeamMemberSignature());
+                org.junit.jupiter.api.Assertions.assertEquals(customer, restored.showCustomerSignature());
+            }
+        }
+    }
+
+    @Test
+    void legacySignaturePreferenceAppliesToBothControls() {
+        for (boolean enabled : new boolean[]{false, true}) {
+            var settings = new com.google.gson.Gson().fromJson(
+                    "{\"showSignatures\":" + enabled + "}",
+                    CompanyCustomizationManager.CustomOrderSlipSettings.class);
+            org.junit.jupiter.api.Assertions.assertEquals(enabled, settings.showTeamMemberSignature());
+            org.junit.jupiter.api.Assertions.assertEquals(enabled, settings.showCustomerSignature());
+        }
+    }
+
     private static CustomOrderSlipData sampleData() {
         return new CustomOrderSlipData("CO-001", "Alex Customer", "", "", null,
                 Timestamp.from(Instant.parse("2026-05-22T12:00:00Z")), "Cashier", "Main Store", "POS-01",

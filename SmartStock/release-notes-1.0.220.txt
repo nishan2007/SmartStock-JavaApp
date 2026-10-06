@@ -1,0 +1,8 @@
+SmartStock 1.0.220 for Windows
+
+- Adds the packaged Deckers storefront with product browsing, a top-navigation department dropdown, cart, and pickup-order integration.
+- Uses saved company branding and the Deckers palette, with featured products on the home page.
+- Adds Status > Website Status for server health and permission-controlled online ordering settings.
+- Includes current catalog photo gallery and price-tag workflow improvements.
+
+Website activation requires separate server credentials, Cloudflare gateway/domain setup, and deployment verification. This application update does not activate www.deckers.gy. Keep online ordering disabled until real account/email, installed-service restart, and multi-server failover checks pass. Automated tests do not establish those live checks.

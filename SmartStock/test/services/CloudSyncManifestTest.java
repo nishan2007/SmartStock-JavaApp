@@ -39,4 +39,13 @@ class CloudSyncManifestTest {
 
         assertTrue(failure.getMessage().contains("completed store snapshot"));
     }
+
+    @Test
+    void parsesLightweightSchemaStatusWithoutRecoveryCounts() throws Exception {
+        CloudSyncManifest status = CloudSyncManifest.parse(
+                "{\"schema_version\":1,\"schema_ready\":true}");
+        assertTrue(status.schemaReady());
+        assertEquals(1, status.schemaVersion());
+        assertTrue(status.tables().isEmpty());
+    }
 }

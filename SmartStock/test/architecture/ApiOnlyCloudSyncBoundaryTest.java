@@ -15,6 +15,17 @@ class ApiOnlyCloudSyncBoundaryTest {
     private static final Path ROOT = Path.of(System.getProperty("user.dir"));
 
     @Test
+    void operationalEventsAreDeliveredBeforeSupplementaryRecoveryAndCaches() throws Exception {
+        String worker = source("src/services/SyncWorker.java");
+        int exchange = worker.indexOf("CloudSyncApi.exchange(local");
+        int apply = worker.indexOf("CrossStoreReferenceSyncService.applyInbox(local");
+        assertTrue(exchange >= 0 && apply > exchange);
+        for (String supplementary : List.of("ServerImageAssetService.synchronize(local)",
+                "CloudRowMirrorService.synchronize(local", "CrossStoreRefreshCoordinator.requestRefresh(")) {
+            assertTrue(worker.indexOf(supplementary) > apply, supplementary);
+        }
+    }
+    @Test
     void canonicalBaselinesReplaceCompatibilitySchemas() throws Exception {
         String local = source("database/v1/local/001_schema.sql");
         String cloud = source("database/v1/cloud/001_schema.sql");
@@ -36,6 +47,8 @@ class ApiOnlyCloudSyncBoundaryTest {
     void productionRuntimePathsDoNotOpenCloudJdbcConnections() throws Exception {
         for (String relative : List.of(
                 "src/services/SyncWorker.java",
+                "src/services/CrossStoreRefreshCoordinator.java",
+                "src/services/CrossStoreDelta.java",
                 "src/services/StoreHydrationService.java",
                 "src/app/ProductionReadinessMain.java",
                 "src/app/ProductionRecoveryDrillMain.java",
@@ -68,7 +81,7 @@ class ApiOnlyCloudSyncBoundaryTest {
         assertTrue(mirror.contains("clean.contains(\"password\")"));
         assertTrue(mirror.contains("clean.contains(\"_pin_\")"));
         assertTrue(mirror.contains("clean.contains(\"secret\")"));
-        assertTrue(worker.indexOf("CloudSyncManifest.fetch()")
+        assertTrue(worker.indexOf("CloudSyncManifest.verifySchemaReady()")
                 < worker.indexOf("CloudRowMirrorService.synchronize"));
     }
 

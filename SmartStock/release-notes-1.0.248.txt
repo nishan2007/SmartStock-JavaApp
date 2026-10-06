@@ -1,0 +1,5 @@
+Quotation and invoice slips now show Original Total (quantity x unit price) before discount and final amount. The description column is wider for longer item names.
+
+Subtotal and Grand Total are stacked at the bottom. Subtotal adds the final line amounts with cents; Grand Total rounds to the nearest whole currency unit for cash display. For example, subtotal 279,000.11 displays a grand total of 279,000. Stored invoice amounts, payments, and balances retain their existing precision.
+
+Includes the application changes already shipped in 1.0.247.

@@ -32,6 +32,9 @@ class PostgresRuntimeServiceTest {
         assertTrue(source.contains("PostgreSQL package installation completed"));
         assertTrue(source.contains("superpassword="));
         assertTrue(source.contains("--optionfile"));
+        assertTrue(source.contains("('\"{0}\"' -f $OptionFile)"));
+        assertTrue(source.contains("--debugtrace"));
+        assertTrue(source.contains("Installer details: $InstallerTrace"));
         assertTrue(source.contains("ProtectedData]::Protect"));
         assertTrue(source.contains("DataProtectionScope]::LocalMachine"));
         assertTrue(source.contains("'machine:'"));
@@ -60,9 +63,11 @@ class PostgresRuntimeServiceTest {
         Path windowsAppDir = Path.of("C:\\Users\\test\\.smartstock\\sync-service\\app");
         String windowsLauncher = PostgresRuntimeService.installedSyncLauncherContent(
                 true, windowsAppDir, "inventory-management-1.0.11.jar");
-        assertTrue(windowsLauncher.startsWith("@echo off\r\ncd /d \"" + windowsAppDir + "\"\r\n\""));
-        assertTrue(windowsLauncher.contains("\\bin\\java.exe\" -jar \"inventory-management-1.0.11.jar\" --sync-service"));
-        assertTrue(windowsLauncher.endsWith(">> \"C:\\Users\\test\\.smartstock\\sync-service\\sync-service.log\" 2>&1\r\n"));
+        assertTrue(windowsLauncher.startsWith("@echo off\r\nsetlocal\r\ncd /d \"" + windowsAppDir + "\"\r\n"));
+        assertTrue(windowsLauncher.contains("\\bin\\java.exe\" -Duser.home=\"C:\\Users\\test\""));
+        assertTrue(windowsLauncher.contains("%SMARTSTOCK_SERVER_JAR%"));
+        assertTrue(windowsLauncher.contains("sync-service.log"));
+        assertFalse(windowsLauncher.contains("inventory-management-1.0.11.jar"));
     }
 
     @Test
@@ -149,6 +154,8 @@ class PostgresRuntimeServiceTest {
 
         assertEquals(jar.toAbsolutePath().normalize(),
                 PostgresRuntimeService.findPackagedJar(installedRoot));
+        assertEquals(installedRoot.resolve("postgresql-installer.exe"),
+                PostgresRuntimeService.bundledPostgresInstaller(jar));
     }
 
     @Test
@@ -161,7 +168,9 @@ class PostgresRuntimeServiceTest {
         assertTrue(service.contains("Get-CimInstance Win32_ComputerSystem"));
         assertTrue(service.contains("ProfileImagePath"));
         assertTrue(service.contains("CreateShortcut($serviceShortcut)"));
-        assertTrue(service.contains("New-ScheduledTaskAction -Execute $java"));
+        assertTrue(service.contains("New-ScheduledTaskAction -Execute $serviceExecutable"));
+        assertTrue(service.contains("run-smartstock-sync-service.cmd"));
+        assertTrue(service.contains("Server exited with code"));
         assertTrue(service.contains("-WorkingDirectory $serviceAppDir"));
         assertTrue(service.contains("New-ScheduledTaskTrigger -AtLogOn"));
         assertTrue(service.contains("-Duser.home="));
@@ -234,10 +243,70 @@ class PostgresRuntimeServiceTest {
 
     @Test
     void recognizesRunningAndStoppedWindowsTasks() {
+        assertTrue(PostgresRuntimeService.isSyncServiceInstalled(
+                "TaskName : SmartStockServerService\nState : Ready"));
+        assertTrue(PostgresRuntimeService.isSyncServiceInstalled(
+                "TaskName : SmartStockBackgroundSync\nState : Running"));
+        assertTrue(PostgresRuntimeService.isSyncServiceInstalled(
+                "TaskName: SmartStockServerService\nState: Running"));
+        assertFalse(PostgresRuntimeService.isSyncServiceInstalled(
+                "SmartStock Windows service is not installed."));
         assertTrue(PostgresRuntimeService.isSyncServiceRunning(
                 "TaskName: SmartStockServerService\nState: Running"));
         assertFalse(PostgresRuntimeService.isSyncServiceRunning(
                 "TaskName: SmartStockServerService\nState: Ready"));
+    }
+
+    @Test
+    void firewallVerificationRejectsDisabledAndIncorrectlyScopedRules() throws Exception {
+        if (!System.getProperty("os.name", "").toLowerCase().contains("win")) return;
+        String fixture = """
+                function Get-NetFirewallRule {
+                  param($PolicyStore,$DisplayName,$ErrorAction)
+                  [pscustomobject]@{ Enabled=%s; Direction='Inbound'; Action='Allow'; Profile=%s;
+                    Port=$(if($DisplayName -eq 'SmartStock LAN API 8443'){ '8443' }else{ '18443' });
+                    Protocol=$(if($DisplayName -eq 'SmartStock LAN API 8443'){ 'TCP' }else{ 'UDP' }); Scope=%s }
+                }
+                function Get-NetFirewallPortFilter { process { [pscustomobject]@{Protocol=$_.Protocol;LocalPort=$_.Port} } }
+                function Get-NetFirewallAddressFilter { process { [pscustomobject]@{RemoteAddress=$_.Scope} } }
+                """;
+        String[][] cases = {{"'True'", "'Private'", "'LocalSubnet'", "0"},
+                {"'False'", "'Private'", "'LocalSubnet'", "1"},
+                {"'True'", "'Public'", "'LocalSubnet'", "1"},
+                {"'True'", "'Private'", "'Any'", "1"}};
+        for (String[] scenario : cases) {
+            String script = fixture.formatted(scenario[0], scenario[1], scenario[2])
+                    + "try { " + PostgresRuntimeService.windowsLanFirewallVerification("LocalSubnet")
+                    + "; exit 0 } catch { Write-Output $_; exit 1 }";
+            Process process = new ProcessBuilder("powershell.exe", "-NoProfile", "-Command", script)
+                    .redirectErrorStream(true).start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            assertEquals(Integer.parseInt(scenario[3]), process.waitFor(), output);
+        }
+    }
+
+    @Test
+    void firewallRepairRejectsShellInjectionAndContainsNoBroadProfileRule() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> PostgresRuntimeService.windowsLanFirewallRepairScript("LocalSubnet'; exit 0; #", tempDir.resolve("log")));
+        String script = PostgresRuntimeService.windowsLanFirewallRepairScript("192.168.10.0/24", tempDir.resolve("log"));
+        assertTrue(script.contains("-Profile Private -RemoteAddress $Scope"));
+        assertFalse(script.contains("Set-NetFirewallProfile"));
+        assertFalse(script.contains("-Profile Any"));
+    }
+
+    @Test
+    void windowsLanStartChecksTheListenerAndPreservesInstallationFailures() throws Exception {
+        String source = Files.readString(Path.of("src/services/PostgresRuntimeService.java"));
+        int start = source.indexOf("public static CommandResult startLanService()");
+        String body = source.substring(start, source.indexOf("public static CommandResult startServerProcesses()", start));
+        assertTrue(body.contains("if (!installation.success()) return installation;"));
+        assertTrue(body.contains("ConnectAsync('127.0.0.1', 8443)"));
+        assertTrue(body.contains("LastTaskResult"));
+        assertTrue(body.contains("exit 1"));
+        int hardened = source.indexOf("private static boolean isWindowsTaskActionHardened()");
+        String check = source.substring(hardened, source.indexOf("public static CommandResult installWindowsProductionServer", hardened));
+        assertFalse(check.contains("explorer"));
     }
 
     @Test

@@ -105,6 +105,7 @@ public class AppMenuBar {
         JMenuItem maintenanceManagementItem = new JMenuItem("Maintenance");
         JMenuItem newItemItem = new JMenuItem("New Item");
         JMenuItem editItemItem = new JMenuItem("Edit Item");
+        JMenuItem photoStudioItem = new JMenuItem("Create Product Photos…");
         JMenuItem employeeMgmtItem = new JMenuItem("Employee Management");
         JMenuItem timeClockItem = new JMenuItem("Time Clock");
         JMenuItem sessionTimeClockItem = new JMenuItem("Time Clock");
@@ -448,6 +449,11 @@ public class AppMenuBar {
                 NavigationManager.openEditItem(parent);
             }
         });
+        photoStudioItem.setVisible(canEditItem);
+        photoStudioItem.addActionListener(e -> {
+            if (PermissionManager.requirePermission("EDIT_ITEM", parent, "Create Product Photos"))
+                new ui.screens.CatalogPhotoStudioDialog(parent).setVisible(true);
+        });
 
         ViewSalesItem.addActionListener(new ActionListener() {
              public void actionPerformed(ActionEvent e) {
@@ -685,6 +691,7 @@ public class AppMenuBar {
         inventoryMenu.add(viewInventoryItem);
         inventoryMenu.add(newItemItem);
         inventoryMenu.add(editItemItem);
+        inventoryMenu.add(photoStudioItem);
 
         employeeMenu.add(employeeMgmtItem);
         employeeMenu.add(timeClockItem);
@@ -709,6 +716,7 @@ public class AppMenuBar {
         JMenuItem syncStatusItem = new JMenuItem("Sync Status");
         JMenuItem remoteQueueItem = new JMenuItem("Remote Change Status");
         JMenuItem mobileItemWebItem = new JMenuItem("Mobile Item Web App…");
+        JMenuItem storefrontStatusItem = new JMenuItem("Website Status…");
         JMenuItem schedulerWebItem = new JMenuItem("Scheduler Web App…");
         JMenuItem checkUpdatesItem = new JMenuItem("Check for Updates");
         JMenuItem refreshInventoryItem = new JMenuItem("Refresh Inventory List");
@@ -820,8 +828,15 @@ public class AppMenuBar {
         statusMenu.add(remoteQueueItem);
         statusMenu.add(mobileItemWebItem);
         statusMenu.add(schedulerWebItem);
+        storefrontStatusItem.setVisible(PermissionManager.hasPermission("VIEW_SALES"));
+        storefrontStatusItem.addActionListener(e -> new ui.screens.StorefrontStatusDialog(parent).setVisible(true));
+        statusMenu.add(storefrontStatusItem);
         statusMenu.add(refreshInventoryItem);
         statusMenu.add(checkUpdatesItem);
+        JMenuItem aiModelsItem = new JMenuItem("AI Models");
+        aiModelsItem.setVisible(services.StudioModelService.administrator(SessionManager.getCurrentRole()));
+        aiModelsItem.addActionListener(e -> new ui.screens.AiModelsDialog(parent).setVisible(true));
+        statusMenu.add(aiModelsItem);
 
         sessionMenu.add(changeStoreItem);
         sessionMenu.add(changeEmployeePinItem);

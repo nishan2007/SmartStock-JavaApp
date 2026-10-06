@@ -1,0 +1,8 @@
+SmartStock 1.0.221 for Windows
+
+- Adds an authenticated, local-first product image workflow for catalogue photos.
+- Exports existing product photos, creates consistent white-background previews on the store computer, and provides contact sheets for review.
+- Imports only approved results as additional gallery photos, preserving each original primary photo and avoiding repeat imports.
+- Includes the catalogue studio tool and guide in the application's app\dependency\catalog-studio folder. Python 3.11+, Pillow, rembg, and onnxruntime must be installed separately to process photos locally.
+
+This update does not generate or import catalogue photos automatically. Start with a 20-product pilot and approve each result before import.

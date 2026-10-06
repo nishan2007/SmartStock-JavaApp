@@ -1,0 +1,9 @@
+Register connection and server discovery repair
+
+- Reopening Configure Register Connection now loads the saved HTTPS server address, port, and store instead of displaying defaults.
+- Add Find Network Server to register connection setup, with automatic discovery for an unconfigured address.
+- Preserve manually entered settings while discovery runs and require confirmation before saving a discovered endpoint.
+- Windows server setup now permits UDP discovery on port 18443 within the same private-LAN scope as HTTPS.
+- Existing Windows server installations missing the discovery rule are repaired during normal server setup.
+
+Update both the server and affected registers. Pairing and server certificate verification remain required.

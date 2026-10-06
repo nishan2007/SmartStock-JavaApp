@@ -188,12 +188,20 @@ public final class TimeClockAutoCloseService {
     }
 
     public static int processExpiredOpenPunches(Connection conn) throws SQLException {
+        Integer locationId = data.DatabaseConfig.load().locationId();
+        if (locationId == null || locationId <= 0)
+            throw new SQLException("A store location is required for automatic clock-outs.");
+        return processExpiredOpenPunches(conn, locationId);
+    }
+
+    public static int processExpiredOpenPunches(Connection conn, int locationId) throws SQLException {
+        if (locationId <= 0) throw new SQLException("A valid store location is required.");
         boolean ownsTransaction = conn.getAutoCommit();
         if (ownsTransaction) conn.setAutoCommit(false);
         try {
             ensureSchema(conn);
-            snapshotLegacyOpenPunches(conn);
-            int closed = processDuePunches(conn, Instant.now());
+            snapshotLegacyOpenPunches(conn, locationId);
+            int closed = processDuePunches(conn, Instant.now(), locationId);
             if (ownsTransaction) conn.commit();
             return closed;
         } catch (SQLException | RuntimeException ex) {
@@ -204,7 +212,7 @@ public final class TimeClockAutoCloseService {
         }
     }
 
-    private static int processDuePunches(Connection conn, Instant detectedAt) throws SQLException {
+    private static int processDuePunches(Connection conn, Instant detectedAt, int locationId) throws SQLException {
         List<OpenPunch> due = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT tc.clock_id, tc.user_id,
@@ -222,20 +230,18 @@ public final class TimeClockAutoCloseService {
                 FROM employee_time_clock tc
                 JOIN users u ON u.user_id = tc.user_id
                 LEFT JOIN LATERAL (
-                    SELECT compensation_type, pay_rate
-                    FROM employee_payroll_settings
-                    WHERE user_id = tc.user_id AND effective_from <= tc.work_date
-                    ORDER BY effective_from DESC, updated_at DESC
-                    LIMIT 1
+                """ + EmployeePayrollSettingsService.periodRateSql("tc.user_id", "tc.work_date") + """
                 ) pay ON TRUE
                 LEFT JOIN locations l ON l.location_id = tc.location_id
                 WHERE tc.clock_out IS NULL
+                  AND tc.location_id = ?
                   AND tc.auto_close_enabled_snapshot
                   AND tc.auto_close_detection_at IS NOT NULL
                   AND tc.auto_close_detection_at <= CURRENT_TIMESTAMP
                 ORDER BY tc.auto_close_detection_at, tc.clock_id
-                FOR UPDATE OF tc SKIP LOCKED
+                FOR UPDATE OF u, tc SKIP LOCKED
                 """)) {
+            ps.setInt(1, locationId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     due.add(new OpenPunch(rs.getLong("clock_id"), rs.getInt("user_id"),
@@ -258,15 +264,17 @@ public final class TimeClockAutoCloseService {
         return closed;
     }
 
-    private static void snapshotLegacyOpenPunches(Connection conn) throws SQLException {
+    private static void snapshotLegacyOpenPunches(Connection conn, int locationId) throws SQLException {
         List<LegacyOpenPunch> openPunches = new ArrayList<>();
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT clock_id, user_id, location_id, work_date, clock_in
                 FROM employee_time_clock
                 WHERE clock_out IS NULL AND auto_close_detection_at IS NULL
+                  AND location_id = ?
                 ORDER BY clock_id
                 FOR UPDATE SKIP LOCKED
                 """)) {
+            ps.setInt(1, locationId);
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
                     openPunches.add(new LegacyOpenPunch(rs.getLong("clock_id"), rs.getInt("user_id"),
@@ -392,6 +400,7 @@ public final class TimeClockAutoCloseService {
     public static void confirm(Connection conn, long clockId, String reason,
                                Integer actorUserId, String actorName) throws SQLException {
         ensureSchema(conn);
+                ManualTimeClockService.lockEmployee(conn, userIdForClock(conn, clockId));
                 PunchValues before = lockPunch(conn, clockId);
                 String note = reason == null || reason.isBlank() ? "Automatic clock-out confirmed." : reason.trim();
                 try (PreparedStatement ps = conn.prepareStatement("""
@@ -438,6 +447,7 @@ public final class TimeClockAutoCloseService {
                                 Integer actorUserId, String actorName, boolean requirePendingReview) throws SQLException {
         validateCorrection(correction);
         ensureSchema(conn);
+                ManualTimeClockService.lockEmployee(conn, userIdForClock(conn, clockId));
                 PunchValues before = lockPunch(conn, clockId);
                 int userId = userIdForClock(conn, clockId);
                 String compensationType;
@@ -448,11 +458,7 @@ public final class TimeClockAutoCloseService {
                                COALESCE(pay.pay_rate, u.salary, 0), tc.work_date
                         FROM employee_time_clock tc JOIN users u ON u.user_id = tc.user_id
                         LEFT JOIN LATERAL (
-                            SELECT compensation_type, pay_rate
-                            FROM employee_payroll_settings
-                            WHERE user_id = tc.user_id AND effective_from <= tc.work_date
-                            ORDER BY effective_from DESC, updated_at DESC
-                            LIMIT 1
+                """ + EmployeePayrollSettingsService.periodRateSql("tc.user_id", "tc.work_date") + """
                         ) pay ON TRUE
                         WHERE tc.clock_id = ?
                         """)) {
@@ -463,11 +469,6 @@ public final class TimeClockAutoCloseService {
                         rate = rs.getBigDecimal(2);
                         workDate = rs.getDate(3).toLocalDate();
                     }
-                }
-                if ("HOURLY".equalsIgnoreCase(compensationType)
-                        && before.earned != null && before.hours != null
-                        && before.hours.compareTo(BigDecimal.ZERO) > 0) {
-                    rate = before.earned.divide(before.hours, 8, RoundingMode.HALF_UP);
                 }
                 Instant in = correction.clockIn().atZone(zone).toInstant();
                 Instant lunchStart = toInstant(correction.lunchStart(), zone);
@@ -642,9 +643,12 @@ public final class TimeClockAutoCloseService {
         setNullableDecimal(ps, start + 6, values.hours);
     }
 
-    private static BigDecimal earned(Connection conn, int userId, LocalDate workDate,
+    static BigDecimal earned(Connection conn, int userId, LocalDate workDate,
                                      String compensationType, BigDecimal rate,
                                      BigDecimal hours, long excludedClockId) throws SQLException {
+        EmployeePayrollSettingsService.PayRate periodRate = EmployeePayrollSettingsService.payRateFor(conn, userId, workDate);
+        compensationType = periodRate.compensationType();
+        rate = periodRate.rate();
         if ("SALARY".equalsIgnoreCase(compensationType)) return null;
         if ("DAILY".equalsIgnoreCase(compensationType)) {
             try (PreparedStatement ps = conn.prepareStatement("""
@@ -687,7 +691,7 @@ public final class TimeClockAutoCloseService {
         }
     }
 
-    private static void validateCorrection(Correction correction) throws SQLException {
+    static void validateCorrection(Correction correction) throws SQLException {
         if (correction == null || correction.clockIn() == null || correction.clockOut() == null
                 || correction.reason() == null || correction.reason().isBlank()) {
             throw new SQLException("Clock-in, clock-out, and a correction reason are required.");

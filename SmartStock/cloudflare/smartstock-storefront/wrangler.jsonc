@@ -1,0 +1,8 @@
+{
+  "name": "smartstock-storefront",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-24",
+  "durable_objects": {"bindings": [{"name":"STORES","class_name":"StoreCoordinator"}]},
+  "migrations": [{"tag":"v1","new_sqlite_classes":["StoreCoordinator"]}],
+  "vars": {"ORIGINS_JSON":"[]"}
+}

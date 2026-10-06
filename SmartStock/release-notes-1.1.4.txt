@@ -1,0 +1,3 @@
+Fixes quotation and invoice layouts in the installed application's Swing print renderer. Numeric cells use compact text and padding, leaving more space for descriptions. Totals and signatures use an independent footer table so their minimum widths do not constrain item columns.
+
+Unit price and original total omit trailing .00; discounts display at most two decimal places. Subtotal and cash-rounded Grand Total remain stacked. Includes changes from 1.1.3. Update the store server before registers.

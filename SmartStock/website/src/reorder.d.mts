@@ -1,0 +1,1 @@
+export function reorderBag(lines: {id:number;name:string;quantity:number}[], products: {id:number;canOrder:boolean}[], existing?: Record<string,number>): {bag:Record<string,number>;added:number;unavailable:string[]};

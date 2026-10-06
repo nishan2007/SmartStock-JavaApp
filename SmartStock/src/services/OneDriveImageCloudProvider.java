@@ -10,6 +10,11 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.file.StandardOpenOption;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
@@ -49,17 +54,20 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
     }
 
     @Override public byte[] download(UUID id,String category,String sourcePath,String remoteItemId,String remotePath)throws Exception{
+        return download(id,category,sourcePath,remoteItemId,remotePath,Integer.MAX_VALUE);
+    }
+    byte[] download(UUID id,String category,String sourcePath,String remoteItemId,String remotePath,int maxBytes)throws Exception{
         String endpoint=!blank(remoteItemId)?graphDrive()+"/items/"+encode(remoteItemId)+"/content"
                 :graphDrive()+"/items/"+encode(appRoot().itemId())+":/"+encodePath(path(id,category,sourcePath,remotePath))+":/content";
         HttpRequest graphRequest=authorized(endpoint).timeout(Duration.ofSeconds(90)).GET().build();
-        HttpResponse<byte[]> response=sendAllowNotFound(graphRequest,HttpResponse.BodyHandlers.ofByteArray(),"download");
+        HttpResponse<byte[]> response=sendAllowNotFound(graphRequest,BoundedImageBody.handler(maxBytes),"download");
         if(response.statusCode()==404)return null;
         if(response.statusCode()>=300&&response.statusCode()<400){
             URI redirect=downloadRedirect(graphRequest.uri(),response.headers().firstValue("Location")
                     .orElseThrow(()->new IOException("OneDrive image download redirect omitted Location.")));
             // Graph returns a preauthenticated short-lived URL. Do not forward its bearer token to that host.
             HttpRequest redirected=HttpRequest.newBuilder(redirect).timeout(Duration.ofSeconds(90)).GET().build();
-            response=sendAllowNotFound(redirected,HttpResponse.BodyHandlers.ofByteArray(),"download redirect");
+            response=sendAllowNotFound(redirected,BoundedImageBody.handler(maxBytes),"download redirect");
         }
         require(response.statusCode(),response.body()==null?"":new String(response.body(),StandardCharsets.UTF_8),"download");
         return response.body();
@@ -92,10 +100,90 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
         return new ProbeResult(true,"OneDrive application folder is ready in drive "+root.driveId()+".");
     }
 
+    /** Private order files can be much larger than image assets, so stream them from disk. */
+    void uploadPrivateFile(String key,Path file,String contentType)throws Exception{
+        String path=privateOrderPath(key);
+        AppRoot root=appRoot();
+        if(Files.size(file)>10L*1024*1024){uploadPrivateFileInChunks(root,path,file);return;}
+        HttpRequest request=authorized(graphDrive()+"/items/"+encode(root.itemId())+":/"+encodePath(path)+":/content")
+                .timeout(Duration.ofMinutes(15)).header("Content-Type",contentType)
+                .PUT(HttpRequest.BodyPublishers.ofFile(file)).build();
+        HttpResponse<String> response=send(request,HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),"private file upload");
+        JsonObject row=JsonParser.parseString(response.body()).getAsJsonObject();
+        if(!row.has("size")||row.get("size").getAsLong()!=Files.size(file))
+            throw new IOException("OneDrive verified a different private file size.");
+    }
+
+    private void uploadPrivateFileInChunks(AppRoot root,String path,Path file)throws Exception{
+        String endpoint=graphDrive()+"/items/"+encode(root.itemId())+":/"+encodePath(path)+":/createUploadSession";
+        HttpResponse<String> created=send(authorized(endpoint).timeout(Duration.ofSeconds(60))
+                .header("Content-Type","application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{\"item\":{\"@microsoft.graph.conflictBehavior\":\"replace\",\"name\":\""+path+"\"}}"))
+                .build(),HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),"private file upload session");
+        URI upload=URI.create(text(JsonParser.parseString(created.body()).getAsJsonObject(),"uploadUrl"));
+        if(!"https".equalsIgnoreCase(upload.getScheme())||upload.getHost()==null||upload.getUserInfo()!=null)
+            throw new IOException("OneDrive returned an invalid upload session URL.");
+        long total=Files.size(file),offset=0;
+        final int chunkSize=327680*32;
+        try(SeekableByteChannel channel=Files.newByteChannel(file,StandardOpenOption.READ)){
+            while(offset<total){
+                int length=(int)Math.min(chunkSize,total-offset);
+                ByteBuffer buffer=ByteBuffer.allocate(length);
+                while(buffer.hasRemaining()&&channel.read(buffer)>0){}
+                if(buffer.hasRemaining())throw new IOException("Private file changed during upload.");
+                HttpRequest chunk=HttpRequest.newBuilder(upload).timeout(Duration.ofMinutes(3))
+                        .header("Content-Range","bytes "+offset+"-"+(offset+length-1)+"/"+total)
+                        .PUT(HttpRequest.BodyPublishers.ofByteArray(buffer.array())).build();
+                HttpResponse<String> response=sendAllowNotFound(chunk,
+                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),"private file upload chunk");
+                offset+=length;
+                if(offset<total){if(response.statusCode()!=202)throw new IOException("OneDrive rejected a private file chunk (HTTP "+response.statusCode()+").");}
+                else{
+                    require(response.statusCode(),response.body(),"private file upload completion");
+                    JsonObject row=JsonParser.parseString(response.body()).getAsJsonObject();
+                    if(!row.has("size")||row.get("size").getAsLong()!=total)
+                        throw new IOException("OneDrive verified a different private file size.");
+                }
+            }
+        }
+    }
+
+    boolean downloadPrivateFile(String key,Path target)throws Exception{
+        String endpoint=graphDrive()+"/items/"+encode(appRoot().itemId())+":/"+encodePath(privateOrderPath(key))+":/content";
+        HttpRequest request=authorized(endpoint).timeout(Duration.ofMinutes(15)).GET().build();
+        HttpResponse<Path> response=sendAllowNotFound(request,HttpResponse.BodyHandlers.ofFile(target),"private file download");
+        if(response.statusCode()==404)return false;
+        if(response.statusCode()>=300&&response.statusCode()<400){
+            URI redirect=downloadRedirect(request.uri(),response.headers().firstValue("Location")
+                    .orElseThrow(()->new IOException("OneDrive private file redirect omitted Location.")));
+            response=sendAllowNotFound(HttpRequest.newBuilder(redirect).timeout(Duration.ofMinutes(15)).GET().build(),
+                    HttpResponse.BodyHandlers.ofFile(target),"private file download redirect");
+        }
+        require(response.statusCode(),"", "private file download");
+        return true;
+    }
+
+    void deletePrivateFile(String key)throws Exception{
+        String endpoint=graphDrive()+"/items/"+encode(appRoot().itemId())+":/"+encodePath(privateOrderPath(key));
+        HttpResponse<String> response=sendAllowNotFound(authorized(endpoint).timeout(Duration.ofMinutes(2)).DELETE().build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8),"private file delete");
+        if(response.statusCode()!=404)require(response.statusCode(),response.body(),"private file delete");
+    }
+
+    private static String privateOrderPath(String key)throws IOException{
+        if(key==null||!key.matches("[0-9a-f-]{36}"))throw new IOException("Invalid private file key.");
+        return "private-order-"+key;
+    }
+
     static String remotePath(UUID id,String category,String sourcePath){
         String folder=switch(category==null?"":category.toUpperCase(Locale.ROOT)){
             case "CUSTOM_ITEM"->"custom-items"; case "CUSTOM_VARIANT"->"custom-variants";
-            case "CUSTOMER_PHOTO"->"customer-photos"; default->"products";};
+            case "CUSTOMER_PHOTO"->"customer-photos";
+            case "PROJECT"->"project-artwork";
+            case "QUOTE_ARTWORK"->"quote-artwork";
+            default->"products";};
+        if("PROJECT".equalsIgnoreCase(category)||"QUOTE_ARTWORK".equalsIgnoreCase(category))
+            return folder+"-"+id+"-"+filename(sourcePath);
         return folder+"/"+filename(sourcePath);
     }
 

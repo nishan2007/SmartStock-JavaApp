@@ -26,7 +26,7 @@ public class CustomOrderReceiptPanel extends JPanel {
             JCheckBox slipShowPaymentSummaryBox,
             JCheckBox slipShowPaymentReferenceBox,
             JCheckBox slipShowTakenByBox,
-            JCheckBox slipShowSignaturesBox
+            JCheckBox slipShowTeamMemberSignatureBox, JCheckBox slipShowCustomerSignatureBox
     ) {
         setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
         setOpaque(false);
@@ -48,7 +48,7 @@ public class CustomOrderReceiptPanel extends JPanel {
                 slipShowPaymentSummaryBox,
                 slipShowPaymentReferenceBox,
                 slipShowTakenByBox,
-                slipShowSignaturesBox
+                slipShowTeamMemberSignatureBox, slipShowCustomerSignatureBox
         ));
     }
 
@@ -90,7 +90,7 @@ public class CustomOrderReceiptPanel extends JPanel {
             JCheckBox slipShowPaymentSummaryBox,
             JCheckBox slipShowPaymentReferenceBox,
             JCheckBox slipShowTakenByBox,
-            JCheckBox slipShowSignaturesBox
+            JCheckBox slipShowTeamMemberSignatureBox, JCheckBox slipShowCustomerSignatureBox
     ) {
         JPanel panel = createSectionPanel("Fields to Print");
         JPanel fieldsPanel = new JPanel(new GridLayout(0, 2, 10, 8));
@@ -108,7 +108,8 @@ public class CustomOrderReceiptPanel extends JPanel {
         fieldsPanel.add(slipShowPaymentSummaryBox);
         fieldsPanel.add(slipShowPaymentReferenceBox);
         fieldsPanel.add(slipShowTakenByBox);
-        fieldsPanel.add(slipShowSignaturesBox);
+        fieldsPanel.add(slipShowTeamMemberSignatureBox);
+        fieldsPanel.add(slipShowCustomerSignatureBox);
         addWide(panel, fieldsPanel, 1);
         return panel;
     }

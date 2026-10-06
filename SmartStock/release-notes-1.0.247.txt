@@ -1,0 +1,5 @@
+Fixes invoice payments appearing in customer history without reducing the recalculated account balance. Repairs affected existing invoice payment ledger entries when customer accounts are loaded, using matching payment allocations.
+
+Standardizes customer phone numbers on save to +countrycode followed by digits. Seven-digit Guyana numbers receive +592; existing international country codes are preserved. Spaces, brackets, dashes and 00 international prefixes are normalized. Blank numbers remain optional and incomplete numbers show a validation message. The same rule applies to customer phone updates from custom orders.
+
+Includes all current SmartStock application changes and the catalog recovery improvements from 1.0.246. Existing customer phone numbers are normalized when their accounts are next saved.

@@ -1,0 +1,5 @@
+Quotation and invoice printing now gives descriptions more room by moving unit price to the former original-total position. Explicit print column widths preserve the layout in the application print renderer.
+
+Unit price and original total omit trailing .00 while retaining meaningful cents. Discount percentages display at most two decimal places. Received By and Team Member Signature have independent, readable label widths. Subtotal and cash-rounded Grand Total remain stacked.
+
+Includes the application changes shipped in 1.1.2, including independent AI model downloads. Update the store server before registers.

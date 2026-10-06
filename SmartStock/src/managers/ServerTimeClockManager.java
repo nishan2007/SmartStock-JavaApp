@@ -82,6 +82,7 @@ public final class ServerTimeClockManager {
     }
 
     public static void clockIn(Connection conn, ManagerApprovalService.ApprovalResult approval) throws SQLException, TimeClockException {
+        services.ManualTimeClockService.lockEmployee(conn, request().userId());
         int userId = requireCurrentUserId();
         LocalDate workDate = LocalDate.now(ZoneId.of(currentStoreZoneId()));
         Instant clockInAt = Instant.now();
@@ -286,11 +287,7 @@ public final class ServerTimeClockManager {
                 FROM employee_time_clock tc
                 LEFT JOIN users u ON u.user_id = tc.user_id
                 LEFT JOIN LATERAL (
-                    SELECT compensation_type, pay_rate
-                    FROM employee_payroll_settings
-                    WHERE user_id = tc.user_id AND effective_from <= tc.work_date
-                    ORDER BY effective_from DESC, updated_at DESC
-                    LIMIT 1
+                """ + EmployeePayrollSettingsService.periodRateSql("tc.user_id", "tc.work_date") + """
                 ) pay ON TRUE
                 LEFT JOIN roles r ON r.role_id = u.role_id
                 LEFT JOIN locations l ON l.location_id = tc.location_id
@@ -376,18 +373,14 @@ public final class ServerTimeClockManager {
             BigDecimal priorHours = allocatedHours.getOrDefault(periodKey, BigDecimal.ZERO);
             BigDecimal regularHours = segment.hours;
             BigDecimal overtimeHours = BigDecimal.ZERO;
-            LocalDate today = LocalDate.now(ZoneId.of(currentStoreZoneId()));
-            boolean currentPeriod = !today.isBefore(payPeriod.start()) && !today.isAfter(payPeriod.end());
-            BigDecimal basePay = segmentPay(segment, dailyPaidClockIds, currentPeriod);
+            BigDecimal basePay = segmentPay(segment, dailyPaidClockIds);
             BigDecimal regularPay = basePay;
             BigDecimal overtimePay = BigDecimal.ZERO;
             if (EmployeePayrollSettingsService.isHourly(record.compensationType)) {
                 BigDecimal remainingRegular = payPeriod.workHourLimit().subtract(priorHours).max(BigDecimal.ZERO);
                 regularHours = segment.hours.min(remainingRegular).max(BigDecimal.ZERO);
                 overtimeHours = segment.hours.subtract(regularHours).max(BigDecimal.ZERO);
-                BigDecimal hourlyRate = segment.hours.compareTo(BigDecimal.ZERO) == 0
-                        ? record.salary
-                        : basePay.divide(segment.hours, 8, RoundingMode.HALF_UP);
+                BigDecimal hourlyRate = record.salary;
                 regularPay = utils.CurrencyFormatter.normalize(hourlyRate.multiply(regularHours));
                 overtimePay = utils.CurrencyFormatter.normalize(hourlyRate.multiply(overtimeHours)
                         .multiply(new BigDecimal("1.5")));
@@ -561,6 +554,9 @@ public final class ServerTimeClockManager {
                 ));
             }
 
+            // A settled period is an accounting snapshot. Later time-clock edits
+            // remain visible in Time Records without rewriting its paid summary.
+            summariesByKey.putAll(loadSettledPayrollSnapshots(conn, paidStatuses, bonusesByPeriod));
             List<PayrollSummary> summaries = new ArrayList<>(summariesByKey.values());
             summaries.sort((a, b) -> {
                 int dateCompare = b.payPeriodStart().compareTo(a.payPeriodStart());
@@ -778,6 +774,45 @@ public final class ServerTimeClockManager {
         return statuses;
     }
 
+    private static Map<String, PayrollSummary> loadSettledPayrollSnapshots(Connection conn,
+            Map<String, PayrollPaymentStatus> statuses, Map<String, BigDecimal> bonuses) throws SQLException {
+        Map<String, PayrollSummary> snapshots = new HashMap<>();
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT DISTINCT ON (user_id, pay_period_start, pay_period_end) *
+                FROM payroll_payments
+                WHERE pay_period_end < ?
+                ORDER BY user_id, pay_period_start, pay_period_end,
+                    paid_at DESC, payment_number DESC, payroll_payment_id DESC
+                """)) {
+            ps.setDate(1, java.sql.Date.valueOf(LocalDate.now(ZoneId.of(currentStoreZoneId()))));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    int userId = rs.getInt("user_id");
+                    LocalDate start = rs.getDate("pay_period_start").toLocalDate();
+                    LocalDate end = rs.getDate("pay_period_end").toLocalDate();
+                    String key = payrollKey(userId, start, end);
+                    PayrollPaymentStatus status = statuses.get(key);
+                    BigDecimal regular = defaultZero(rs.getBigDecimal("regular_pay"));
+                    BigDecimal overtime = defaultZero(rs.getBigDecimal("overtime_pay"));
+                    BigDecimal bonus = bonuses.getOrDefault(key, BigDecimal.ZERO);
+                    BigDecimal total = regular.add(overtime).add(bonus);
+                    // Partial payments must continue to use the live calculation.
+                    if (!isFullyPaid(total, status)) continue;
+                    snapshots.put(key, new PayrollSummary(userId, rs.getString("employee_name"),
+                            rs.getString("employee_role"), start, end, rs.getDate("pay_date").toLocalDate(),
+                            rs.getInt("days_worked"), rs.getBigDecimal("total_hours"),
+                            rs.getBigDecimal("regular_hours"), rs.getBigDecimal("overtime_hours"),
+                            regular, overtime, bonus, total, rs.getInt("record_count"),
+                            rs.getString("compensation_type"), rs.getString("pay_period_type"),
+                            rs.getBigDecimal("work_hour_limit"), (Integer) rs.getObject("location_id"),
+                            rs.getString("location_name"), true, status.paidAt(), status.paidByName(),
+                            status.paidAmount(), amountDue(total, status)));
+                }
+            }
+        }
+        return snapshots;
+    }
+
     private static void reconcileBankPayrollTransactions(Connection conn) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("SELECT to_regclass('public.bank_transactions') IS NOT NULL");
              ResultSet rs = ps.executeQuery()) {
@@ -868,6 +903,7 @@ public final class ServerTimeClockManager {
     }
 
     private static void updateCurrentClock(Connection conn, String columnName) throws SQLException, TimeClockException {
+        services.ManualTimeClockService.lockEmployee(conn, request().userId());
         if (!List.of("lunch_start", "lunch_end", "break_start", "break_end", "clock_out").contains(columnName)) {
             return;
         }
@@ -905,11 +941,7 @@ public final class ServerTimeClockManager {
                     FROM employee_time_clock tc
                     JOIN users u ON u.user_id = tc.user_id
                     LEFT JOIN LATERAL (
-                        SELECT compensation_type, pay_rate
-                        FROM employee_payroll_settings
-                        WHERE user_id = tc.user_id AND effective_from <= tc.work_date
-                        ORDER BY effective_from DESC, updated_at DESC
-                        LIMIT 1
+                        """ + EmployeePayrollSettingsService.periodRateSql("tc.user_id", "tc.work_date") + """
                     ) pay ON TRUE
                     WHERE tc.clock_id = ?
                 )
@@ -1138,8 +1170,7 @@ public final class ServerTimeClockManager {
         return minutesBetween(overlapStart, overlapEnd);
     }
 
-    private static BigDecimal segmentPay(TimeSegment segment, Map<String, Integer> dailyPaidClockIds,
-                                        boolean currentPeriod) {
+    private static BigDecimal segmentPay(TimeSegment segment, Map<String, Integer> dailyPaidClockIds) {
         TimeRecord record = segment.record;
         if (record.isDaily()) {
             Integer paidClockId = dailyPaidClockIds.get(dailyPayKey(record.userId, segment.workDate));
@@ -1149,14 +1180,6 @@ public final class ServerTimeClockManager {
         }
         if (record.isSalary()) {
             return BigDecimal.ZERO;
-        }
-        if (!currentPeriod && record.clockOut != null && record.totalEarned != null && record.totalHoursWorked != null) {
-            BigDecimal totalHours = record.totalHoursWorked.setScale(2, RoundingMode.HALF_UP);
-            if (totalHours.compareTo(BigDecimal.ZERO) > 0) {
-                return utils.CurrencyFormatter.normalize(record.totalEarned
-                        .multiply(segment.hours)
-                        .divide(totalHours, 2, RoundingMode.HALF_UP));
-            }
         }
         return utils.CurrencyFormatter.normalize(record.salary.multiply(segment.hours));
     }

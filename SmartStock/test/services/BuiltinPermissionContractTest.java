@@ -17,9 +17,11 @@ class BuiltinPermissionContractTest {
                 java.append(Files.readString(path));
             }
         }
-        String catalog = Files.readString(Path.of("database/v1/local/002_seed.sql"))
-                + Files.readString(Path.of(
-                "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql"));
+        StringBuilder packagedCatalog = new StringBuilder();
+        for (String resource : SchemaContractService.localContractResources()) {
+            packagedCatalog.append(Files.readString(Path.of(resource)));
+        }
+        String catalog = packagedCatalog.toString();
         var call = Pattern.compile("(?:hasPermission|requirePermission|requireAnyPermission)\\s*\\((.{0,500}?)\\)",
                 Pattern.DOTALL).matcher(java);
         Pattern key = Pattern.compile("\"([A-Z][A-Z0-9_]+)\"");

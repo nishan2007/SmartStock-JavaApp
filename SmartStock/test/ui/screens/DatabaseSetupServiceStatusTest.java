@@ -26,6 +26,8 @@ class DatabaseSetupServiceStatusTest {
         assertFalse(DatabaseSetup.serviceLooksRunning("postgresql@17 stopped", "postgres"));
         assertTrue(DatabaseSetup.serviceLooksRunning("state = running\npid = 42", "smartstock"));
         assertTrue(DatabaseSetup.serviceLooksRunning("Status: Running", "smartstock"));
+        assertTrue(DatabaseSetup.serviceLooksRunning("TaskName : SmartStockServerService\nState    : Running", "smartstock"));
+        assertFalse(DatabaseSetup.serviceLooksRunning("TaskName : SmartStockServerService\nState    : Ready", "smartstock"));
         assertFalse(DatabaseSetup.serviceLooksRunning("Could not find service", "smartstock"));
     }
 

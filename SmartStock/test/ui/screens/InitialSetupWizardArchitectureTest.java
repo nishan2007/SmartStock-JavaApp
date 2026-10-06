@@ -39,11 +39,12 @@ class InitialSetupWizardArchitectureTest {
         assertTrue(source.contains("\"Initialize Cloud\""));
         assertTrue(source.contains("\"Prepare Local Database\""));
         assertTrue(source.contains("\"Create or Select Store\""));
-        assertTrue(source.contains("\"Create First Administrator\""));
+        assertTrue(source.contains("\"Set Up Store Administrator\""));
         assertTrue(source.contains("\"Start and Verify Server\""));
         assertTrue(source.contains("determineResumeStep()"));
         assertTrue(source.contains("SupabaseProjectConnectionVerifier.verify"));
         assertTrue(source.contains("ServerSupabaseMigrationRunner.migrate"));
+        assertTrue(source.contains("CloudSyncManifest.verifySchemaReady()"));
         assertTrue(source.contains("ServerProvisioningService.provision"));
         assertTrue(source.contains("LocalDatabaseBootstrapService.ensureConfigured"));
         assertTrue(source.contains("ServerStoreSetupService.create"));

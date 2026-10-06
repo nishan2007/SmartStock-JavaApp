@@ -103,7 +103,12 @@ public class AccountPaymentReceiptFormatter {
         }
         builder.append(repeat("-", width)).append('\n');
         appendCentered(builder, settings.footerLine(), width);
-        builder.append('\n');
+        builder.append('\n').append('\n');
+        builder.append(repeat("_", width)).append('\n');
+        builder.append("Customer Sig.:").append('\n');
+        builder.append('\n').append('\n');
+        builder.append(repeat("_", width)).append('\n');
+        builder.append("Team Member Sig.:").append('\n').append('\n');
         return builder.toString();
     }
 

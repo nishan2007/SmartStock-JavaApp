@@ -25,6 +25,8 @@ final class LanSyncAdminService {
         SyncWorker.SyncStatus worker = SyncWorker.latestStatus(connection);
         Map<String, Object> result = statusMap(worker);
         addImageCounts(connection, result);
+        result.putAll(CloudTransferMetrics.totals(connection));
+        result.put("crossStoreRefreshes",crossStoreRefreshes(connection));
         addRuntimeState(result, worker.serviceInfo());
         result.put("conflicts", conflicts(connection));
         result.put("audits", audits(connection));
@@ -38,6 +40,8 @@ final class LanSyncAdminService {
         }
         Map<String,Object> result = statusMap(SyncWorker.runOnceNow());
         addImageCounts(connection, result);
+        result.putAll(CloudTransferMetrics.totals(connection));
+        result.put("crossStoreRefreshes",crossStoreRefreshes(connection));
         addRuntimeState(result, SyncServiceStatusService.current(connection));
         return result;
     }
@@ -59,6 +63,19 @@ final class LanSyncAdminService {
         return Map.of("conflictId", conflictId, "status", "RESOLVED");
     }
 
+    static Map<String,Object> setBillingPeriod(Connection connection,int userId,long startEpochMillis)throws Exception {
+        requirePermission(connection,userId);
+        Instant start;
+        try{start=Instant.ofEpochMilli(startEpochMillis);}catch(Exception ex){throw new RuleViolation(400,"VALIDATION_ERROR","Enter a valid billing period start.");}
+        Instant now=Instant.now();
+        if(startEpochMillis<=0 || start.isAfter(now) || start.isBefore(now.minus(Duration.ofDays(90))))
+            throw new RuleViolation(400,"VALIDATION_ERROR","Billing period start must be within the last 90 days.");
+        try(PreparedStatement p=connection.prepareStatement("UPDATE sync_transfer_settings SET billing_period_start=? WHERE settings_id=1")){
+            p.setTimestamp(1,Timestamp.from(start));p.executeUpdate();
+        }
+        return CloudTransferMetrics.totals(connection);
+    }
+
     private static List<Map<String, Object>> conflicts(Connection connection) throws SQLException {
         List<Map<String, Object>> rows = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement("""
@@ -72,6 +89,21 @@ final class LanSyncAdminService {
                     "createdAtEpochMillis", epoch(rs.getTimestamp(5))));
         }
         return rows;
+    }
+
+    static List<Map<String,Object>> crossStoreRefreshes(Connection c)throws SQLException {
+        List<Map<String,Object>> result=new ArrayList<>();
+        try(PreparedStatement p=c.prepareStatement("""
+            SELECT r.source_location_id,COALESCE(l.name,'Store '||r.source_location_id),r.source_completed_at,
+                   r.successful_refresh_at,r.next_refresh_at,r.last_error
+            FROM sync_cross_store_refresh r LEFT JOIN locations l ON l.location_id=r.source_location_id
+            ORDER BY r.source_location_id
+            """);ResultSet r=p.executeQuery()){
+            while(r.next())result.add(map("locationId",r.getInt(1),"storeName",r.getString(2),
+                "sourceCompletedEpochMillis",epoch(r.getTimestamp(3)),"lastCheckedEpochMillis",epoch(r.getTimestamp(4)),
+                "nextRefreshEpochMillis",epoch(r.getTimestamp(5)),"lastError",r.getString(6)));
+        }
+        return result;
     }
 
     private static List<Map<String, Object>> audits(Connection connection) throws SQLException {

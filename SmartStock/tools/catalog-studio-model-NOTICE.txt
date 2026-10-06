@@ -1,0 +1,23 @@
+SmartStock Product Photo Studio uses the IS-Net General Use model for offline
+background removal. The model is distributed under the Apache License 2.0.
+
+Original IS-Net / DIS authors: Xuebin Qin et al.
+https://github.com/xuebinqin/DIS
+https://github.com/xuebinqin/DIS/blob/main/LICENSE
+
+ONNX model distribution: rembg by Daniel Gatis (MIT).
+https://github.com/danielgatis/rembg
+
+Pinned model artifact and provenance:
+https://huggingface.co/skillsafe-ai/isnet-general-use
+SHA-256: 60920e99c45464f2ba57bee2ad08c919a52bbf852739e96947fbb4358c0d964a
+
+SmartStudio Best quality uses BiRefNet General, MIT License.
+Copyright (c) 2024 ZhengPeng. Full terms: birefnet-LICENSE.txt
+Original implementation: https://github.com/ZhengPeng7/BiRefNet
+Official model weights: https://huggingface.co/ZhengPeng7/BiRefNet
+ONNX conversion distributed by rembg:
+https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-epoch_244.onnx
+Upstream rembg MD5: 7a35a0141cbbc80de11d9c9a28f52697
+Pinned SHA-256: 58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c
+Model size: 972666916 bytes. Inference uses only local model files.

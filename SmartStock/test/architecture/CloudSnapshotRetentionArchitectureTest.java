@@ -26,12 +26,14 @@ class CloudSnapshotRetentionArchitectureTest {
     }
 
     @Test
-    void mirrorPrunesOnlyAfterSuccessfulCompletionPath() throws Exception {
+    void mirrorMakesRoomBeforeCloningAndPrunesAfterSuccessfulCompletion() throws Exception {
         String service = source("src/services/CloudRowMirrorService.java");
         int verify = service.indexOf("verifyMirror(locationId, finalization.generationId()");
         int credentials = service.indexOf("synchronizeProtectedUserCredentials(\n                        local, locationId, finalization.generationId())");
         int persist = service.indexOf("persistCompletedState(local, locationId");
-        int prune = service.indexOf("pruneCompletedGenerations(locationId)");
+        int preflightPrune = service.indexOf("pruneCompletedGenerations(locationId)");
+        assertTrue(preflightPrune >= 0 && preflightPrune < service.indexOf("new GenerationUpload"));
+        int prune = service.lastIndexOf("pruneCompletedGenerations(locationId)");
         assertTrue(verify >= 0 && credentials > verify && persist > credentials && prune > persist);
         assertTrue(service.contains("body.addProperty(\"p_keep_complete\", 2)"));
         assertTrue(service.contains("body.addProperty(\"p_max_delete\", 25)"));

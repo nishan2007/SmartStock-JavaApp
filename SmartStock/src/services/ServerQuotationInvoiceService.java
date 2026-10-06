@@ -779,9 +779,9 @@ public final class ServerQuotationInvoiceService {
                 INSERT INTO customer_account_transactions (
                     customer_id, invoice_id, payment_id, location_id, amount, transaction_type,
                     note, user_name, device_id, device_name, payment_method, payment_reference,
-                    cash_drawer_id, cash_drawer_name, cash_drawer_session_id
+                    cash_drawer_id, cash_drawer_name, cash_drawer_session_id, credit_applied_amount
                 )
-                VALUES (?, ?, ?, ?, ?, 'PAYMENT', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'PAYMENT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING transaction_id
                 """)) {
             ps.setInt(1, invoice.customerId());
@@ -798,6 +798,7 @@ public final class ServerQuotationInvoiceService {
             setNullableLong(ps, 12, drawer == null ? null : drawer.cashDrawerId());
             ps.setString(13, drawer == null ? null : drawer.drawerName());
             setNullableLong(ps, 14, drawer == null ? null : drawer.sessionId());
+            ps.setBigDecimal(15, amount.abs());
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     return rs.getLong("transaction_id");
@@ -1137,7 +1138,7 @@ public final class ServerQuotationInvoiceService {
 
     private static LineAmounts lineAmounts(Connection conn, SalesVatSettings settings, QuotationLineInput line) throws SQLException {
         BigDecimal gross = money(line.unitPrice()).multiply(BigDecimal.valueOf(Math.max(line.quantity(), 0)));
-        BigDecimal discount = gross.multiply(percent(line.discountPercent()).divide(new BigDecimal("100"), 6, RoundingMode.HALF_UP));
+        BigDecimal discount = gross.multiply(percent(line.discountPercent()).divide(new BigDecimal("100"), 8, RoundingMode.HALF_UP));
         BigDecimal preVatTotal = gross.subtract(discount).max(BigDecimal.ZERO);
         BigDecimal vatRate = BigDecimal.ZERO;
         if (settings.vatEnabled()) {
@@ -1225,7 +1226,7 @@ public final class ServerQuotationInvoiceService {
     }
 
     private static BigDecimal money(BigDecimal value) {
-        return utils.CurrencyFormatter.normalize(value);
+        return zero(value).setScale(2, RoundingMode.HALF_UP);
     }
 
     private static BigDecimal percent(BigDecimal value) {

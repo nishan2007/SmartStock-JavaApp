@@ -39,6 +39,16 @@ the repository root. The project requires Java 17 or later.
   tests alone do not prove deployed hardware behavior.
 - Do not publish releases or mutate release metadata until the exact artifact's
   download, size, and SHA-256 have been verified.
+- Keep AI model files out of application update ZIPs and first-install packages.
+  Retain the inference runtime, notices and licences. Models live in the active
+  store profile outside application and rollback folders; never delete them as
+  part of an application update or rollback.
+- Use the shared Maven version on every platform and compute release build
+  numbers as `major * 100000 + minor * 1000 + patch`.
+- Follow `SmartStock/docs/release-packaging-publishing.md` for packaging and
+  publication. Publish changed models separately and verify their hosted
+  catalogue before publishing a model-free app release. Preparing a release does
+  not authorize publication or installation into a live store.
 
 ## Validation
 

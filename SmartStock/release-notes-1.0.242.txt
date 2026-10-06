@@ -1,0 +1,1 @@
+Fixes background server startup after updating existing stores with an incomplete built-in permission catalog. Preserves useful server readiness error details.

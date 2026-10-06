@@ -39,6 +39,7 @@ public final class CustomerAccountLedgerService {
         if (!isServerMode()) {
             return;
         }
+        repairInvoicePaymentCredit(conn, null);
         try (Statement stmt = conn.createStatement()) {
             stmt.executeUpdate("""
                     WITH ledger_events AS (
@@ -74,6 +75,9 @@ public final class CustomerAccountLedgerService {
 
     public static BigDecimal repairCustomerBalance(Connection conn, int customerId) throws SQLException {
         ensureSchema(conn);
+        if (isServerMode()) {
+            repairInvoicePaymentCredit(conn, customerId);
+        }
         BigDecimal balance = calculateCustomerBalance(conn, customerId);
         if (!isServerMode()) {
             return balance;
@@ -95,6 +99,31 @@ public final class CustomerAccountLedgerService {
 
     private static boolean isServerMode() {
         return DatabaseConfig.load().mode() == DatabaseMode.SERVER;
+    }
+
+    // Older direct invoice payments omitted credit_applied_amount (defaulting to zero).
+    // Restore only payments backed by a matching invoice allocation, leaving other credit untouched.
+    static void repairInvoicePaymentCredit(Connection conn, Integer customerId) throws SQLException {
+        String sql = """
+                UPDATE customer_account_transactions t
+                SET credit_applied_amount = ABS(t.amount)
+                WHERE t.transaction_type = 'PAYMENT'
+                  AND t.invoice_id IS NOT NULL
+                  AND t.custom_order_id IS NULL
+                  AND t.sale_id IS NULL
+                  AND t.credit_applied_amount = 0
+                  AND ABS(t.amount) > 0
+                  AND ABS(t.amount) = (
+                      SELECT SUM(a.amount) FROM customer_account_payment_allocations a
+                      WHERE a.payment_transaction_id = t.transaction_id
+                        AND a.customer_id = t.customer_id AND a.invoice_id = t.invoice_id
+                  )
+                """;
+        if (customerId != null) sql += " AND t.customer_id = ?";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            if (customerId != null) ps.setInt(1, customerId);
+            ps.executeUpdate();
+        }
     }
 
     public static String balanceDeltaSql(String tableAlias) {

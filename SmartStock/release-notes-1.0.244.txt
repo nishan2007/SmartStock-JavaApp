@@ -1,0 +1,1 @@
+Fixes discounted quotation prices changing when saved. Quotation and invoice prices preserve up to two decimal places, calculated percentages retain fractional precision, and documents display cents. Includes current receipt and label printing improvements.

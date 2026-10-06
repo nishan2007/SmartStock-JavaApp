@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ServerSupabaseMigrationRunnerTest {
@@ -51,24 +52,36 @@ class ServerSupabaseMigrationRunnerTest {
 
     @Test
     void v1ManifestContainsOnlyTheCanonicalBaselineAndImmutablePostV1Chain() {
-        assertEquals(25, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertEquals(28, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261008190000_manual_custom_order_entry.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261003173203_cross_store_egress_cloud.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261008170100_custom_order_spoil_permissions.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261008160000_studio_device_access.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
-                "database/migrations/v1_after/20260920120000_sale_quick_pick_sizes.sql"));
+                "database/migrations/v1_after/20261008150000_guard_payroll_event_ownership.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20261008140000_store_mirror_clone_timeout.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20261008130000_fast_cloud_sync_schema_status.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20261007120100_custom_order_private_storage.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260927120000_storefront_private_creative_storage.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
                 "database/migrations/v1_after/20260919180000_name_custom_item_permission.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
                 "database/migrations/v1_after/20260909120000_employment_portal.sql"));
-        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+        assertFalse(ServerSupabaseMigrationRunner.migrationResources().contains(
                 "database/migrations/v1_after/20260831150000_wallet_template.sql"));
-        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
-                "database/migrations/v1_after/20260902180000_wallet_location_relevance.sql"));
-        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
-                "database/migrations/v1_after/20260903120000_whatsapp_sales_documents.sql"));
-        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+        assertFalse(ServerSupabaseMigrationRunner.migrationResources().contains(
                 "database/migrations/v1_after/20260904150000_cash_drawer_count_history.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260902180000_wallet_location_relevance.sql"));
+        assertFalse(ServerSupabaseMigrationRunner.migrationResources().contains(
+                "database/migrations/v1_after/20260903120000_whatsapp_sales_documents.sql"));
+        assertFalse(ServerSupabaseMigrationRunner.migrationResources().contains(
                 "database/migrations/v1_after/20260907120000_customer_charge_authorizations.sql"));
-        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains(
+        assertFalse(ServerSupabaseMigrationRunner.migrationResources().contains(
                 "database/migrations/v1_after/20260911180000_sale_quick_pick_item_types.sql"));
         for (String resource : ServerSupabaseMigrationRunner.migrationResources()) {
             assertDoesNotThrow(() -> SqlScriptRunner.readResource(resource), resource);
@@ -113,5 +126,31 @@ class ServerSupabaseMigrationRunnerTest {
         assertEquals(
                 "database/migrations/v1_after/20260831120000_apple_wallet_badges.sql",
                 ServerSupabaseMigrationRunner.migrationResources().get(14));
+    }
+
+    @Test
+    void recognizesOnlyTheRecordedHistoricalPermissionChecksum() {
+        String resource = "database/migrations/v1_after/20260820220000_complete_builtin_permissions.sql";
+        String packaged = "a9aa3656cbee7d49e96e9a86e6698e4d392b130eec0ee11c4029f94b0d77c8cb";
+        String historical = "1deeb7f89f9964a161ecee3faf02f8d783e6a7b69652bc6a6bcf5a62834948f7";
+        assertTrue(ServerSupabaseMigrationRunner.matchesAppliedChecksum(resource, packaged, historical));
+        assertFalse(ServerSupabaseMigrationRunner.matchesAppliedChecksum(resource, packaged,
+                "0000000000000000000000000000000000000000000000000000000000000000"));
+        assertFalse(ServerSupabaseMigrationRunner.matchesAppliedChecksum(resource,
+                "0000000000000000000000000000000000000000000000000000000000000000",
+                historical));
+        assertFalse(ServerSupabaseMigrationRunner.matchesAppliedChecksum(
+                "database/migrations/v1_after/20260831120000_apple_wallet_badges.sql",
+                packaged, historical));
+    }
+
+    @Test
+    void syncSchemaPreflightDoesNotCountRecoveryRows() throws Exception {
+        String sql = SqlScriptRunner.readResource(
+                "database/migrations/v1_after/20261008130000_fast_cloud_sync_schema_status.sql");
+        assertTrue(sql.contains("smartstock_private.smartstock_schema_metadata"));
+        assertTrue(sql.contains("REVOKE ALL ON FUNCTION public.smartstock_sync_schema_status() FROM PUBLIC"));
+        assertTrue(sql.contains("GRANT EXECUTE ON FUNCTION public.smartstock_sync_schema_status() TO service_role"));
+        assertTrue(!sql.toLowerCase().contains("count(*)"));
     }
 }

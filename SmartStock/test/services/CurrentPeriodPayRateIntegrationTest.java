@@ -49,6 +49,10 @@ class CurrentPeriodPayRateIntegrationTest {
                     assertEquals(0, new BigDecimal("120000").compareTo(
                             EmployeePayrollSettingsService.payRateFor(c, user, LocalDate.parse(day)).rate()));
                 }
+                var displayed = LanEmployeeAdminService.state(c, null, LocalDate.of(2026, 9, 20))
+                        .employees().stream().filter(employee -> employee.userId() == user)
+                        .findFirst().orElseThrow();
+                assertEquals(0, new BigDecimal("120000").compareTo(displayed.salary()));
                 assertEquals(0, EmployeePayrollSettingsService.payRateFor(c, user,
                         LocalDate.of(2026, 8, 31)).rate().compareTo(BigDecimal.ZERO));
             } finally { c.rollback(); }

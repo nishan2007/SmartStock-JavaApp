@@ -7,10 +7,10 @@ R2_BUCKET="smartstock-updates"
 R2_BUCKET_REFERENCE="r2:$R2_BUCKET"
 
 usage() {
-  echo "Usage: $0 <artifact.zip> <version> <build-number> <mac|windows|linux> [release-notes-file]" >&2
+  echo "Usage: $0 <artifact.zip> <version> <build-number> <mac|windows|linux> [release-notes-file] [installer.exe|installer.dmg|installer.pkg]" >&2
 }
 
-if [[ $# -lt 4 || $# -gt 5 ]]; then
+if [[ $# -lt 4 || $# -gt 6 ]]; then
   usage
   exit 2
 fi
@@ -20,12 +20,34 @@ VERSION="$2"
 BUILD_NUMBER="$3"
 PLATFORM="$4"
 NOTES_FILE="${5:-}"
+INSTALLER_PATH="${6:-}"
+if command -v cygpath >/dev/null 2>&1; then
+  ARTIFACT_PATH="$(cygpath -u "$ARTIFACT_PATH")"
+  [[ -z "$NOTES_FILE" ]] || NOTES_FILE="$(cygpath -u "$NOTES_FILE")"
+  [[ -z "$INSTALLER_PATH" ]] || INSTALLER_PATH="$(cygpath -u "$INSTALLER_PATH")"
+fi
 
 if [[ ! -f "$ARTIFACT_PATH" ]]; then
   echo "Artifact not found: $ARTIFACT_PATH" >&2
   exit 1
 fi
 ARTIFACT_PATH="$(cd "$(dirname "$ARTIFACT_PATH")" && pwd)/$(basename "$ARTIFACT_PATH")"
+node "$ROOT_DIR/tools/verify-app-update.mjs" "$ARTIFACT_PATH" "$VERSION" --check-model-hosting
+if [[ -z "$INSTALLER_PATH" ]]; then
+  case "$PLATFORM" in
+    windows) INSTALLER_PATH="$(dirname "$ARTIFACT_PATH")/smartstock-windows-setup-$VERSION.exe" ;;
+    mac) INSTALLER_PATH="$(dirname "$ARTIFACT_PATH")/smartstock-mac-$VERSION.dmg" ;;
+  esac
+  [[ -f "$INSTALLER_PATH" ]] || INSTALLER_PATH=""
+fi
+if [[ -n "$INSTALLER_PATH" ]]; then
+  [[ -f "$INSTALLER_PATH" ]] || { echo 'Installer file was not found.' >&2; exit 1; }
+  INSTALLER_PATH="$(cd "$(dirname "$INSTALLER_PATH")" && pwd)/$(basename "$INSTALLER_PATH")"
+  if [[ -z "${SMARTSTOCK_INSTALLER_PUBLISH_KEY:-}" ]]; then
+    echo 'Configure SMARTSTOCK_INSTALLER_PUBLISH_KEY to publish the packaged installer.' >&2
+    exit 1
+  fi
+fi
 case "$PLATFORM" in
   mac|windows|linux) ;;
   *)
@@ -189,3 +211,8 @@ echo "Published SmartStock $VERSION build $BUILD_NUMBER for $PLATFORM."
 echo "R2 object: $OBJECT_KEY"
 echo "Size: $LOCAL_SIZE bytes"
 echo "SHA-256: $LOCAL_SHA256"
+if [[ -n "$INSTALLER_PATH" ]]; then
+  node "$ROOT_DIR/tools/publish-installer.mjs" "$INSTALLER_PATH" "$VERSION" "$BUILD_NUMBER" "$PLATFORM"
+else
+  echo 'Update-only publication: no first-install package was selected for the download portal.'
+fi

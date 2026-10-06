@@ -1,0 +1,9 @@
+SmartStock 1.1.1 — Independent AI model updates
+
+SmartStock updates and new-install packages no longer include the large Fast and Best photo models. Download each model separately from Deckers hosting using Status > AI Models. Administrator access is required.
+
+Installed models are kept with the store profile and reused across application updates. Existing verified models are preserved during migration. Downloads check size and SHA-256 before activation; failed downloads retain the previous working model. Photo processing remains offline after model installation, and registers use the store server's models.
+
+This release includes the current SmartStock application fixes from 1.0.249. Update the store server before its registers so the new photo-processing and model-management endpoints are available.
+
+First rollout: publish and verify the separate AI model catalogue and files before distributing this application update. Older macOS installations must run the supplied migration helper before their first model-free upgrade. See docs/ai-model-updates.md and docs/release-packaging-publishing.md.

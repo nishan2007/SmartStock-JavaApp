@@ -28,7 +28,7 @@ public final class StoreHydrationService {
     public static VerifiedHydrationResult restoreVerifiedReplacement(Connection local,Integer locationId)throws SQLException{
         if(locationId==null)return VerifiedHydrationResult.skipped("No store selected.");
         try{
-            CloudSyncManifest mirror=CloudSyncManifest.fetchStoreSnapshot(locationId);
+            CloudSyncManifest mirror=CloudSyncManifest.fetchStoreSnapshot(locationId,local);
             int rows=CloudRecoveryService.restoreReplacementStoreMirror(local,locationId,mirror);
             ProductionRecoveryDrillService.verifyRestoredStore(local,mirror);
             ImageCacheWarmupService.warmLocalCache(local);
@@ -46,7 +46,7 @@ public final class StoreHydrationService {
             return HydrationResult.skipped("No store is selected for cloud hydration.");
         }
         try {
-            CloudSyncManifest mirror = CloudSyncManifest.fetchStoreSnapshot(storeId);
+            CloudSyncManifest mirror = CloudSyncManifest.fetchStoreSnapshot(storeId,local);
             int rows = CloudRecoveryService.restoreStoreMirror(local, storeId, mirror);
             ImageCacheWarmupService.warmLocalCache(local);
             return HydrationResult.synced(rows);

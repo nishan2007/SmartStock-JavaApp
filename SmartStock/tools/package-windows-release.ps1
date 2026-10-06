@@ -1,7 +1,8 @@
+param([string]$OutputDirectory, [switch]$RegisterOnly, [switch]$Publish, [switch]$UpdateOnly)
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Target = Join-Path $Root "target"
-$Release = Join-Path $Target "release-windows"
+$Release = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { Join-Path $Target "release-windows" } else { [System.IO.Path]::GetFullPath($OutputDirectory) }
 $Work = Join-Path $env:TEMP ("smartstock-windows-" + [guid]::NewGuid())
 $IconSource = Join-Path $Root "src\Images\AppIconLight.png"
 
@@ -54,7 +55,8 @@ function New-WindowsIcon {
     }
 }
 
-foreach ($Command in @("mvn", "jpackage", "iscc")) {
+$RequiredCommands = if ($UpdateOnly) { @("mvn", "jar") } else { @("mvn", "jar", "jpackage", "iscc") }
+foreach ($Command in $RequiredCommands) {
     if (-not (Get-Command $Command -ErrorAction SilentlyContinue)) {
         throw "$Command is required on the release-build computer. It is not required on the SmartStock server."
     }
@@ -74,16 +76,33 @@ try {
         Select-Object -First 1
     if (-not $Jar) { throw "The packaged SmartStock JAR was not found." }
     $Version = $Jar.BaseName.Replace("inventory-management-", "")
+    # Standalone JDK-only migration bridge for installations with older native updaters.
+    New-Item -ItemType Directory -Force -Path $Release | Out-Null
+    & jar --create --file (Join-Path $Release 'smartstock-ai-model-migration.jar') --main-class app.StudioModelMigration -C (Join-Path $Target 'classes') app/StudioModelMigration.class
+    if ($LASTEXITCODE -ne 0) { throw 'Could not package the standalone model migration bridge.' }
+    $MigrationBridge = Join-Path $Release 'smartstock-ai-model-migration.jar'
+    $MigrationHash = (Get-FileHash -LiteralPath $MigrationBridge -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath "$MigrationBridge.sha256" -Encoding ASCII -Value "$MigrationHash  smartstock-ai-model-migration.jar"
+    if (-not $UpdateOnly) {
     if (-not (Test-Path $IconSource)) { throw "The SmartStock Windows icon source was not found." }
     $WindowsIcon = Join-Path $Work "SmartStock.ico"
     New-WindowsIcon -PngPath $IconSource -IconPath $WindowsIcon
+    }
     $InputDir = Join-Path $Work "input"
     $DependencyDir = Join-Path $InputDir "dependency"
     New-Item -ItemType Directory -Force -Path $DependencyDir | Out-Null
     Copy-Item -LiteralPath $Jar.FullName -Destination $InputDir
     Copy-Item -Path (Join-Path $Target "dependency\*") -Destination $DependencyDir -Recurse
+    # Models live in the store profile and are downloaded independently.
+    $StudioDir = Join-Path $DependencyDir 'catalog-studio'
+    Get-ChildItem -LiteralPath $DependencyDir -Recurse -File -Filter '*.onnx' | ForEach-Object {
+        Remove-Item -LiteralPath $_.FullName -Force
+    }
+    & (Join-Path $PSScriptRoot 'stage-studio-models.ps1') -Destination $StudioDir -NoticesOnly
     # Both the app image and updater ZIP carry the same pinned tunnel executable.
     & (Join-Path $PSScriptRoot 'stage-cloudflared.ps1') -Destination (Join-Path $DependencyDir 'cloudflared\windows-amd64')
+    New-Item -ItemType Directory -Force -Path $Release | Out-Null
+    if (-not $UpdateOnly) {
     $ServerLauncherProperties = Join-Path $Work "SmartStockServer.properties"
     Set-Content -LiteralPath $ServerLauncherProperties -Encoding ASCII -Value @(
         "main-jar=$($Jar.Name)",
@@ -109,6 +128,26 @@ try {
     if (-not (Test-Path (Join-Path $AppImage "SmartStockServer.exe"))) {
         throw "The Windows package was created without the named SmartStock server launcher."
     }
+    # Server setup must work when the store computer has no usable winget source.
+    if (-not $RegisterOnly) {
+    # Pin the EDB installer to the SHA-256 published in the Windows Package
+    # Manager manifest for PostgreSQL.PostgreSQL.17 version 17.11-4.
+    $PostgresInstallerUrl = 'https://get.enterprisedb.com/postgresql/postgresql-17.11-4-windows-x64.exe'
+    $PostgresInstallerHash = 'c9828fd3a4daebbeeace19bec2de5f38d73c047fce47278148b525cfbe28a5e4'
+    $PostgresInstallerCache = Join-Path $env:TEMP 'smartstock-postgresql-17.11-4-windows-x64.exe'
+    if (-not (Test-Path -LiteralPath $PostgresInstallerCache) -or
+        (Get-FileHash -LiteralPath $PostgresInstallerCache -Algorithm SHA256).Hash.ToLowerInvariant() -ne $PostgresInstallerHash) {
+        Invoke-WebRequest -Uri $PostgresInstallerUrl -OutFile $PostgresInstallerCache
+    }
+    if ((Get-FileHash -LiteralPath $PostgresInstallerCache -Algorithm SHA256).Hash.ToLowerInvariant() -ne $PostgresInstallerHash) {
+        throw 'The PostgreSQL installer failed its SHA-256 check.'
+    }
+    $BundledPostgresInstaller = Join-Path $AppImage 'postgresql-installer.exe'
+    Copy-Item -LiteralPath $PostgresInstallerCache -Destination $BundledPostgresInstaller
+    if ((Get-FileHash -LiteralPath $BundledPostgresInstaller -Algorithm SHA256).Hash.ToLowerInvariant() -ne $PostgresInstallerHash) {
+        throw 'The packaged PostgreSQL installer failed its SHA-256 check.'
+    }
+    }
     # jpackage app images contain the Java runtime libraries used by the native
     # launcher but may omit java.exe itself. The in-app updater needs that
     # matching launcher to run independently after SmartStock exits.
@@ -125,6 +164,7 @@ try {
         "@echo off",
         'start "" "%~dp0SmartStock.exe" --setup-wizard'
     )
+    }
     # The in-app updater installs only the application JAR and dependency
     # directory. Keep both at the archive root; a ZIP of the complete jpackage
     # image nests them under SmartStock\app and cannot be applied by the
@@ -162,6 +202,14 @@ try {
         if ($ArchiveNames -notcontains 'dependency/cloudflared/windows-amd64/cloudflared.exe') {
             throw 'The updater archive is missing its pinned Cloudflare client.'
         }
+        if ($ArchiveNames -notcontains 'dependency/catalog-studio/catalog-studio-model-NOTICE.txt' -or
+            $ArchiveNames -notcontains 'dependency/catalog-studio/birefnet-LICENSE.txt' -or
+            -not ($ArchiveNames | Where-Object { $_ -like 'dependency/onnxruntime-*.jar' })) {
+            throw 'The updater archive is missing the built-in catalog photo processor.'
+        }
+        if ($ArchiveNames | Where-Object { $_ -like '*.onnx' }) {
+            throw 'AI models must be published separately from application updates.'
+        }
         if ($ArchiveNames | Where-Object { $_ -like "SmartStock/*" }) {
             throw "The Windows updater archive contains an incompatible nested SmartStock app image."
         }
@@ -169,12 +217,25 @@ try {
         $Archive.Dispose()
     }
     $Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Zip).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath "$Zip.sha256" -Encoding ASCII -Value "$Hash  $([IO.Path]::GetFileName($Zip))"
     Write-Host "Release artifact: $Zip"
     Write-Host "Version: $Version"
     Write-Host "SHA-256: $Hash"
 
+    if ($UpdateOnly) {
+        Write-Host "Update-only package: no installer was created."
+        if ($Publish) {
+            $VersionParts = $Version.Split('.')
+            $ReleaseBuildNumber = [int]$VersionParts[0] * 100000 + [int]$VersionParts[1] * 1000 + [int]$VersionParts[2]
+            $NotesPath = Join-Path $Root "release-notes-$Version.txt"
+            if (-not (Test-Path -LiteralPath $NotesPath)) { throw 'Release notes are required to publish this build.' }
+            & (Join-Path $PSScriptRoot 'publish-r2-update-windows.ps1') -Artifact $Zip -Version $Version -BuildNumber $ReleaseBuildNumber -ReleaseNotes $NotesPath
+        }
+        return
+    }
+
     $InstallerScript = Join-Path $Work "SmartStock.iss"
-    $InstallerBaseName = "smartstock-windows-setup-$Version"
+    $InstallerBaseName = if ($RegisterOnly) { "smartstock-windows-register-setup-$Version" } else { "smartstock-windows-setup-$Version" }
     Set-Content -LiteralPath $InstallerScript -Encoding UTF8 -Value @"
 [Setup]
 AppId={{D86B7442-B5CB-4DE5-A767-16623783C468}
@@ -190,6 +251,7 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=commandline
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\SmartStock.exe
@@ -254,7 +316,20 @@ end;
     $InstallerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Installer).Hash.ToLowerInvariant()
     Write-Host "Installer artifact: $Installer"
     Write-Host "Installer SHA-256: $InstallerHash"
-    Write-Host "The server package includes Java. PostgreSQL is installed through Guided Setup."
+    Set-Content -LiteralPath "$Installer.sha256" -Encoding ASCII -Value "$InstallerHash  $([IO.Path]::GetFileName($Installer))"
+    if ($Publish) {
+        $VersionParts = $Version.Split('.')
+        $ReleaseBuildNumber = [int]$VersionParts[0] * 100000 + [int]$VersionParts[1] * 1000 + [int]$VersionParts[2]
+        $NotesPath = Join-Path $Root "release-notes-$Version.txt"
+        if (-not (Test-Path -LiteralPath $NotesPath)) { throw 'Release notes are required to publish this build.' }
+        & (Join-Path $PSScriptRoot 'publish-r2-update-windows.ps1') -Artifact $Zip -Version $Version -BuildNumber $ReleaseBuildNumber -ReleaseNotes $NotesPath -Installer $Installer
+    }
+    if ($RegisterOnly) {
+        Write-Host "The register installer includes Java and omits the PostgreSQL server installer."
+    } else {
+        Write-Host "The all-in-one installer includes Java and a verified PostgreSQL installer for server setup."
+    }
+
 } finally {
     $ResolvedWork = [System.IO.Path]::GetFullPath($Work)
     $TempRoot = [System.IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'

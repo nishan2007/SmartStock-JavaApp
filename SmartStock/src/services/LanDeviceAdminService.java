@@ -16,10 +16,17 @@ final class LanDeviceAdminService{
     static Map<String,Object>sessions(Connection c,JsonObject b,int userId)throws Exception{require(c,userId);return map("sessions",DeviceManagementService.getDeviceSessionHistory(c,required(b,"deviceId"),25));}
     static Map<String,Object>update(Connection c,JsonObject b,int userId)throws Exception{require(c,userId);String action=required(b,"action"),id=required(b,"deviceId");
         switch(action){
-            case "ACCESS"->DeviceManagementService.updateDeviceApproval(c,id,userId,
+            case "ACCESS"->{DeviceManagementService.updateDeviceApproval(c,id,userId,
                     bool(b,"approved"),bool(b,"persistentLoginAllowed"),
                     bool(b,"autoLogoutEnabled"),autoLogoutMinutes(b),
                     bool(b,"allowSales"),bool(b,"allowOrders"),text(b,"notes"));
+                if(b.has("allowStudio")&&!b.get("allowStudio").isJsonNull()) {
+                    boolean studio=bool(b,"allowStudio");
+                    try(var p=c.prepareStatement("UPDATE devices SET allow_studio=? WHERE device_id=?::uuid")){p.setBoolean(1,studio);p.setString(2,id);p.executeUpdate();}
+                    if(!studio)try(var p=c.prepareStatement("UPDATE lan_api_sessions SET revoked_at=now() WHERE device_id=?::uuid AND client_application='smartstudio' AND revoked_at IS NULL")){p.setString(1,id);p.executeUpdate();}
+                    SyncOutboxService.recordEvent(c,"DEVICE_STUDIO_ACCESS_UPDATED",Map.of("device_id",id,"allow_studio",studio));
+                }
+            }
             case "BLOCK"->{DeviceManagementService.blockDevice(c,id,userId,text(b,"notes"));DeviceCredentialService.revokeCredential(c,id,userId);}
             case "NAME"->DeviceManagementService.updateDeviceFriendlyName(c,id,required(b,"deviceName"));
             case "RECEIPT_CODE"->DeviceManagementService.updateDeviceReceiptCode(c,id,required(b,"receiptCode"));

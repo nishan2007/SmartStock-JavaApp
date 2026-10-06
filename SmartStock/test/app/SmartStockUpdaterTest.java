@@ -15,6 +15,76 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SmartStockUpdaterTest {
     @Test
+    void failureMessageKeepsServerReadinessContextAndUnderlyingDetail() throws Exception {
+        var method = SmartStockUpdater.class.getDeclaredMethod("rootMessage", Throwable.class);
+        method.setAccessible(true);
+        String message = (String) method.invoke(null, new java.io.IOException(
+                "The updated background server did not become ready. Check sync-service.log.",
+                new java.nio.file.NoSuchFileException("lan-api.cer")));
+        assertTrue(message.contains("background server did not become ready"));
+        assertTrue(message.contains("sync-service.log"));
+        assertTrue(message.contains("lan-api.cer"));
+        String included = "The updated background server did not become ready: lan-api.cer";
+        assertEquals(included, method.invoke(null, new java.io.IOException(included,
+                new java.nio.file.NoSuchFileException("lan-api.cer"))));
+    }
+    @Test
+    void replacementStagesCompleteLibrariesAndLauncherBeforeSwapping(@TempDir Path temp) throws Exception {
+        Path app = temp.resolve("app"), payload = temp.resolve("payload");
+        Files.createDirectories(app.resolve("dependency"));
+        Files.createDirectories(payload.resolve("dependency"));
+        Files.writeString(app.resolve("inventory-management-1.0.226.jar"), "old-app");
+        Files.writeString(app.resolve("dependency/old.jar"), "old-library");
+        Files.writeString(app.resolve("SmartStock.cfg"), "app.classpath=$APPDIR\\inventory-management-1.0.226.jar\n");
+        Files.writeString(app.resolve("keep.txt"), "keep");
+        Files.writeString(payload.resolve("inventory-management-1.0.231.jar"), "new-app");
+        Files.writeString(payload.resolve("dependency/postgresql-test.jar"), "new-driver");
+        SmartStockUpdater.replaceApp(app, payload);
+        assertEquals("new-app", Files.readString(app.resolve("inventory-management-1.0.231.jar")));
+        assertEquals("new-driver", Files.readString(app.resolve("dependency/postgresql-test.jar")));
+        assertTrue(Files.readString(app.resolve("SmartStock.cfg")).contains("1.0.231.jar"));
+        assertEquals("keep", Files.readString(app.resolve("keep.txt")));
+        assertFalse(Files.exists(app.resolve("inventory-management-1.0.226.jar")));
+    }
+
+    @Test
+    void invalidReplacementLeavesExistingInstallationIntact(@TempDir Path temp) throws Exception {
+        Path app = temp.resolve("app"), payload = temp.resolve("payload");
+        Files.createDirectories(app.resolve("dependency"));
+        Files.createDirectories(payload.resolve("dependency"));
+        Files.writeString(app.resolve("inventory-management-1.0.226.jar"), "old-app");
+        Files.writeString(app.resolve("dependency/gson.jar"), "old-library");
+        Files.writeString(payload.resolve("inventory-management-1.0.231.jar"), "new-app");
+        assertThrows(java.io.IOException.class, () -> SmartStockUpdater.replaceApp(app, payload));
+        assertEquals("old-app", Files.readString(app.resolve("inventory-management-1.0.226.jar")));
+        assertEquals("old-library", Files.readString(app.resolve("dependency/gson.jar")));
+    }
+
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.WINDOWS)
+    void lockedExecutableCannotLeaveLibrariesPartlyDeleted(@TempDir Path temp) throws Exception {
+        Path app = temp.resolve("app"), payload = temp.resolve("payload");
+        Files.createDirectories(app.resolve("dependency"));
+        Files.createDirectories(payload.resolve("dependency"));
+        Files.writeString(app.resolve("inventory-management-1.0.226.jar"), "old-app");
+        Files.writeString(app.resolve("dependency/gson.jar"), "old-library");
+        Path locked = app.resolve("dependency/cloudflared.exe");
+        Files.writeString(locked, "locked");
+        Files.writeString(payload.resolve("inventory-management-1.0.231.jar"), "new-app");
+        Files.writeString(payload.resolve("dependency/postgresql-test.jar"), "new-driver");
+        try (var channel = java.nio.channels.FileChannel.open(locked, java.nio.file.StandardOpenOption.READ,
+                com.sun.nio.file.ExtendedOpenOption.NOSHARE_DELETE)) {
+            try {
+                SmartStockUpdater.replaceApp(app, payload);
+                assertEquals("new-driver", Files.readString(app.resolve("dependency/postgresql-test.jar")));
+                assertTrue(Files.exists(app.resolve("inventory-management-1.0.231.jar")));
+            } catch (java.io.IOException expected) {
+                assertEquals("old-library", Files.readString(app.resolve("dependency/gson.jar")));
+                assertEquals("old-app", Files.readString(app.resolve("inventory-management-1.0.226.jar")));
+            }
+        }
+    }
+    @Test
     void extractsPowerShellDirectoryEntries(@TempDir Path tempDir) throws Exception {
         Path zip = tempDir.resolve("release.zip");
         try (var out = new java.util.zip.ZipOutputStream(Files.newOutputStream(zip))) {
@@ -67,16 +137,17 @@ class SmartStockUpdaterTest {
     @Test
     void rewritesBackgroundSyncLaunchersForUpdatedJar() {
         Path macAppDir = Path.of("/Users/test/.smartstock/sync-service/app");
-        assertEquals("#!/usr/bin/env bash\nset -euo pipefail\n"
-                        + "cd '/Users/test/.smartstock/sync-service/app'\n"
-                        + "exec java -Djava.awt.headless=true -Dapple.awt.UIElement=true -jar "
-                        + "'inventory-management-1.0.11.jar' --sync-service\n",
-                SmartStockUpdater.syncLauncherContent(false, macAppDir, "inventory-management-1.0.11.jar"));
+        String macLauncher = SmartStockUpdater.syncLauncherContent(false, macAppDir, "inventory-management-1.0.11.jar");
+        assertTrue(macLauncher.contains("-Duser.home="));
+        assertTrue(macLauncher.contains("'inventory-management-1.0.11.jar' --sync-service"));
+        assertFalse(macLauncher.contains("exec java "));
 
         Path windowsAppDir = Path.of("C:\\Users\\test\\.smartstock\\sync-service\\app");
-        assertEquals("@echo off\r\ncd /d \"C:\\Users\\test\\.smartstock\\sync-service\\app\"\r\n"
-                        + "java -jar \"inventory-management-1.0.11.jar\" --sync-service\r\n",
-                SmartStockUpdater.syncLauncherContent(true, windowsAppDir, "inventory-management-1.0.11.jar"));
+        String windowsLauncher = SmartStockUpdater.syncLauncherContent(true, windowsAppDir, "inventory-management-1.0.11.jar");
+        assertTrue(windowsLauncher.contains("%SMARTSTOCK_SERVER_JAR%"));
+        assertTrue(windowsLauncher.contains("-Duser.home=\"C:\\Users\\test\""));
+        assertFalse(windowsLauncher.contains("java -jar"));
+        assertFalse(windowsLauncher.contains("1.0.11"));
     }
 
     @Test
@@ -240,8 +311,11 @@ class SmartStockUpdaterTest {
         assertTrue(script.contains("javaw.exe"));
         assertTrue(script.contains("Get-ScheduledTask"));
         assertTrue(script.contains("Register-ScheduledTask"));
-        assertTrue(script.contains("-Duser.home=\"C:\\Users\\test\""));
-        assertTrue(script.contains("inventory-management-1.0.52.jar"));
+        assertTrue(script.contains("run-smartstock-sync-service.cmd"));
+        assertFalse(script.contains("inventory-management-1.0.52.jar"));
+        assertTrue(script.contains("CreateShortcut"));
+        assertTrue(script.contains("Server task verification failed"));
+        assertTrue(script.contains("$ErrorActionPreference='Stop'"));
         assertTrue(script.contains("C:\\Users\\test\\.smartstock\\sync-service\\app"));
         assertTrue(script.contains("Set-ScheduledTask -TaskName 'SmartStockServerService'"));
         assertTrue(script.contains("$serviceUser='STORE\\test'"));

@@ -63,47 +63,57 @@ public final class CompanyBackupService {
     public static BackupSummary exportBackup(Path backupFile) throws SQLException, IOException {
         requirePhysicalServer();
         try (Connection conn = DB.getConnection()) {
-            List<TableInfo> tables = loadBackupTables(conn);
-            Map<String, StorageAsset> assets = new LinkedHashMap<>();
-            StringBuilder sql = new StringBuilder();
-            sql.append(BACKUP_HEADER).append('\n');
-            sql.append("-- Created: ").append(OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)).append('\n');
-            sql.append("-- Restore from Company Preferences > Restore Backup.\n\n");
-            sql.append("BEGIN;\n");
-            sql.append("SET LOCAL lock_timeout = '10s';\n");
-            sql.append("SET LOCAL statement_timeout = '5min';\n\n");
-
-            if (!tables.isEmpty()) {
-                sql.append("TRUNCATE TABLE ");
-                for (int i = 0; i < tables.size(); i++) {
-                    if (i > 0) {
-                        sql.append(", ");
-                    }
-                    sql.append(tables.get(i).qualifiedName());
-                }
-                sql.append(" RESTART IDENTITY CASCADE;\n\n");
-            }
-
-            int rowCount = 0;
-            for (TableInfo table : tables) {
-                int tableRows = appendTableData(conn, table, sql, assets);
-                rowCount += tableRows;
-                if (tableRows > 0) {
-                    sql.append('\n');
-                }
-            }
-            collectRegisteredImageAssets(conn, assets);
-
-            for (TableInfo table : tables) {
-                appendSequenceResets(table, sql);
-            }
-
-            sql.append("\nCOMMIT;\n");
+            conn.setReadOnly(true);
+            conn.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+            conn.setAutoCommit(false);
+            BackupData data = buildBackupData(conn);
             Files.createDirectories(backupFile.toAbsolutePath().getParent());
-            AssetWriteSummary assetSummary = writeBackupPackage(backupFile, sql.toString(), assets.values());
-            return new BackupSummary(tables.size(), rowCount, assetSummary.saved(), assetSummary.skipped());
+            AssetWriteSummary assetSummary = writeBackupPackage(backupFile, data.sql(), data.assets().values());
+            return new BackupSummary(data.tables(), data.rows(), assetSummary.saved(), assetSummary.skipped());
         }
     }
+
+    static BackupData buildBackupData(Connection conn) throws SQLException {
+        List<TableInfo> tables = loadBackupTables(conn);
+        Map<String, StorageAsset> assets = new LinkedHashMap<>();
+        StringBuilder sql = new StringBuilder();
+        sql.append(BACKUP_HEADER).append('\n');
+        sql.append("-- Created: ").append(OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME)).append('\n');
+        sql.append("-- Restore from Company Preferences > Restore Backup.\n\n");
+        sql.append("BEGIN;\n");
+        sql.append("SET LOCAL lock_timeout = '10s';\n");
+        sql.append("SET LOCAL statement_timeout = '5min';\n\n");
+
+        if (!tables.isEmpty()) {
+            sql.append("TRUNCATE TABLE ");
+            for (int i = 0; i < tables.size(); i++) {
+                if (i > 0) {
+                    sql.append(", ");
+                }
+                sql.append(tables.get(i).qualifiedName());
+            }
+            sql.append(" RESTART IDENTITY CASCADE;\n\n");
+        }
+
+        int rowCount = 0;
+        for (TableInfo table : tables) {
+            int tableRows = appendTableData(conn, table, sql, assets);
+            rowCount += tableRows;
+            if (tableRows > 0) {
+                sql.append('\n');
+            }
+        }
+        collectRegisteredImageAssets(conn, assets);
+
+        for (TableInfo table : tables) {
+            appendSequenceResets(table, sql);
+        }
+
+        sql.append("\nCOMMIT;\n");
+        return new BackupData(sql.toString(),tables.size(),rowCount,assets);
+    }
+
+    record BackupData(String sql,int tables,int rows,Map<String,StorageAsset> assets) { }
 
     public static BackupSummary restoreBackup(Path backupFile) throws SQLException, IOException {
         requirePhysicalServer();
@@ -129,15 +139,17 @@ public final class CompanyBackupService {
     private static List<TableInfo> loadBackupTables(Connection conn) throws SQLException {
         DatabaseMetaData metaData = conn.getMetaData();
         Map<String, TableInfo> tables = new LinkedHashMap<>();
-        try (ResultSet rs = metaData.getTables(null, "public", "%", new String[]{"TABLE"})) {
-            while (rs.next()) {
-                String schema = rs.getString("TABLE_SCHEM");
-                String name = rs.getString("TABLE_NAME");
-                if (!isBackupTable(name)) {
-                    continue;
+        for(String backupSchema:List.of("public","storefront")) {
+            try (ResultSet rs = metaData.getTables(null, backupSchema, "%", new String[]{"TABLE"})) {
+                while (rs.next()) {
+                    String schema = rs.getString("TABLE_SCHEM");
+                    String name = rs.getString("TABLE_NAME");
+                    if (!isBackupTable(name)) {
+                        continue;
+                    }
+                    TableInfo table = new TableInfo(schema, name);
+                    tables.put(table.key(), table);
                 }
-                TableInfo table = new TableInfo(schema, name);
-                tables.put(table.key(), table);
             }
         }
         for (TableInfo table : tables.values()) {
@@ -355,7 +367,7 @@ public final class CompanyBackupService {
     private static void appendSequenceResets(TableInfo table, StringBuilder sql) {
         for (ColumnInfo column : table.columns()) {
             String defaultValue = column.defaultValue() == null ? "" : column.defaultValue().toLowerCase(Locale.ROOT);
-            if (!defaultValue.contains("nextval(")) {
+            if (!defaultValue.contains("nextval(") && !column.alwaysIdentity()) {
                 continue;
             }
             sql.append("SELECT setval(pg_get_serial_sequence(")

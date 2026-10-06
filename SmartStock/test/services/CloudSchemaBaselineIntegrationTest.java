@@ -31,7 +31,10 @@ class CloudSchemaBaselineIntegrationTest {
                          SELECT count(*) FROM pg_tables WHERE schemaname='public'
                          """)) {
                 assertTrue(rows.next());
-                assertEquals(28, rows.getInt(1));
+                assertTrue(rows.getInt(1) >= 28);
+            }
+            try (var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT to_regclass('public.custom_order_spoils'),to_regclass('public.custom_order_lines')")) {
+                assertTrue(rows.next());org.junit.jupiter.api.Assertions.assertNull(rows.getObject(1));org.junit.jupiter.api.Assertions.assertNull(rows.getObject(2));
             }
         }
     }

@@ -1,0 +1,6 @@
+SmartStock 1.1.6
+
+- Adds a Compact print layout for quotations and invoices, with more room for item descriptions and dense item lists.
+- Shows Bill To and Total Saved above the stacked Subtotal and rounded Grand Total.
+- Adds a centered document barcode at the bottom of the Compact layout.
+- Centers the price-validity note and reduces the size and spacing of the Compact totals.

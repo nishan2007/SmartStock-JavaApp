@@ -100,14 +100,19 @@ public final class PostgresRuntimeService {
         utils.SecureFilePermissions.restrictDirectoryToOwner(setupDir);
         Path scriptPath = Files.createTempFile(setupDir, "install-postgresql-", ".ps1");
         Path logPath = Files.createTempFile(setupDir, "install-postgresql-", ".log");
+        Path installerTracePath = Files.createTempFile(setupDir, "postgresql-installer-trace-", ".log");
         Path optionPath = Files.createTempFile(setupDir, "postgresql-installer-", ".conf");
         Path bootstrapCredentialPath = LocalDatabaseBootstrapService.windowsBootstrapCredentialPath();
+        Path bundledInstaller = bundledPostgresInstaller(currentPackagedJar());
         utils.SecureFilePermissions.restrictFileToOwner(optionPath);
+        utils.SecureFilePermissions.restrictFileToOwner(installerTracePath);
         String script = """
                 $ErrorActionPreference = 'Stop'
                 $Log = %s
                 $OptionFile = %s
                 $BootstrapCredential = %s
+                $BundledInstaller = %s
+                $InstallerTrace = %s
                 try {
                   $Existing = Get-ChildItem 'C:\\Program Files\\PostgreSQL\\*\\bin\\psql.exe' -ErrorAction SilentlyContinue |
                     Sort-Object FullName -Descending | Select-Object -First 1
@@ -123,11 +128,13 @@ public final class PostgresRuntimeService {
                       'unattendedmodeui=minimal',
                       'superpassword=' + $SuperPassword
                     )
-                    $BundledInstaller = Join-Path (Split-Path -Parent $PSScriptRoot) 'postgresql-installer.exe'
-                    if (Test-Path $BundledInstaller) {
+                    if ($BundledInstaller -and (Test-Path -LiteralPath $BundledInstaller -PathType Leaf)) {
                       $Install = Start-Process -FilePath $BundledInstaller `
-                        -ArgumentList @('--optionfile', $OptionFile) -Wait -PassThru
-                      if ($Install.ExitCode -ne 0) { throw "PostgreSQL installer exited with code $($Install.ExitCode)." }
+                        -ArgumentList @('--optionfile', ('"{0}"' -f $OptionFile),
+                          '--debugtrace', ('"{0}"' -f $InstallerTrace)) -Wait -PassThru
+                      if ($Install.ExitCode -ne 0) {
+                        throw "PostgreSQL installer exited with code $($Install.ExitCode). Installer details: $InstallerTrace"
+                      }
                     } elseif (Get-Command winget.exe -ErrorAction SilentlyContinue) {
                       Write-Host 'Starting PostgreSQL installation. This normally takes 5-15 minutes.'
                       Write-Host 'SmartStock will print a progress message every 15 seconds; leave this window open.'
@@ -216,17 +223,21 @@ public final class PostgresRuntimeService {
                 """.formatted(
                 powerShellSingleQuoted(logPath.toString()),
                 powerShellSingleQuoted(optionPath.toString()),
-                powerShellSingleQuoted(bootstrapCredentialPath.toString()));
+                powerShellSingleQuoted(bootstrapCredentialPath.toString()),
+                powerShellSingleQuoted(bundledInstaller == null ? "" : bundledInstaller.toString()),
+                powerShellSingleQuoted(installerTracePath.toString()));
         Files.writeString(scriptPath, script, StandardCharsets.UTF_8);
         utils.SecureFilePermissions.restrictFileToOwner(scriptPath);
         utils.SecureFilePermissions.restrictFileToOwner(logPath);
         String elevate = "$ErrorActionPreference='Stop';"
                 + "$p=Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru "
                 + "-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"
-                + powerShellSingleQuoted(scriptPath.toString()) + ");"
+                + powerShellSingleQuoted("\"" + scriptPath + "\"") + ");"
                 + "exit $p.ExitCode";
+        boolean installSucceeded = false;
         try {
             CommandResult elevated = runPowerShell(elevate, Duration.ofMinutes(20));
+            installSucceeded = elevated.success();
             String log = Files.isRegularFile(logPath)
                     ? Files.readString(logPath, StandardCharsets.UTF_8).trim() : "";
             return new CommandResult(elevated.success(),
@@ -235,6 +246,10 @@ public final class PostgresRuntimeService {
             Files.deleteIfExists(scriptPath);
             Files.deleteIfExists(logPath);
             Files.deleteIfExists(optionPath);
+            if (Files.isRegularFile(installerTracePath)
+                    && (installSucceeded || Files.size(installerTracePath) == 0)) {
+                Files.deleteIfExists(installerTracePath);
+            }
             if (Files.isRegularFile(bootstrapCredentialPath)) {
                 utils.SecureFilePermissions.restrictFileToOwner(bootstrapCredentialPath);
             }
@@ -324,15 +339,32 @@ public final class PostgresRuntimeService {
     }
 
     public static CommandResult startLanService() throws Exception {
-        ensureSyncServiceInstalled();
+        CommandResult installation = ensureSyncServiceInstalled();
+        if (!installation.success()) return installation;
         if (isWindows()) {
             return runPowerShell("""
                     $ErrorActionPreference = 'Stop'
                     $task = Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop
                     Start-ScheduledTask -InputObject $task -ErrorAction Stop
-                    Start-Sleep -Milliseconds 500
+                    $deadline = (Get-Date).AddSeconds(45)
+                    $online = $false
+                    do {
+                      $client = New-Object System.Net.Sockets.TcpClient
+                      try {
+                        $connect = $client.ConnectAsync('127.0.0.1', 8443)
+                        if ($connect.Wait(500) -and $client.Connected) { $online = $true }
+                      } catch { } finally { $client.Dispose() }
+                      if (-not $online) { Start-Sleep -Milliseconds 500 }
+                    } while (-not $online -and (Get-Date) -lt $deadline)
                     Get-ScheduledTask -TaskName SmartStockServerService | Format-List TaskName,State
-                    """, Duration.ofSeconds(30));
+                    if (-not $online) {
+                      Get-ScheduledTaskInfo -TaskName SmartStockServerService |
+                        Format-List LastRunTime,LastTaskResult
+                      Write-Output 'The Windows task was started, but SmartStock LAN port 8443 did not open. Check Sync Status for the database, server role, or LAN startup error.'
+                      exit 1
+                    }
+                    Write-Output 'SmartStock LAN port 8443 is accepting connections.'
+                    """, Duration.ofSeconds(60));
         }
         return runShell("""
                 set -e
@@ -602,14 +634,98 @@ public final class PostgresRuntimeService {
         CommandResult result=runPowerShell("""
                 $task=Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction SilentlyContinue
                 if(-not $task){exit 1}
+                # VERIFY_SMARTSTOCK_FIREWALL
                 $action=$task.Actions | Select-Object -First 1
                 if($action.Execute -and
                    (($action.Execute -match '(?i)SmartStock\\\\runtime\\\\bin\\\\javaw?\\.exe$' -and $action.Arguments -match '(?i)-jar.+--sync-service') -or
-                    ($action.Execute -match '(?i)SmartStock\\\\SmartStock\\.exe$' -and $action.Arguments -match '(?i)(^|\\s)--sync-service($|\\s)') -or
-                    ($action.Execute -match '(?i)\\\\explorer\\.exe$' -and $action.Arguments -match '(?i)SmartStockServer\\.lnk'))) { exit 0 }
+                    ($action.Execute -match '(?i)SmartStock\\\\SmartStock\\.exe$' -and $action.Arguments -match '(?i)(^|\\s)--sync-service($|\\s)'))) { exit 0 }
                 exit 1
-                """,Duration.ofSeconds(30));
+                """.replace("# VERIFY_SMARTSTOCK_FIREWALL",
+                        windowsLanFirewallVerification(SupabaseProjectConfig.loadLanSubnet())),Duration.ofSeconds(30));
         return result.success();
+    }
+
+    /** Local machine administrator approval enforces firewall changes; no cloud access is required. */
+    public static CommandResult repairLanFirewall(String lanSubnet) throws Exception {
+        if (!isWindows() || DatabaseConfig.load().mode() != data.DatabaseMode.SERVER) {
+            return new CommandResult(false, "Firewall repair is available only on a Windows store server.");
+        }
+        if (!validLanSubnet(lanSubnet)) {
+            return new CommandResult(false, "Enter LocalSubnet or the store's LAN IP/CIDR before repairing the firewall.");
+        }
+        Path setupDir = Path.of(System.getProperty("user.home"), ".smartstock", "setup");
+        Files.createDirectories(setupDir);
+        utils.SecureFilePermissions.restrictDirectoryToOwner(setupDir);
+        Path scriptPath = Files.createTempFile(setupDir, "repair-lan-firewall-", ".ps1");
+        Path logPath = Files.createTempFile(setupDir, "repair-lan-firewall-", ".log");
+        try {
+            Files.writeString(scriptPath, windowsLanFirewallRepairScript(lanSubnet.trim(), logPath), StandardCharsets.UTF_8);
+            utils.SecureFilePermissions.restrictFileToOwner(scriptPath);
+            utils.SecureFilePermissions.restrictFileToOwner(logPath);
+            String elevate = "$ErrorActionPreference='Stop'; $p=Start-Process -FilePath 'powershell.exe' "
+                    + "-WindowStyle Hidden -Verb RunAs -Wait -PassThru "
+                    + "-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"
+                    + powerShellSingleQuoted("\"" + scriptPath + "\"") + "); exit $p.ExitCode";
+            CommandResult result = runPowerShell(elevate, Duration.ofMinutes(2));
+            String log = Files.readString(logPath, StandardCharsets.UTF_8).trim();
+            return new CommandResult(result.success(), log.isBlank() ? result.output() : log);
+        } finally {
+            Files.deleteIfExists(scriptPath);
+            Files.deleteIfExists(logPath);
+        }
+    }
+
+    static String windowsLanFirewallVerification(String lanSubnet) {
+        if (!validLanSubnet(lanSubnet)) throw new IllegalArgumentException("Invalid store LAN subnet.");
+        return """
+                $ExpectedScope = %s
+                foreach ($Spec in @(
+                  @{ Name='SmartStock LAN API 8443'; Port='8443'; Protocol='TCP'; Number='6' },
+                  @{ Name='SmartStock LAN Discovery 18443'; Port='18443'; Protocol='UDP'; Number='17' }
+                )) {
+                  $Rules = @(Get-NetFirewallRule -PolicyStore ActiveStore -DisplayName $Spec.Name -ErrorAction SilentlyContinue)
+                  $Verified = $false
+                  foreach ($Rule in $Rules) {
+                    $Ports = $Rule | Get-NetFirewallPortFilter
+                    $Addresses = $Rule | Get-NetFirewallAddressFilter
+                    if ($Rule.Enabled -eq 'True' -and $Rule.Direction -eq 'Inbound' -and
+                        $Rule.Action -eq 'Allow' -and $Rule.Profile -eq 'Private' -and
+                        ($Ports.Protocol -eq $Spec.Protocol -or $Ports.Protocol -eq $Spec.Number) -and
+                        ($Ports.LocalPort -join ',') -eq $Spec.Port -and
+                        ($Addresses.RemoteAddress -join ',') -eq $ExpectedScope) { $Verified = $true }
+                  }
+                  if (-not $Verified) { throw ('Firewall rule is missing, disabled, or has an incorrect port/profile/scope: ' + $Spec.Name) }
+                }
+                """.formatted(powerShellSingleQuoted(lanSubnet.trim()));
+    }
+
+    static String windowsLanFirewallRepairScript(String lanSubnet, Path logPath) {
+        return """
+                $ErrorActionPreference = 'Stop'
+                $Log = %s
+                try {
+                  $Scope = %s
+                  foreach ($Spec in @(
+                    @{ Name='SmartStock LAN API 8443'; Port=8443; Protocol='TCP' },
+                    @{ Name='SmartStock LAN Discovery 18443'; Port=18443; Protocol='UDP' }
+                  )) {
+                    Get-NetFirewallRule -DisplayName $Spec.Name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+                    New-NetFirewallRule -DisplayName $Spec.Name -Direction Inbound -Action Allow `
+                      -Protocol $Spec.Protocol -LocalPort $Spec.Port -Profile Private -RemoteAddress $Scope | Out-Null
+                  }
+                  %s
+                  'SmartStock HTTPS and discovery firewall rules verified for the private store LAN.' | Set-Content -LiteralPath $Log
+                  Get-NetConnectionProfile | Format-Table InterfaceAlias,NetworkCategory | Out-String | Add-Content -LiteralPath $Log
+                  Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -ne '127.0.0.1' } |
+                    Format-Table InterfaceAlias,IPAddress | Out-String | Add-Content -LiteralPath $Log
+                  Add-Content -LiteralPath $Log -Value 'Test port 8443 from a register to confirm end-to-end connectivity. Router isolation and overriding block policies may still prevent access.'
+                  exit 0
+                } catch {
+                  $_ | Out-String | Set-Content -LiteralPath $Log
+                  exit 1
+                }
+                """.formatted(powerShellSingleQuoted(logPath.toString()), powerShellSingleQuoted(lanSubnet.trim()),
+                        windowsLanFirewallVerification(lanSubnet));
     }
 
     /**
@@ -849,6 +965,14 @@ public final class PostgresRuntimeService {
                     Remove-NetFirewallRule -ErrorAction SilentlyContinue
                   New-NetFirewallRule -DisplayName $RuleName -Direction Inbound -Action Allow `
                     -Protocol TCP -LocalPort 8443 -RemoteAddress %s -Profile Private | Out-Null
+                  $DiscoveryRuleName = 'SmartStock LAN Discovery 18443'
+                  Get-NetFirewallRule -DisplayName $DiscoveryRuleName -ErrorAction SilentlyContinue |
+                    Remove-NetFirewallRule -ErrorAction SilentlyContinue
+                  $DiscoveryScope = (Get-NetFirewallRule -DisplayName $RuleName |
+                    Get-NetFirewallAddressFilter).RemoteAddress
+                  New-NetFirewallRule -DisplayName $DiscoveryRuleName -Direction Inbound -Action Allow `
+                    -Protocol UDP -LocalPort 18443 -RemoteAddress $DiscoveryScope -Profile Private | Out-Null
+                  # VERIFY_SMARTSTOCK_FIREWALL
                   Get-ScheduledTask -TaskName SmartStockServerService -ErrorAction Stop |
                     Format-List TaskName,State | Out-String | Set-Content -LiteralPath $Log
                   Add-Content -LiteralPath $Log -Value 'Windows service and private-LAN firewall rule installed.'
@@ -865,7 +989,7 @@ public final class PostgresRuntimeService {
                 powerShellSingleQuoted(serviceExecutable.toString()),
                 powerShellSingleQuoted(serviceArguments),
                 powerShellSingleQuoted(lanSubnet)
-        );
+        ).replace("# VERIFY_SMARTSTOCK_FIREWALL", windowsLanFirewallVerification(lanSubnet));
     }
 
     static String windowsProductionInstallScript(
@@ -957,6 +1081,12 @@ public final class PostgresRuntimeService {
         }
     }
 
+    static Path bundledPostgresInstaller(Path packagedJar) {
+        if (packagedJar == null || packagedJar.getParent() == null
+                || packagedJar.getParent().getParent() == null) return null;
+        return packagedJar.getParent().getParent().resolve("postgresql-installer.exe");
+    }
+
     static Path findPackagedJar(Path applicationDirectory) {
         if (applicationDirectory == null) return null;
         for (Path directory : List.of(applicationDirectory.resolve("app"),
@@ -979,19 +1109,9 @@ public final class PostgresRuntimeService {
 
     static String installedSyncLauncherContent(boolean windows, Path appDir, String jarName) {
         if (windows) {
-            Path serviceDir = appDir.getParent();
-            String serviceDirText;
-            if (serviceDir != null) {
-                serviceDirText = serviceDir.toString();
-            } else {
-                String appDirText = appDir.toString().replace('/', '\\');
-                int separator = appDirText.lastIndexOf('\\');
-                serviceDirText = separator < 0 ? appDirText : appDirText.substring(0, separator);
-            }
-            return "@echo off\r\ncd /d \"" + appDir + "\"\r\n"
-                    + windowsServiceCommand(appDir.resolve(jarName), jarName)
-                    + " >> \"" + serviceDirText + "\\sync-service.log"
-                    + "\" 2>&1\r\n";
+            Path userHome = appDir.toAbsolutePath().getParent().getParent().getParent();
+            return app.ServerUpdateSupport.windowsLauncher(
+                    Path.of(System.getProperty("java.home"), "bin", "java.exe"), appDir, userHome);
         }
         return "#!/usr/bin/env bash\nset -euo pipefail\n"
                 + "cd " + shellSingleQuoted(unixPath(appDir)) + "\n"
@@ -1047,14 +1167,14 @@ public final class PostgresRuntimeService {
                 """, Duration.ofSeconds(30));
     }
 
-    private static boolean isSyncServiceInstalled(String statusOutput) {
+    static boolean isSyncServiceInstalled(String statusOutput) {
         if (statusOutput == null || statusOutput.isBlank()) {
             return false;
         }
         String lower = statusOutput.toLowerCase(Locale.ROOT);
                 return lower.contains("com.smartstock.sync")
-                || lower.contains("taskname:") && lower.contains("smartstockserverservice")
-                || lower.contains("taskname:") && lower.contains("smartstockbackgroundsync")
+                || lower.matches("(?s).*taskname\\s*:\\s*smartstockserverservice\\b.*")
+                || lower.matches("(?s).*taskname\\s*:\\s*smartstockbackgroundsync\\b.*")
                 || lower.contains("task to run:") && lower.contains("run-smartstock-sync-service");
     }
 

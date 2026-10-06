@@ -45,8 +45,8 @@ public final class CashDrawerCloseReceiptPrinter {
         CompanyCustomizationManager.ReceiptSettings settings = loadReceiptSettings();
         String text = formatText(session, cashInHand, floatCash, breakdown, cashHandlers, returnedAmount, settings);
         byte[] escPosContent = formatEscPos(text, settings);
-        if (format == HardwareSettingsManager.PrintFormat.RECEIPT_40
-                && NativeEscPosTransport.sendIfEnabled(escPosContent) != null) return;
+        // The receipt destination takes precedence over a saved Windows queue format.
+        if (NativeEscPosTransport.sendIfEnabled(escPosContent) != null) return;
         PrintService service = printer == null
                 ? PrintServiceLookup.lookupDefaultPrintService()
                 : HardwareSettingsManager.findPrintService(printer.systemName());

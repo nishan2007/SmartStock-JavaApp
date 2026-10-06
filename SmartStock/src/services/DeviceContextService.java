@@ -15,7 +15,7 @@ public final class DeviceContextService {
     }
 
     public static String currentDeviceId() {
-        return blankToNull(SessionManager.getCurrentDeviceId());
+        return blankToNull(ServerRequestIdentity.deviceId());
     }
 
     public static String currentDeviceName() {

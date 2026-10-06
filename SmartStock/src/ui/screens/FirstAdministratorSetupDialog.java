@@ -11,6 +11,8 @@ import java.util.List;
 /** Guided first-administrator transfer or creation after Supabase initialization. */
 final class FirstAdministratorSetupDialog extends JDialog {
     private final JTabbedPane choices = new JTabbedPane();
+    private final JTextField existingEmail = new JTextField();
+    private final JPasswordField existingPassword = new JPasswordField();
     private final JComboBox<String> sourceType =
             new JComboBox<>(new String[]{"Development profile", "Other source database"});
     private final JTextField sourceUrl =
@@ -27,20 +29,23 @@ final class FirstAdministratorSetupDialog extends JDialog {
     private final JPasswordField newPassword = new JPasswordField();
     private final JPasswordField newConfirmPassword = new JPasswordField();
     private final JButton finishButton = new JButton("Create First Administrator");
-    private final JLabel status = new JLabel("Choose how to create the first production administrator.");
+    private final JLabel status = new JLabel("Choose an administrator for this store.");
     private final Runnable onComplete;
 
     FirstAdministratorSetupDialog(Window owner, Runnable onComplete) {
-        super(owner, "Create First Administrator", ModalityType.APPLICATION_MODAL);
+        super(owner, "Set Up Store Administrator", ModalityType.APPLICATION_MODAL);
         this.onComplete = onComplete == null ? () -> { } : onComplete;
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setSize(780, 610);
         setLocationRelativeTo(owner);
 
-        choices.addTab("Transfer Existing Administrator", transferPanel());
+        choices.addTab("Use Existing Online Administrator", existingOnlinePanel());
+        choices.addTab("Transfer from Another Database", transferPanel());
         choices.addTab("Create New Administrator", newUserPanel());
         choices.addChangeListener(event -> finishButton.setText(choices.getSelectedIndex() == 0
+                ? "Use Existing Administrator" : choices.getSelectedIndex() == 1
                 ? "Transfer First Administrator" : "Create First Administrator"));
+        finishButton.setText("Use Existing Administrator");
         sourceType.addActionListener(event -> refreshSourceFields());
         loadAdminsButton.addActionListener(event -> loadAdministrators());
         finishButton.addActionListener(event -> finish());
@@ -64,6 +69,23 @@ final class FirstAdministratorSetupDialog extends JDialog {
         sourceUser.setText(development.user());
         refreshSourceFields();
         ThemeManager.applyToWindow(this);
+    }
+
+    private JPanel existingOnlinePanel() {
+        JPanel panel = formPanel();
+        GridBagConstraints gbc = constraints();
+        int row = 0;
+        row = add(panel, gbc, row, "Existing administrator email:", existingEmail);
+        row = add(panel, gbc, row, "Current login password:", existingPassword);
+        gbc.gridy = row;
+        gbc.gridx = 0;
+        gbc.gridwidth = 2;
+        panel.add(note("""
+                Sign in with an existing SmartStock administrator from this Supabase project.
+                SmartStock grants that same account access to this store. Its password and
+                access to other stores stay the same.
+                """), gbc);
+        return panel;
     }
 
     private JPanel transferPanel() {
@@ -162,11 +184,15 @@ final class FirstAdministratorSetupDialog extends JDialog {
     }
 
     private void finish() {
+        if (choices.getSelectedIndex() == 0) {
+            linkExistingOnlineAdministrator();
+            return;
+        }
         ServerFirstAdministratorService.Identity identity;
         char[] entered;
         char[] confirmation;
         try {
-            if (choices.getSelectedIndex() == 0) {
+            if (choices.getSelectedIndex() == 1) {
                 identity = (ServerFirstAdministratorService.Identity) sourceAdmins.getSelectedItem();
                 if (identity == null) throw new IllegalArgumentException(
                         "Load and select an active administrator.");
@@ -233,6 +259,43 @@ final class FirstAdministratorSetupDialog extends JDialog {
                     }
                 };
         worker.execute();
+    }
+
+    private void linkExistingOnlineAdministrator() {
+        String email = existingEmail.getText().trim();
+        char[] entered = existingPassword.getPassword();
+        if (email.isBlank() || entered.length == 0) {
+            Arrays.fill(entered, '\0');
+            JOptionPane.showMessageDialog(this, "Enter the existing administrator email and password.",
+                    "Existing Administrator", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        finishButton.setEnabled(false);
+        status.setText("Verifying and linking the existing administrator...");
+        new SwingWorker<ServerFirstAdministratorService.BootstrapResult, Void>() {
+            @Override
+            protected ServerFirstAdministratorService.BootstrapResult doInBackground() throws Exception {
+                return ServerFirstAdministratorService.linkExistingOnlineAdministrator(email, entered);
+            }
+
+            @Override
+            protected void done() {
+                Arrays.fill(entered, '\0');
+                existingPassword.setText("");
+                try {
+                    var result = get();
+                    JOptionPane.showMessageDialog(FirstAdministratorSetupDialog.this,
+                            result.message(), "Administrator Ready", JOptionPane.INFORMATION_MESSAGE);
+                    dispose();
+                    onComplete.run();
+                } catch (Exception ex) {
+                    finishButton.setEnabled(true);
+                    status.setText("The existing administrator could not be linked.");
+                    JOptionPane.showMessageDialog(FirstAdministratorSetupDialog.this,
+                            rootCauseMessage(ex), "Existing Administrator", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        }.execute();
     }
 
     private void clearPasswordFields() {

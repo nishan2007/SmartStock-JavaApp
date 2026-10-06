@@ -27,26 +27,6 @@ final class CrossStoreInventoryService {
 
     private CrossStoreInventoryService() { }
 
-    static RefreshResult refreshAll(Connection local, int currentLocationId) throws SQLException {
-        SyncSchemaInstaller.ensureSchema(local);
-        int stores = 0;
-        int rows = 0;
-        int failed = 0;
-        List<Store> locations = stores(local, currentLocationId);
-        for (Store store : locations) {
-            try {
-                int refreshed = refreshStore(local, store);
-                markStatus(local, store, refreshed, "CURRENT", null);
-                stores++;
-                rows += refreshed;
-            } catch (SQLException ex) {
-                failed++;
-                markStatus(local, store, cachedCount(local, store.locationId()),
-                        "STALE", safeError(ex));
-            }
-        }
-        return new RefreshResult(stores, rows, failed);
-    }
 
     static SearchResult search(Connection local, int userId, int currentLocationId,
                                String query, Integer storeId) throws Exception {
@@ -94,27 +74,18 @@ final class CrossStoreInventoryService {
         return new SearchResult(storeOptions(local, currentLocationId), List.copyOf(items));
     }
 
-    private static int refreshStore(Connection local, Store store) throws SQLException {
-        CloudSyncManifest manifest;
-        try {
-            manifest = CloudSyncManifest.fetchStoreSnapshot(store.locationId());
-        } catch (IOException ex) {
-            throw new SQLException("The verified snapshot for " + store.name()
-                    + " is unavailable.", ex);
-        }
-        String generationId = manifest.snapshotGenerationId();
+    static int rebuild(Connection local, Store store, Map<String,List<JsonObject>> source) throws SQLException {
         Map<Integer, JsonObject> products = keyed(
-                fetchTable(store.locationId(), generationId, "products"), "product_id");
+                source.get("products"), "product_id");
         Map<Integer, List<String>> additionalBarcodes = new HashMap<>();
-        for (JsonObject barcode : fetchTable(
-                store.locationId(), generationId, "product_barcodes")) {
+        for (JsonObject barcode : source.get("product_barcodes")) {
             int productId = integer(barcode, "product_id");
             String value = text(barcode, "barcode");
             if (value != null && !value.isBlank()) {
                 additionalBarcodes.computeIfAbsent(productId, ignored -> new ArrayList<>()).add(value);
             }
         }
-        List<JsonObject> inventory = fetchTable(store.locationId(), generationId, "inventory");
+        List<JsonObject> inventory = source.get("inventory");
         boolean oldAutoCommit = local.getAutoCommit();
         local.setAutoCommit(false);
         try (PreparedStatement delete = local.prepareStatement(
@@ -150,13 +121,13 @@ final class CrossStoreInventoryService {
                 count++;
             }
             insert.executeBatch();
-            local.commit();
+            if (oldAutoCommit) local.commit();
             return count;
         } catch (SQLException ex) {
-            local.rollback();
+            if (oldAutoCommit) local.rollback();
             throw ex;
         } finally {
-            local.setAutoCommit(oldAutoCommit);
+            if (oldAutoCommit) local.setAutoCommit(true);
         }
     }
 
@@ -247,28 +218,6 @@ final class CrossStoreInventoryService {
             }
         }
         return List.copyOf(result);
-    }
-
-    private static void markStatus(Connection local, Store store, int count,
-                                   String status, String error) throws SQLException {
-        try (PreparedStatement ps = local.prepareStatement("""
-                INSERT INTO sync_cross_store_inventory_status(
-                  source_location_id,store_name,row_count,status,last_error,refreshed_at)
-                VALUES(?,?,?,?,?,CURRENT_TIMESTAMP)
-                ON CONFLICT(source_location_id) DO UPDATE SET store_name=EXCLUDED.store_name,
-                  row_count=EXCLUDED.row_count,status=EXCLUDED.status,last_error=EXCLUDED.last_error,
-                  refreshed_at=CURRENT_TIMESTAMP
-                """)) {
-            ps.setInt(1, store.locationId()); ps.setString(2, store.name()); ps.setInt(3, count);
-            ps.setString(4, status); ps.setString(5, error); ps.executeUpdate();
-        }
-    }
-
-    private static int cachedCount(Connection local, int locationId) throws SQLException {
-        try (PreparedStatement ps = local.prepareStatement(
-                "SELECT COUNT(*) FROM sync_cross_store_inventory_cache WHERE source_location_id=?")) {
-            ps.setInt(1, locationId); try (ResultSet rs = ps.executeQuery()) { rs.next(); return rs.getInt(1); }
-        }
     }
 
     private static void requirePermission(Connection c, int userId) throws Exception {

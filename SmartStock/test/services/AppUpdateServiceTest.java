@@ -17,6 +17,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AppUpdateServiceTest {
+    @Test
+    void compatibilityRetryRecognizesTagFailuresWithoutRetryingCertificateErrors() {
+        assertTrue(AppUpdateService.isTlsTagMismatch(new IOException(
+                new javax.crypto.AEADBadTagException("Tag mismatch!"))));
+        assertTrue(AppUpdateService.isTlsTagMismatch(new javax.net.ssl.SSLException("Tag mismatch!")));
+        org.junit.jupiter.api.Assertions.assertFalse(AppUpdateService.isTlsTagMismatch(
+                new javax.net.ssl.SSLHandshakeException("Certificate changed")));
+        org.junit.jupiter.api.Assertions.assertFalse(AppUpdateService.isTlsTagMismatch(new IOException("disk full")));
+    }
     private static final String PROJECT_URL = "https://example.supabase.co";
 
     @Test
@@ -175,6 +184,30 @@ class AppUpdateServiceTest {
         AppUpdateService.extractUpdaterRunner(release, runner);
 
         assertEquals("incoming-updater", Files.readString(runner));
+    }
+
+    @Test
+    void stagesMacUpdaterFromVerifiedBundle(@TempDir Path tempDir) throws Exception {
+        Path release = tempDir.resolve("mac-release.zip");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(release))) {
+            zip.putNextEntry(new ZipEntry("SmartStock.app/Contents/app/inventory-management-1.0.249.jar"));
+            zip.write("new-mac-updater-with-migration".getBytes()); zip.closeEntry();
+        }
+        Path runner = tempDir.resolve("runner.jar");
+        AppUpdateService.extractUpdaterRunner(release, runner);
+        assertEquals("new-mac-updater-with-migration", Files.readString(runner));
+    }
+
+    @Test
+    void rejectsReleaseWithBothMacAndRootUpdaterJars(@TempDir Path tempDir) throws Exception {
+        Path release = tempDir.resolve("ambiguous-release.zip");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(release))) {
+            for (String name : List.of("inventory-management-1.0.249.jar",
+                    "SmartStock.app/Contents/app/inventory-management-1.0.249.jar")) {
+                zip.putNextEntry(new ZipEntry(name)); zip.write("updater".getBytes()); zip.closeEntry();
+            }
+        }
+        assertThrows(IOException.class, () -> AppUpdateService.extractUpdaterRunner(release, tempDir.resolve("runner.jar")));
     }
 
     @Test
