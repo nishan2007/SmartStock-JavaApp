@@ -55,7 +55,7 @@ public class CustomerPaymentHistory extends JFrame {
             for(LanApiClient.CustomerPaymentRecord row:result.payments())paymentModel.addRow(new Object[]{
                     row.paymentId(),formatTimestamp(row.paymentDateEpochMillis()),row.userName(),row.paymentMethod(),row.paymentReference(),
                     row.deviceName(),row.cashDrawerName(),currencyFormat.format(zero(row.paymentAmount())),row.target(),
-                    row.appliedAmount()==null?"":currencyFormat.format(row.appliedAmount()),currencyFormat.format(zero(row.chargeTotal())),
+                    row.appliedAmount()==null?"":currencyFormat.format(row.appliedAmount()),"PRICE_PENDING".equals(row.paymentStatus())?"Price pending":currencyFormat.format(zero(row.chargeTotal())),
                     currencyFormat.format(zero(row.chargePaid())),formatStatus(row.paymentStatus()),formatTimestamp(row.chargeDateEpochMillis()),row.transactionId()});
             summaryLabel.setText("Payments: "+result.paymentCount()+"    Rows: "+result.rowCount()+"    Total Paid: "
                     +currencyFormat.format(zero(result.totalPayments()))+"    Applied: "+currencyFormat.format(zero(result.totalApplied())));

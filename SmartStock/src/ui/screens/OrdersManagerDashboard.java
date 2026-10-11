@@ -49,6 +49,10 @@ public class OrdersManagerDashboard extends JFrame {
     private final DefaultTableModel exceptionModel;
     private final DefaultTableModel lowStockModel;
     private final DefaultTableModel auditModel;
+    private final DefaultTableModel deliveredModel=readOnlyModel("Order #","Customer","Phone","Delivered","Balance");
+    private final JComboBox<String> deliveredRange=new JComboBox<>(new String[]{"Past 7 days","All delivered orders"});
+    private JTabbedPane dashboardTabs;
+    private JPanel deliveredPanel;
     private final JLabel storeLabel = new JLabel();
     private ZoneId storeZone = resolveStoreZone();
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
@@ -105,7 +109,16 @@ public class OrdersManagerDashboard extends JFrame {
         content.add(buildMetricPanel(), BorderLayout.NORTH);
 
         JTabbedPane tabs = new JTabbedPane();
+        dashboardTabs=tabs;
         tabs.addTab("Action Queue", buildActionQueuePanel());
+        deliveredPanel=new JPanel(new BorderLayout(8,8));
+        JPanel deliveryControls=new JPanel(new FlowLayout(FlowLayout.LEFT));
+        deliveryControls.add(new JLabel("Delivered:"));deliveryControls.add(deliveredRange);
+        JButton refreshDelivered=new JButton("Refresh");deliveryControls.add(refreshDelivered);
+        deliveredPanel.add(deliveryControls,BorderLayout.NORTH);deliveredPanel.add(tablePanel(deliveredModel),BorderLayout.CENTER);
+        tabs.addTab("Delivered",deliveredPanel);
+        tabs.addChangeListener(e->{if(tabs.getSelectedComponent()==deliveredPanel)loadDelivered();});
+        deliveredRange.addActionListener(e->loadDelivered());refreshDelivered.addActionListener(e->loadDelivered());
         tabs.addTab("Refunds / Cancellations", tablePanel(exceptionModel));
         tabs.addTab("Low Stock", tablePanel(lowStockModel));
         tabs.addTab("Audit Log", tablePanel(auditModel));
@@ -202,7 +215,19 @@ public class OrdersManagerDashboard extends JFrame {
         return new JScrollPane(table);
     }
 
+    private void loadDelivered() {
+        boolean all=deliveredRange.getSelectedIndex()==1;
+        UiTaskRunner.submit(this,"orders-dashboard.delivered",()->services.LanApiClient.loadDeliveredCustomOrders(all),rows->{
+            if(all!=(deliveredRange.getSelectedIndex()==1))return;
+            deliveredModel.setRowCount(0);
+            for(var row:rows)deliveredModel.addRow(new Object[]{row.orderNumber(),row.customer(),row.phone(),
+                    row.deliveredAtEpochMillis()==0?"Not recorded":DATE_TIME_FORMAT.format(java.time.Instant.ofEpochMilli(row.deliveredAtEpochMillis()).atZone(storeZone)),
+                    "PENDING".equals(row.pricingState())?"Price pending":CURRENCY.format(row.balance())});
+        },failure->JOptionPane.showMessageDialog(this,"Unable to load delivered orders: "+failure.getMessage()));
+    }
+
     private void loadDashboard() {
+        if(dashboardTabs!=null&&dashboardTabs.getSelectedComponent()==deliveredPanel)loadDelivered();
         storeZone = resolveStoreZone();
         updateStoreLabel();
         CachedUiLoader.load(this, "orders-dashboard", services.LanOrdersDashboardService.Dashboard.class,
@@ -213,7 +238,7 @@ public class OrdersManagerDashboard extends JFrame {
     private void applyDashboard(services.LanOrdersDashboardService.Dashboard dashboard) {
         var metrics=dashboard.metrics();
             overdueLabel.setText("Overdue Orders: "+metrics.overdue());dueTodayLabel.setText("Due Today: "+metrics.dueToday());readyLabel.setText("Ready Pickup: "+metrics.ready());assignedLabel.setText("Assigned Not Started: "+metrics.assigned());cancelledLabel.setText("Cancelled 7 Days: "+metrics.cancelled());unpaidLabel.setText("Unpaid Balance: "+CURRENCY.format(metrics.unpaid()));refundsLabel.setText("Refunds Today: "+CURRENCY.format(metrics.refunds()));lowStockLabel.setText("Low Stock Items: "+metrics.lowStock());
-            actionQueueModel.setRowCount(0);for(var row:dashboard.actions())actionQueueModel.addRow(new Object[]{row.orderId(),row.orderNumber(),row.status(),row.dueDate(),row.customer(),row.phone(),row.store(),row.assigned(),CURRENCY.format(row.balance())});
+            actionQueueModel.setRowCount(0);for(var row:dashboard.actions())actionQueueModel.addRow(new Object[]{row.orderId(),row.orderNumber(),row.status(),row.dueDate(),row.customer(),row.phone(),row.store(),row.assigned(),"PENDING".equals(row.pricingState())?"Price pending":CURRENCY.format(row.balance())});
             exceptionModel.setRowCount(0);for(var row:dashboard.exceptions())exceptionModel.addRow(new Object[]{formatTimestamp(new Timestamp(row.atEpochMillis())),row.type(),row.orderNumber(),row.customer(),CURRENCY.format(row.amount()),row.user(),row.reason()});
             lowStockModel.setRowCount(0);for(var row:dashboard.lowStock())lowStockModel.addRow(new Object[]{row.item(),row.variant(),row.quantity(),row.reorder(),row.status()});
             auditModel.setRowCount(0);for(var row:dashboard.audit())auditModel.addRow(new Object[]{formatTimestamp(new Timestamp(row.atEpochMillis())),row.orderNumber(),row.action(),row.field(),row.oldValue(),row.newValue(),row.user(),row.device(),row.reason()});

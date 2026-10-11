@@ -167,7 +167,7 @@ final class LanProductAdminService {
                     COALESCE((SELECT ib.name FROM item_brands ib WHERE ib.brand_id=coi.brand_id),''),COALESCE(coi.description,''),
                     COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),
                     COALESCE(coi.fixed_price,0),COALESCE(coi.quantity_on_hand,0),coi.custom_item_id FROM custom_order_items coi
-                    WHERE coi.is_active=TRUE AND COALESCE(coi.has_variants,FALSE)=FALSE AND %s
+                    WHERE coi.is_active=TRUE AND coi.is_archived=FALSE AND COALESCE(coi.has_variants,FALSE)=FALSE AND %s
                   UNION ALL
                   SELECT 'Custom variant',coi.item_name,v.variant_name,
                     COALESCE(NULLIF(BTRIM(v.size),''),coi.size,''),COALESCE(NULLIF(BTRIM(v.color),''),coi.color,''),
@@ -176,7 +176,7 @@ final class LanProductAdminService {
                     'CUSTOM-'||coi.custom_item_id||'-'||v.custom_variant_id),COALESCE(v.fixed_price,coi.fixed_price,0),
                     COALESCE(v.quantity_on_hand,0),v.custom_variant_id FROM custom_order_item_variants v
                     JOIN custom_order_items coi ON coi.custom_item_id=v.custom_item_id
-                    WHERE coi.is_active=TRUE AND v.is_active=TRUE AND %s
+                    WHERE coi.is_active=TRUE AND coi.is_archived=FALSE AND v.is_active=TRUE AND %s
                 ) tags ORDER BY name LIMIT 300
                 """.formatted(locationId,ProductSearchHelper.predicate("p", locationId, query),
                 ProductSearchHelper.customItemPredicate("coi", query),
@@ -220,8 +220,8 @@ final class LanProductAdminService {
         requireAnyPermission(connection,userId,"VIEW_INVENTORY","EDIT_ITEM","NEW_ITEM","MAKE_SALE");
         String normalized=clean(itemType,20).toLowerCase(java.util.Locale.ROOT);String sql=switch(normalized){
             case "product"->"SELECT p.name,COALESCE(p.size,''),COALESCE(p.description,''),COALESCE(NULLIF(p.sku,''),NULLIF(p.barcode,''),'PRODUCT-'||p.product_id),COALESCE(p.price,0) FROM products p WHERE p.product_id=? AND p.sku<>'SMARTSTOCK-MISC' AND p.is_active=TRUE";
-            case "custom"->"SELECT coi.item_name,CONCAT_WS(' / ',NULLIF(coi.size,''),NULLIF(coi.color,'')),COALESCE(coi.description,''),COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),COALESCE(coi.fixed_price,0) FROM custom_order_items coi WHERE coi.custom_item_id=? AND coi.is_active=TRUE";
-            case "variant"->"SELECT coi.item_name||' - '||v.variant_name,CONCAT_WS(' / ',COALESCE(NULLIF(v.size,''),NULLIF(coi.size,'')),COALESCE(NULLIF(v.color,''),NULLIF(coi.color,''))),COALESCE(coi.description,''),COALESCE(NULLIF(v.sku,''),NULLIF(v.barcode,''),'CUSTOM-'||coi.custom_item_id||'-'||v.custom_variant_id),COALESCE(v.fixed_price,coi.fixed_price,0) FROM custom_order_item_variants v JOIN custom_order_items coi ON coi.custom_item_id=v.custom_item_id WHERE v.custom_variant_id=? AND coi.is_active=TRUE AND v.is_active=TRUE";
+            case "custom"->"SELECT coi.item_name,CONCAT_WS(' / ',NULLIF(coi.size,''),NULLIF(coi.color,'')),COALESCE(coi.description,''),COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),COALESCE(coi.fixed_price,0) FROM custom_order_items coi WHERE coi.custom_item_id=? AND coi.is_active=TRUE AND coi.is_archived=FALSE";
+            case "variant"->"SELECT coi.item_name||' - '||v.variant_name,CONCAT_WS(' / ',COALESCE(NULLIF(v.size,''),NULLIF(coi.size,'')),COALESCE(NULLIF(v.color,''),NULLIF(coi.color,''))),COALESCE(coi.description,''),COALESCE(NULLIF(v.sku,''),NULLIF(v.barcode,''),'CUSTOM-'||coi.custom_item_id||'-'||v.custom_variant_id),COALESCE(v.fixed_price,coi.fixed_price,0) FROM custom_order_item_variants v JOIN custom_order_items coi ON coi.custom_item_id=v.custom_item_id WHERE v.custom_variant_id=? AND coi.is_active=TRUE AND coi.is_archived=FALSE AND v.is_active=TRUE";
             default->throw rule(400,"VALIDATION_ERROR","The saved item type is invalid.");};
         try(PreparedStatement ps=connection.prepareStatement(sql)){ps.setLong(1,itemId);try(ResultSet rs=ps.executeQuery()){
             if(!rs.next())throw rule(404,"ITEM_NOT_FOUND","The saved item could not be loaded for printing.");

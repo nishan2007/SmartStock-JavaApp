@@ -179,9 +179,7 @@ public final class SmartStockUpdater {
             if ("mac-app".equals(layout) && isMac()) {
                 relaunchMacApp(launchTarget);
             } else {
-                new ProcessBuilder(relaunchCommand(props, javaBin, launchTarget))
-                        .directory(appDir.toFile())
-                        .start();
+                relaunchDesktop(props, javaBin, launchTarget, appDir);
             }
         }
     }
@@ -201,9 +199,7 @@ public final class SmartStockUpdater {
         if (launchTarget == null) {
             launchTarget = appDir.resolve(required(props, "current.jar"));
         }
-        new ProcessBuilder(relaunchCommand(props, javaBin, launchTarget))
-                .directory(appDir.toFile())
-                .start();
+        relaunchDesktop(props, javaBin, launchTarget, appDir);
         log("Relaunched SmartStock after updater failure.");
         return "SmartStock reopening was requested.";
     }
@@ -1264,6 +1260,42 @@ public final class SmartStockUpdater {
                 return;
             }
         }
+    }
+
+    private static void relaunchDesktop(Properties props, Path javaBin, Path launchTarget, Path appDir) throws IOException {
+        List<String> command = relaunchCommand(props, javaBin, launchTarget);
+        if (!isWindows()) {
+            new ProcessBuilder(command).directory(appDir.toFile()).start();
+            return;
+        }
+        // The updater is elevated. Ask the existing Explorer desktop to launch
+        // the UI with the user's normal token; direct children inherit elevation
+        // and Windows then blocks Explorer file drops into Swing.
+        String script = windowsDesktopRelaunchScript(command, appDir);
+        String encoded = java.util.Base64.getEncoder().encodeToString(script.getBytes(java.nio.charset.StandardCharsets.UTF_16LE));
+        Process shell = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", encoded)
+                .redirectErrorStream(true).start();
+        try {
+            if (!shell.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                shell.destroyForcibly();
+                throw new IOException("Desktop reopening timed out. Open SmartStock normally from its shortcut.");
+            }
+            if (shell.exitValue() != 0) throw new IOException("Desktop reopening failed. Open SmartStock normally from its shortcut.");
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Desktop reopening was interrupted. Open SmartStock normally from its shortcut.", ex);
+        }
+    }
+
+    static String windowsDesktopRelaunchScript(List<String> command, Path appDir) {
+        String executable = command.get(0).replace("'", "''");
+        String arguments = command.stream().skip(1).map(value -> "\"" + value.replace("\"", "\\\"") + "\"")
+                .collect(java.util.stream.Collectors.joining(" ")).replace("'", "''");
+        String directory = appDir.toString().replace("'", "''");
+        return "$ErrorActionPreference='Stop'; $shell=New-Object -ComObject Shell.Application; "
+                + "$desktopHandle=0; $desktop=$shell.Windows().FindWindowSW(0,0,8,[ref]$desktopHandle,1); "
+                + "if($null -eq $desktop){throw 'Explorer desktop is unavailable'}; "
+                + "$desktop.Document.Application.ShellExecute('" + executable + "','" + arguments + "','" + directory + "','open',1)";
     }
 
     static List<String> relaunchCommand(Properties props, Path javaBin, Path launchTarget) {

@@ -1,0 +1,7 @@
+SmartStock 1.1.14
+
+Fixes cancellation and refunds for customer-supplied custom-order items. Return records now preserve the missing inventory item ID instead of substituting zero, avoiding a database rejection. Customer-supplied items never change inventory when Restock is selected.
+
+Includes the integrated Cancel Order return/refund dialog from 1.1.13, restricted to administrators and users with Custom Order Overrides permission.
+
+Update the store server before registers.

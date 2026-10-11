@@ -167,6 +167,8 @@ public class MakeASale extends JFrame {
     private boolean saleUiInitialized;
 
    public MakeASale() {
+       InventoryCatalogCache.invalidate();
+       InventoryCatalogCache.refreshAfterMutation().exceptionally(failure -> null);
 
        //Window Setup
        setTitle("Make a Sale");

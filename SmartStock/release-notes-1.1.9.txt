@@ -1,0 +1,7 @@
+SmartStock 1.1.9
+
+- Redesigned custom-order details with a readable summary, status, customer information, and prominent totals.
+- Items & Notes, Payments, and Activity tabs separate order lines, financial history, and expandable audit events.
+- Paid and invoice-linked orders disable Apply Payment. Details loading prevents older responses from replacing a newly selected order.
+- Grouped print actions, wrapping controls, and compact item cards improve smaller-window usability.
+- Includes the changes shipped in 1.1.8. Update the server before registers to enable the new structured details API.

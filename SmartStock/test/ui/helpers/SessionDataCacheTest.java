@@ -10,6 +10,19 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SessionDataCacheTest {
+    @Test void completedWarmupCannotLeakAcrossSessionsOrOverwriteInvalidatedData() {
+        SessionDataCache.setScope("warmup-user-a");
+        long started=SessionDataCache.generation();
+        SessionDataCache.putIfGeneration(started,"custom-orders:catalog","valid");
+        assertEquals("valid",SessionDataCache.get("custom-orders:catalog",String.class,Duration.ofMinutes(1)).orElseThrow().value());
+        SessionDataCache.setScope("warmup-user-b");
+        SessionDataCache.putIfGeneration(started,"custom-orders:catalog","wrong-user");
+        assertTrue(SessionDataCache.get("custom-orders:catalog",String.class,Duration.ofMinutes(1)).isEmpty());
+        long newer=SessionDataCache.generation();
+        SessionDataCache.invalidate("custom-orders:");
+        SessionDataCache.putIfGeneration(newer,"custom-orders:catalog","old-data");
+        assertTrue(SessionDataCache.get("custom-orders:catalog",String.class,Duration.ofMinutes(1)).isEmpty());
+    }
     @AfterEach
     void clear() {
         SessionDataCache.setEndpoint("test-endpoint");

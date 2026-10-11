@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 class CustomOrdersNewOrderTabPanel extends JPanel {
+    final DefaultListModel<String> quantitySummaryModel=new DefaultListModel<>();
     private final Color BG = DeckersPalette.background();
     private final Color PANEL = DeckersPalette.surface();
     private final Color PANEL_ALT = DeckersPalette.tableStripe();
@@ -30,6 +31,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     private static final Color AMBER = new Color(245, 158, 11);
     private static final Color DANGER = new Color(185, 28, 28);
 
+    final JCheckBox pricePendingBox = new JCheckBox("Price pending — calculate after production");
     final CustomerInfoPanel customerInfoPanel;
     final JCheckBox dueDateEnabledBox;
     final DatePickerField dueDateField;
@@ -57,6 +59,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     final JTextField lineDiscountPercentField;
     final JTextField lineDiscountReasonField;
     final JTextField priceOverrideReasonField;
+    final JComboBox<String> designOrientationBox = new JComboBox<>(new String[]{"Select orientation", "Portrait", "Landscape"});
     final JTextField widthField;
     final JTextField lengthField;
     final JLabel areaCalculationLabel;
@@ -262,16 +265,21 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         itemSelection.add(customerItemSummary, BorderLayout.SOUTH);
         addField(topFields, topGbc, 1, "Item:", itemSelection);
         addField(topFields, topGbc, 2, "Variant:", variantBox);
+        pricePendingBox.setOpaque(false);pricePendingBox.setForeground(TEXT);
+        pricePendingBox.setToolTipText("Requires permission or a manager override when saving. Optional deposits are accepted.");
+        pricePendingBox.addActionListener(e -> handler.pendingPricingChanged());
+        addField(topFields, topGbc, 3, "Pricing:", pricePendingBox);
 
         addField(leftColumn, leftGbc, 0, "Price / Rate:", buildPriceRatePanel());
         addField(leftColumn, leftGbc, 1, "Price Reason:", priceOverrideReasonField);
         addTrackedField(areaLineComponents, leftColumn, leftGbc, 2, "Width:", widthField);
         addTrackedField(areaLineComponents, leftColumn, leftGbc, 3, "Length:", lengthField);
         leftGbc.gridx = 1;
-        leftGbc.gridy = 4;
+        addTrackedField(areaLineComponents, leftColumn, leftGbc, 4, "Design orientation:", designOrientationBox);
+        leftGbc.gridy = 5;
         leftColumn.add(areaCalculationLabel, leftGbc);
         areaLineComponents.add(areaCalculationLabel);
-        addColumnBottomGlue(leftColumn, leftGbc, 5);
+        addColumnBottomGlue(leftColumn, leftGbc, 6);
 
         addField(rightColumn, rightGbc, 0, "Design Placement:", buildDesignPlacementPanel(addPlacementButton));
         JScrollPane notesScroll = new JScrollPane(lineNotesArea);
@@ -289,7 +297,6 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         lineButtons.add(addLineButton);
         JButton editLineButton = new JButton("Edit Line");
         styleButton(editLineButton, PANEL_ALT);
-        lineButtons.add(editLineButton);
         editLineButton.addActionListener(e -> handler.editOrderLine());
         styleButton(cancelLineEditButton, PANEL_ALT);
         cancelLineEditButton.setVisible(false);
@@ -297,11 +304,9 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         cancelLineEditButton.addActionListener(e -> handler.cancelLineEdit());
         JButton editFilesButton = new JButton("Edit Cart Files...");
         styleButton(editFilesButton, PANEL_ALT);
-        lineButtons.add(editFilesButton);
         editFilesButton.addActionListener(e -> handler.editLineFiles());
         lineButtons.add(discountButton);
-        lineButtons.add(removeLineButton);
-        JLabel quantityNote = new JLabel("Each quantity is added as a separate line.");
+        JLabel quantityNote = new JLabel("Identical items are shown as a quantity group.");
         quantityNote.setForeground(MUTED);
         lineButtons.add(quantityNote);
         rightGbc.gridx = 1;
@@ -358,7 +363,27 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
                 getFont().deriveFont(Font.BOLD),
                 TEXT
         ));
-        cartPanel.add(cartScroll, BorderLayout.CENTER);
+        JPanel cartContents=new JPanel(new BorderLayout(4,4));
+        JList<String> quantitySummary=new JList<>(quantitySummaryModel);
+        JScrollPane summaryScroll=new JScrollPane(quantitySummary);
+        summaryScroll.setPreferredSize(new Dimension(0,150));
+        JToggleButton expandCart=new JToggleButton("Show individual cart lines ▸");
+        JPanel cartViews=new JPanel(new CardLayout());
+        cartViews.add(summaryScroll,"groups");cartViews.add(cartScroll,"lines");
+        cartContents.add(expandCart,BorderLayout.NORTH);cartContents.add(cartViews,BorderLayout.CENTER);
+        cartPanel.add(cartContents, BorderLayout.CENTER);
+        JPanel cartActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        cartActions.setOpaque(false);
+        cartActions.add(editLineButton);
+        cartActions.add(editFilesButton);
+        cartActions.add(removeLineButton);
+        cartActions.setVisible(false);
+        expandCart.addActionListener(e->{
+            ((CardLayout)cartViews.getLayout()).show(cartViews,expandCart.isSelected()?"lines":"groups");
+            expandCart.setText(expandCart.isSelected()?"Hide individual cart lines ▾":"Show individual cart lines ▸");
+            cartActions.setVisible(expandCart.isSelected());
+        });
+        cartPanel.add(cartActions, BorderLayout.SOUTH);
 
         panel.add(new JScrollPane(form), BorderLayout.CENTER);
         panel.add(cartPanel, BorderLayout.SOUTH);
@@ -498,6 +523,12 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         saveOrderButton = new JButton("Create Custom Order");
         saveAndPrintOrderButton = new JButton("Create & Print Order Slip");
         JButton clearOrderButton = new JButton("Clear Order");
+        JButton holdCartButton = new JButton("Hold Cart");
+        JButton resumeCartButton = new JButton("Resume Held Cart");
+        styleButton(holdCartButton, PANEL_ALT);
+        styleButton(resumeCartButton, PANEL_ALT);
+        holdCartButton.addActionListener(e -> handler.holdCart());
+        resumeCartButton.addActionListener(e -> handler.resumeCart());
         styleButton(previousButton, PANEL_ALT);
         styleButton(nextButton, ACCENT_DARK);
         styleButton(saveOrderButton, TEAL);
@@ -515,6 +546,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         panel.setBackground(BG);
         panel.setBorder(new EmptyBorder(4, 0, 0, 0));
         panel.add(clearOrderButton);
+        panel.add(holdCartButton);
+        panel.add(resumeCartButton);
         panel.add(previousButton);
         panel.add(nextButton);
         panel.add(saveOrderButton);
@@ -794,6 +827,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         setFixedWidth(upfrontPaymentField, 120);
         setFixedWidth(printChargeField, 120);
         setFixedWidth(printLineCountField, 72);
+        styleCombo(designOrientationBox);
         styleCombo(orderItemBox);
         styleCombo(variantBox);
         styleCombo(printMaterialBox);
@@ -927,6 +961,9 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         lineQuantityField.setText("1");
     }
     interface Handler {
+        default void holdCart() {}
+        default void resumeCart() {}
+        default void pendingPricingChanged() {}
         default void editOrderLine() { }
         default void cancelLineEdit() { }
         default void customerItem() { }

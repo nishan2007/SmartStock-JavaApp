@@ -1,0 +1,9 @@
+SmartStock 1.1.15
+
+Fixes Orders Dashboard failing to load because the combined low-stock query sorted by an undefined column name.
+
+Adds file-drop handling inside the Add Files file picker for new and saved custom orders. Dropped files are selected and added through the existing attachment validation and upload flow. The attachment panels continue to support file drops.
+
+Includes previous POS shirt visibility, Shirts price-tag, default tag printer and customer-supplied cancellation fixes.
+
+Update the server before registers. Physical Windows Explorer drag-and-drop remains a separate check; handler tests do not prove deployed desktop behavior.

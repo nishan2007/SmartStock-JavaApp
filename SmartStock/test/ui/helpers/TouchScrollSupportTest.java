@@ -9,6 +9,38 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class TouchScrollSupportTest {
+    @Test void hoverPanelsAndSplitPaneContentsCanScroll() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JPanel content = new JPanel();
+            JLabel label = new JLabel("Preview");
+            label.addMouseMotionListener(new MouseMotionAdapter() { });
+            content.add(label);
+            JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, content, new JPanel());
+            JScrollPane pane = scroll(split);
+            assertSame(pane.getViewport(), TouchScrollSupport.findViewport(label));
+            content.putClientProperty("SmartStock.touchScroll", false);
+            assertNull(TouchScrollSupport.findViewport(label));
+        });
+    }
+
+    @Test void nestedPanePassesUnusedAxisAndEdgeMovementToOuterPane() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            JPanel innerContent = new JPanel();
+            JScrollPane inner = scroll(innerContent);
+            inner.getViewport().setViewSize(new Dimension(800, inner.getViewport().getExtentSize().height));
+            JPanel outerContent = new JPanel();
+            outerContent.add(inner);
+            JScrollPane outer = scroll(outerContent);
+            TouchScrollSupport.scrollBy(inner.getViewport(), 100, 120);
+            assertEquals(new Point(100, 0), inner.getViewport().getViewPosition());
+            assertEquals(new Point(0, 120), outer.getViewport().getViewPosition());
+            int maximum = 800 - inner.getViewport().getExtentSize().width;
+            inner.getViewport().setViewPosition(new Point(maximum, 0));
+            TouchScrollSupport.scrollBy(inner.getViewport(), 40, 0);
+            assertEquals(40, outer.getViewport().getViewPosition().x);
+        });
+    }
+
     private static JScrollPane scroll(Component view) {
         view.setPreferredSize(new Dimension(800, 1000));
         JScrollPane pane = new JScrollPane(view);

@@ -60,6 +60,12 @@ try {
         ratelimits=@(@{name='LOGIN_LIMITER';namespace_id='1001';simple=@{limit=10;period=60}})
     }
     $ConfigFile = Join-Path $Destination 'wrangler.json'
+    if (Test-Path -LiteralPath $ConfigFile) {
+        $ExistingPortalConfig = Get-Content -Raw -LiteralPath $ConfigFile | ConvertFrom-Json
+        if ($ExistingPortalConfig.vars.STUDIO_INSTALLERS_JSON) {
+            $Config.vars.STUDIO_INSTALLERS_JSON = $ExistingPortalConfig.vars.STUDIO_INSTALLERS_JSON
+        }
+    }
     $Config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $ConfigFile -Encoding UTF8
     $Secrets = @{
         INSTALLER_ORIGIN_KEYS_JSON=($OriginKeys | ConvertTo-Json -Compress);

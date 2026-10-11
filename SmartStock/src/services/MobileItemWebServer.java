@@ -126,6 +126,7 @@ public final class MobileItemWebServer implements AutoCloseable {
                 case "/images/fetch"->imageFetch(requireSession(x,false),body);
                 case "/studio/branding"->studioBranding(requireSession(x,false));
                 case "/studio/remove-background"->studioRemoveBackground(requireSession(x,true),body);
+                case "/studio/progress"->studioProgress(requireSession(x,true),body);
                 case "/studio/catalog"->studioCatalog(requireSession(x,false),body);
                 case "/studio/import"->studioImport(x,requireSession(x,true),body);
                 case "/spoils/search"->spoilRead(requireSession(x,false),body,"SEARCH");
@@ -365,15 +366,30 @@ public final class MobileItemWebServer implements AutoCloseable {
         return StudioBackgroundService.branding(s.locationId);
     }
 
+    private Object studioProgress(Session s,JsonObject body)throws Exception {
+        owner.requireMobileAny(s.userId,"NEW_ITEM","EDIT_ITEM","MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");
+        return StudioJobs.status("mobile:"+s.userId+":"+s.locationId+":"+s.id,text(body,"requestId",36),body.has("cancel")&&body.get("cancel").getAsBoolean());
+    }
     private Object studioRemoveBackground(Session s, JsonObject body) throws Exception {
         owner.requireMobileAny(s.userId,"NEW_ITEM","EDIT_ITEM","MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");
         try {
             byte[] bytes = Base64.getDecoder().decode(text(body,"bytesBase64",8*1024*1024));
             StudioQuality quality = StudioQuality.parse(optional(body,"quality"));
             boolean cleanEdges = body.has("cleanEdges") && body.get("cleanEdges").getAsBoolean();
-            return Map.of("contentType","image/png","bytesBase64",Base64.getEncoder().encodeToString(StudioBackgroundService.remove(bytes,quality,cleanEdges)));
+            boolean removeBackground = !body.has("removeBackground") || body.get("removeBackground").getAsBoolean();
+            int scale = body.has("scale") ? LanApiServer.strictStudioScale(body.get("scale")) : 1;
+            byte[] result;
+            if(body.has("requestId")){
+                var mode=body.has("processingMode")?StudioImageEnhancer.Mode.valueOf(text(body,"processingMode",10)):StudioImageEnhancer.Mode.AUTO;
+                try(var job=StudioJobs.begin("mobile:"+s.userId+":"+s.locationId+":"+s.id,text(body,"requestId",36))){
+                    result=StudioBackgroundService.transform(bytes,quality,cleanEdges,removeBackground,scale,mode,job);job.success();
+                }
+            }else result=StudioBackgroundService.transform(bytes,quality,cleanEdges,removeBackground,scale);
+            return Map.of("contentType","image/png","bytesBase64",Base64.getEncoder().encodeToString(result));
         } catch (IllegalArgumentException e) {
             throw new WebError(400,"IMAGE_INVALID",e.getMessage());
+        } catch(java.util.concurrent.CancellationException e){
+            throw new WebError(409,"STUDIO_CANCELLED","Image processing cancelled.");
         } catch (StudioBackgroundService.BusyException e) {
             throw new WebError(429,"STUDIO_BUSY",e.getMessage());
         } catch (CatalogStudioImageProcessor.ModelUnavailableException e) {
@@ -498,7 +514,7 @@ public final class MobileItemWebServer implements AutoCloseable {
     }
 
     private PhotoTarget loadPhotoTarget(String type,long id)throws Exception{
-        String sql="variant".equals(type)?"SELECT i.item_name||' - '||v.variant_name,i.item_name,COALESCE(b.name,''),COALESCE(t.name,''),CONCAT_WS(' / ',COALESCE(NULLIF(v.size,''),NULLIF(i.size,'')),COALESCE(NULLIF(v.color,''),NULLIF(i.color,''))) FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id LEFT JOIN item_brands b ON b.brand_id=i.brand_id LEFT JOIN item_types t ON t.item_type_id=i.item_type_id WHERE v.custom_variant_id=? AND i.is_active=TRUE AND v.is_active=TRUE":"SELECT i.item_name,i.item_name,COALESCE(b.name,''),COALESCE(t.name,''),CONCAT_WS(' / ',NULLIF(i.size,''),NULLIF(i.color,'')) FROM custom_order_items i LEFT JOIN item_brands b ON b.brand_id=i.brand_id LEFT JOIN item_types t ON t.item_type_id=i.item_type_id WHERE i.custom_item_id=? AND i.is_active=TRUE";
+        String sql="variant".equals(type)?"SELECT i.item_name||' - '||v.variant_name,i.item_name,COALESCE(b.name,''),COALESCE(t.name,''),CONCAT_WS(' / ',COALESCE(NULLIF(v.size,''),NULLIF(i.size,'')),COALESCE(NULLIF(v.color,''),NULLIF(i.color,''))) FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id LEFT JOIN item_brands b ON b.brand_id=i.brand_id LEFT JOIN item_types t ON t.item_type_id=i.item_type_id WHERE v.custom_variant_id=? AND i.is_active=TRUE AND i.is_archived=FALSE AND v.is_active=TRUE":"SELECT i.item_name,i.item_name,COALESCE(b.name,''),COALESCE(t.name,''),CONCAT_WS(' / ',NULLIF(i.size,''),NULLIF(i.color,'')) FROM custom_order_items i LEFT JOIN item_brands b ON b.brand_id=i.brand_id LEFT JOIN item_types t ON t.item_type_id=i.item_type_id WHERE i.custom_item_id=? AND i.is_active=TRUE AND i.is_archived=FALSE";
         try(Connection c=DB.getConnection();PreparedStatement p=c.prepareStatement(sql)){p.setLong(1,id);try(ResultSet r=p.executeQuery()){if(!r.next())throw new WebError(404,"PHOTO_TARGET_NOT_FOUND","Select a saved, active custom item or variant.");return new PhotoTarget(r.getString(1),r.getString(2),r.getString(3),r.getString(4),r.getString(5));}}
     }
 

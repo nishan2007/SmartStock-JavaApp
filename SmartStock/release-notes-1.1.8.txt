@@ -1,0 +1,5 @@
+SmartStock 1.1.8
+
+- Adds Show brand to price-tag template options. Brand can be positioned in the layout editor and uses the selected item's brand.
+- Custom-item price tags show the main item name on the first line and the variant name on the second line within the existing name area.
+- Includes the current application source and the fixes shipped in 1.1.7.

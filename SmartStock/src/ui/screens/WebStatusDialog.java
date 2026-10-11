@@ -20,6 +20,8 @@ public final class WebStatusDialog extends JDialog {
     private final JCheckBox auto=new JCheckBox("Refresh every 10 seconds",true);
     private final javax.swing.Timer timer=new javax.swing.Timer(10000,e->{if(auto.isSelected())load(null,null);});
     private boolean busy;
+    private boolean initialLoadStarted;
+    private final boolean previewMode;
     private final java.util.concurrent.Callable<JsonObject> statusLoader;
     public WebStatusDialog(Window owner){
         this(owner,null);
@@ -30,6 +32,7 @@ public final class WebStatusDialog extends JDialog {
     WebStatusDialog(Window owner,JsonObject preview,java.util.concurrent.Callable<JsonObject> statusLoader){
         super(owner,"Web Status — SmartStock",ModalityType.MODELESS);
         this.statusLoader=statusLoader;
+        this.previewMode=preview!=null;
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);setSize(1080,790);setMinimumSize(new Dimension(680,520));setLocationRelativeTo(owner);
         JPanel root=DeckersSwing.panel();root.setLayout(new BorderLayout(16,16));root.setBorder(BorderFactory.createEmptyBorder(22,24,20,24));
         JPanel header=DeckersSwing.panel();header.setLayout(new BorderLayout());
@@ -45,10 +48,22 @@ public final class WebStatusDialog extends JDialog {
             int rows=getWidth()<850?2:1;GridLayout layout=(GridLayout)summary.getLayout();
             if(layout.getRows()!=rows){layout.setRows(rows);layout.setColumns(rows==2?2:4);summary.revalidate();}
         }});
-        addWindowListener(new WindowAdapter(){public void windowOpened(WindowEvent e){if(preview==null){load(null,null);timer.start();}}public void windowClosed(WindowEvent e){timer.stop();}});
-        // The first worker must start after the window exists. Otherwise a fast response
-        // is discarded by done() before the caller shows the dialog.
+        addWindowListener(new WindowAdapter(){public void windowClosed(WindowEvent e){timer.stop();}});
+        // A visible loading state remains useful even before the first response arrives.
+        cards.add(wrapped("Loading store connections and service status…"));
         if(preview!=null)render(preview);
+    }
+    @Override public void setVisible(boolean visible) {
+        super.setVisible(visible);
+        // Start explicitly after showing: do not rely on WINDOW_OPENED being
+        // delivered by the desktop's window/theme lifecycle.
+        if (visible && statusLoader != null && !previewMode) {
+            if (!initialLoadStarted) {
+                initialLoadStarted=true;
+                load(null,null);
+            }
+            timer.start();
+        } else if (timer != null) timer.stop();
     }
     private void load(String service,String action){
         if(busy)return;busy=true;refresh.setEnabled(false);setButtons(cards,false);feedback.setForeground(DeckersPalette.muted());feedback.setText(action==null?"Checking the store server…":actionLabel(action)+" in progress…");
@@ -57,6 +72,7 @@ public final class WebStatusDialog extends JDialog {
             protected void done(){busy=false;if(!isDisplayable())return;refresh.setEnabled(true);
                 try{render(get());}catch(Exception ex){Throwable failure=ex;while(failure.getCause()!=null)failure=failure.getCause();
                     feedback.setForeground(DeckersPalette.CORAL);feedback.setText("Status unavailable — "+Objects.toString(failure.getMessage(),"Refresh to reconnect."));
+                    if(summary.getComponentCount()==0){cards.removeAll();cards.add(wrapped("Could not load store status. Click Refresh to try again."));cards.revalidate();cards.repaint();}
                     // Old health is stale; keep controls disabled until a successful refresh.
                 }
             }
@@ -66,7 +82,7 @@ public final class WebStatusDialog extends JDialog {
         JsonObject usage=data.getAsJsonObject("usage");summary.removeAll();
         summary.add(metric("Server uptime",duration(number(usage,"uptimeMs")),DeckersPalette.PURPLE));
         summary.add(metric("Memory in use",size(number(usage,"heapUsed"))+" / "+size(number(usage,"heapMax")),DeckersPalette.ORANGE));
-        double cpu=usage.get("cpuPercent").getAsDouble();summary.add(metric("Server CPU",cpu<0?"Measuring…":String.format(Locale.ROOT,"%.1f%%",cpu),DeckersPalette.LIME));
+        double cpu=usage.get("cpuPercent").getAsDouble();summary.add(metric("Server CPU",cpu<0?"Unavailable":String.format(Locale.ROOT,"%.1f%%",cpu),DeckersPalette.LIME));
         summary.add(metric("Active threads",Long.toString(number(usage,"threads")),DeckersPalette.MAGENTA));
         cards.removeAll();boolean control=data.get("canControl").getAsBoolean();
         if(!control){JLabel notice=DeckersSwing.metaLabel("Viewing status — open this screen on the active server to control services.");cards.add(notice);cards.add(Box.createVerticalStrut(14));}

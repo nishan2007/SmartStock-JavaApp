@@ -21,3 +21,39 @@ https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-e
 Upstream rembg MD5: 7a35a0141cbbc80de11d9c9a28f52697
 Pinned SHA-256: 58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c
 Model size: 972666916 bytes. Inference uses only local model files.
+
+Image enhancement uses Real-ESRGAN x4plus (FP32, RRDBNet 23 blocks).
+Upstream: https://github.com/xinntao/Real-ESRGAN
+ONNX conversion: https://huggingface.co/skillsafe-ai/realesrgan-x4plus/tree/107475e49b7d46412cc966481efccc3500955801
+Pinned SHA-256: 4851ec156207d271f5328605d0582eeb851e656227da8aca093ced9e60789291
+Size: 67051650 bytes. RGB NCHW float32 [0,1], native 4x, opset 17.
+
+BSD 3-Clause License
+
+Copyright (c) 2021, Xintao Wang
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

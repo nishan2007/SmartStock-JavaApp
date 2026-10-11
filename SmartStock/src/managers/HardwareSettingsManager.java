@@ -22,6 +22,20 @@ public class HardwareSettingsManager {
         return CONFIG_PATH;
     }
 
+    /** This computer's price-tag queue; separate from receipt and order-label defaults. */
+    public static String getDefaultPriceTagPrinterName() throws IOException {
+        return loadProperties().getProperty("price_tag.default_printer", "").trim();
+    }
+
+    public static void saveDefaultPriceTagPrinterName(String name) throws IOException {
+        Properties properties = loadProperties();
+        properties.setProperty("price_tag.default_printer", name == null ? "" : name.trim());
+        Files.createDirectories(CONFIG_PATH.getParent());
+        try (OutputStream output = Files.newOutputStream(CONFIG_PATH)) {
+            properties.store(output, "SmartStock local hardware settings");
+        }
+    }
+
     public static List<PosPrinter> getConfiguredPrinters() throws IOException {
         Properties properties = loadProperties();
         int count = parseInt(properties.getProperty("printer.count"), 0);

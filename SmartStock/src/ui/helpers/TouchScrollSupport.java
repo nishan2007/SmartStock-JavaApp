@@ -38,7 +38,7 @@ public final class TouchScrollSupport {
         private final BooleanSupplier touchPress;
         private MouseEvent press;
         private JViewport viewport;
-        private Point origin;
+        private Point lastPointer;
         private boolean dragging;
         private Component suppressedClick;
 
@@ -53,7 +53,7 @@ public final class TouchScrollSupport {
                 viewport = findViewport(event.getComponent());
                 if (viewport == null) return false;
                 press = event;
-                origin = viewport.getViewPosition();
+                lastPointer = new Point(event.getXOnScreen(), event.getYOnScreen());
                 return true;
             }
             if (event.getID() == MouseEvent.MOUSE_CLICKED && event.getComponent() == suppressedClick) {
@@ -66,10 +66,8 @@ public final class TouchScrollSupport {
                 int dy = event.getYOnScreen() - press.getYOnScreen();
                 if (!dragging && Math.hypot(dx, dy) < 10) return true;
                 dragging = true;
-                Dimension size = viewport.getViewSize(), extent = viewport.getExtentSize();
-                viewport.setViewPosition(new Point(
-                        clamp(origin.x - dx, size.width - extent.width),
-                        clamp(origin.y - dy, size.height - extent.height)));
+                scrollBy(viewport, lastPointer.x - event.getXOnScreen(), lastPointer.y - event.getYOnScreen());
+                lastPointer = new Point(event.getXOnScreen(), event.getYOnScreen());
                 return true;
             }
             if (event.getID() == MouseEvent.MOUSE_RELEASED) {
@@ -89,7 +87,7 @@ public final class TouchScrollSupport {
         void cancel() {
             press = null;
             viewport = null;
-            origin = null;
+            lastPointer = null;
             dragging = false;
             suppressedClick = null;
         }
@@ -97,11 +95,26 @@ public final class TouchScrollSupport {
 
     private static int clamp(int value, int maximum) { return Math.max(0, Math.min(value, Math.max(0, maximum))); }
 
+    /** Pass movement an inner pane cannot use to its enclosing scroll pane. */
+    static void scrollBy(JViewport viewport, int dx, int dy) {
+        for (JViewport current = viewport; current != null && (dx != 0 || dy != 0);
+             current = findViewport(current.getParent().getParent())) {
+            Point before = current.getViewPosition();
+            Dimension size = current.getViewSize(), extent = current.getExtentSize();
+            Point after = new Point(clamp(before.x + dx, size.width - extent.width),
+                    clamp(before.y + dy, size.height - extent.height));
+            current.setViewPosition(after);
+            dx -= after.x - before.x;
+            dy -= after.y - before.y;
+        }
+    }
+
     static JViewport findViewport(Component source) {
         for (Component current = source; current != null; current = current.getParent()) {
             if ((current instanceof JTextComponent text && text.isEditable()) || current instanceof JScrollBar
                     || current instanceof JSlider || current instanceof JComboBox<?> || current instanceof JSpinner
-                    || current instanceof JTableHeader || current instanceof JSplitPane) return null;
+                    || current instanceof JTableHeader
+                    || current instanceof javax.swing.plaf.basic.BasicSplitPaneDivider) return null;
             if (current instanceof JComponent component
                     && Boolean.FALSE.equals(component.getClientProperty("SmartStock.touchScroll"))) return null;
             // Custom canvases (signatures, badge/template editors) own their drag gestures.
@@ -109,10 +122,9 @@ public final class TouchScrollSupport {
                     && !(current instanceof JTable) && !(current instanceof JList<?>)
                     && !(current instanceof JTree) && !(current instanceof AbstractButton)
                     && !(current instanceof JTextComponent) && !(current instanceof JScrollPane)
-                    && !(current instanceof JViewport)) return null;
-            if (current instanceof JTable table && (table.isEditing() || table.getDragEnabled())) return null;
-            if (current instanceof JList<?> list && list.getDragEnabled()) return null;
-            if (current instanceof JTree tree && tree.getDragEnabled()) return null;
+                    && !(current instanceof JViewport) && !(current instanceof JPanel)
+                    && !(current instanceof JLabel) && !(current instanceof JSplitPane)) return null;
+            if (current instanceof JTable table && table.isEditing()) return null;
             if (current instanceof JViewport view && view.getParent() instanceof JScrollPane pane
                     && pane.getViewport() == view && view.getView() != null) {
                 Dimension size = view.getViewSize(), extent = view.getExtentSize();

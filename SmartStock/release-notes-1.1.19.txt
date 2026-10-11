@@ -1,0 +1,9 @@
+SmartStock 1.1.19
+
+Image Studio combines background removal and local CPU image enhancement. Staff can remove a background, enhance a photo at 2x or 4x, or remove then enhance while retaining transparency. The browser studio provides the same options and output dimensions with print-size guidance at 300 PPI.
+
+Administrators can install the independently downloaded Real-ESRGAN x4plus enhancement model through Status > AI Models. Model downloads are pinned and verified; installed weights remain outside application updates and rollback folders. Photo processing stays on the store server. Enhanced outputs are limited to 24 megapixels and available server memory.
+
+Retains the current custom-order details, cancellation/delivery/submission safeguards, inventory cache freshness, price-tag layout, hardware and updater improvements included in this workspace.
+
+Update the SmartStock server first, then registers and SmartStudio 0.1.7. Install the enhancement model separately and sign in again or reload the browser. Review customer faces, lettering and print quality before production use. CPU processing can take several minutes. Application packages contain no AI model weights.

@@ -38,11 +38,13 @@ public final class PriceTagPrintService {
     public static final int LAYOUT_HEIGHT = 500;
     private PriceTagPrintService() { }
 
-    public record PriceTagItem(String name, String size, String color, String description, String sku, String barcode, BigDecimal price) {
+    public record PriceTagItem(String name, String size, String color, String description, String sku, String barcode, BigDecimal price, String brand) {
+        public PriceTagItem(String name,String size,String color,String description,String sku,String barcode,BigDecimal price){this(name,size,color,description,sku,barcode,price,"");}
         public PriceTagItem(String name, String size, String description, String sku, String barcode, BigDecimal price) {
             this(name, size, "", description, sku, barcode, price);
         }
         public PriceTagItem {
+            brand = brand == null ? "" : brand.trim();
             name = name == null ? "Item" : name.trim(); size = size == null ? "" : size.trim(); color = color == null ? "" : color.trim(); description = description == null ? "" : description.trim(); sku = sku == null ? "" : sku.trim(); barcode = barcode == null ? "" : barcode.trim();
             price = price == null ? BigDecimal.ZERO : price;
         }
@@ -81,8 +83,8 @@ public final class PriceTagPrintService {
                         if (!barcodeValue.isBlank()) element.drawImage(barcodeImage(barcodeValue, w, h), 0, 0, null);
                     } else {
                         String value = switch (id) {
-                            case "name" -> item.name(); case "size" -> item.size(); case "color" -> item.color();
-                            case "description" -> item.description();
+                            case "name" -> nameForTemplate(item.name(), settings.layoutData()); case "size" -> item.size(); case "color" -> item.color();
+                            case "brand" -> item.brand(); case "description" -> item.description();
                             case "price" -> formatPriceTagPrice(item.price(), Locale.getDefault());
                             case "sku" -> item.sku(); default -> "";
                         };
@@ -98,7 +100,7 @@ public final class PriceTagPrintService {
     public static String encodeLayout(Map<String,Rectangle> layout){StringBuilder out=new StringBuilder();for(var e:layout.entrySet()){if(!out.isEmpty())out.append(';');Rectangle r=e.getValue();out.append(e.getKey()).append(':').append(r.x).append(',').append(r.y).append(',').append(r.width).append(',').append(r.height);}return out.toString();}
     public static boolean elementVisible(CompanyCustomizationManager.PriceTagTemplateSettings s, String id) {
         return switch (id) {
-            case "company" -> s.showCompany(); case "name" -> s.showName(); case "size", "color" -> s.showSize();
+            case "brand" -> brandVisible(s.layoutData()); case "company" -> s.showCompany(); case "name" -> s.showName(); case "size", "color" -> s.showSize();
             case "description" -> s.showDescription(); case "price" -> s.showPrice();
             case "barcode" -> s.showBarcode(); case "sku" -> s.showSku(); default -> false;
         };
@@ -122,7 +124,19 @@ public final class PriceTagPrintService {
                 "name:60,20,880,55,0;price:60,80,880,60,0;barcode:80,150,840,310,90;sku:60,465,880,25,0",
                 2, 0, rowGap);
     }
-    public static LinkedHashMap<String,Rectangle> defaultLayout(){LinkedHashMap<String,Rectangle> r=new LinkedHashMap<>();r.put("company",new Rectangle(45,25,350,65));r.put("name",new Rectangle(45,105,600,100));r.put("size",new Rectangle(45,215,260,45));r.put("color",new Rectangle(325,215,320,45));r.put("description",new Rectangle(45,265,600,55));r.put("price",new Rectangle(720,80,235,130));r.put("barcode",new Rectangle(45,340,700,120));r.put("sku",new Rectangle(760,365,195,65));return r;}
+    public static LinkedHashMap<String,Rectangle> defaultLayout(){LinkedHashMap<String,Rectangle> r=new LinkedHashMap<>();r.put("company",new Rectangle(45,25,350,65));r.put("name",new Rectangle(45,105,600,100));r.put("size",new Rectangle(45,215,260,45));r.put("color",new Rectangle(325,215,320,45));r.put("brand",new Rectangle(720,235,235,60));r.put("description",new Rectangle(45,265,600,55));r.put("price",new Rectangle(720,80,235,130));r.put("barcode",new Rectangle(45,340,700,120));r.put("sku",new Rectangle(760,365,195,65));return r;}
+    public static boolean brandVisible(String layout){return layout!=null&&java.util.Arrays.asList(layout.split(";")).contains("showBrand:1");}
+    public static String withBrand(String layout,boolean show){String clean=layout==null?"":layout.replaceAll("(^|;)showBrand:[^;]*", "");return clean+(show?";showBrand:1":"");}
+    public static boolean mainNameOnly(String layout) {
+        return layout != null && java.util.Arrays.asList(layout.split(";")).contains("mainNameOnly:1");
+    }
+    public static String withMainNameOnly(String layout, boolean enabled) {
+        String clean = layout == null ? "" : layout.replaceAll("(^|;)mainNameOnly:[^;]*", "");
+        return clean + (enabled ? ";mainNameOnly:1" : "");
+    }
+    static String nameForTemplate(String name, String layout) {
+        return mainNameOnly(layout) ? name.split("\n", 2)[0] : name;
+    }
     private static Rectangle scale(Rectangle r,int w,int h){return new Rectangle(r.x*w/LAYOUT_WIDTH,r.y*h/LAYOUT_HEIGHT,Math.max(1,r.width*w/LAYOUT_WIDTH),Math.max(1,r.height*h/LAYOUT_HEIGHT));}
     private static void drawText(Graphics2D g,String value,Rectangle r,int style,boolean wrap){
         TextFit fit=fitText(g,value,r,style,wrap);g.setFont(new Font("SansSerif",style,fit.fontSize()));g.setColor(Color.BLACK);
@@ -131,6 +145,14 @@ public final class PriceTagPrintService {
     }
     static TextFit fitText(Graphics2D g,String value,Rectangle r,int style,boolean wrap){
         String text=value==null?"":value.strip();
+        if(text.contains("\n")){
+            List<String> lines=java.util.Arrays.asList(text.split("\n",-1));
+            for(int size=Math.max(8,Math.min(96,r.height/lines.size()));size>=8;size--){
+                FontMetrics fm=g.getFontMetrics(new Font("SansSerif",style,size));
+                if(fm.getHeight()*lines.size()<=r.height&&lines.stream().allMatch(line->fm.stringWidth(line)<=r.width))return new TextFit(size,lines);
+            }
+            return new TextFit(8,lines);
+        }
         for(int size=Math.max(8,Math.min(96,r.height));size>=8;size--){
             Font font=new Font("SansSerif",style,size);FontMetrics fm=g.getFontMetrics(font);
             int maxLines=wrap?Math.max(1,r.height/fm.getHeight()):1;
@@ -185,6 +207,15 @@ public final class PriceTagPrintService {
         if (items == null || items.isEmpty()) throw new IllegalArgumentException("Add at least one price tag before printing.");
         List<BufferedImage> images = new ArrayList<>(); for (PriceTagItem item : items) images.add(render(item, settings));
         PrinterJob job = PrinterJob.getPrinterJob(); job.setJobName("SmartStock Price Tags");
+        String defaultName = HardwareSettingsManager.getDefaultPriceTagPrinterName();
+        if (!defaultName.isBlank()) {
+            PrintService preferred = HardwareSettingsManager.findPrintService(defaultName);
+            if (preferred != null) job.setPrintService(preferred);
+            else JOptionPane.showMessageDialog(parent,
+                    "The default price-tag printer is unavailable: " + defaultName
+                            + "\nChoose another printer in the print dialog.",
+                    "Price-tag printer", JOptionPane.WARNING_MESSAGE);
+        }
         PageFormat page = pageFormat(job, settings); setTagPages(job, images, settings, page);
         PrintRequestAttributeSet attrs = new HashPrintRequestAttributeSet(); attrs.add(new MediaPrintableArea(0, 0, (float) settings.rowWidthInches(), (float) settings.rowPitchInches(), MediaPrintableArea.INCH));
         if (job.printDialog(attrs)) {
@@ -266,13 +297,14 @@ public final class PriceTagPrintService {
         appendAscii(out, "BITMAP 0,0," + bytesPerRow + "," + image.getHeight() + ",0,");
         for (int y = 0; y < image.getHeight(); y++) {
             for (int xByte = 0; xByte < bytesPerRow; xByte++) {
-                int value = 0;
+                // TSPL uses 0 for a printed dot, 1 for white (including padding).
+                int value = 0xFF;
                 for (int bit = 0; bit < 8; bit++) {
                     int x = xByte * 8 + bit;
                     if (x >= image.getWidth()) continue;
                     Color color = new Color(image.getRGB(x, y));
                     double luminance = color.getRed() * .299 + color.getGreen() * .587 + color.getBlue() * .114;
-                    if (luminance < 160) value |= 0x80 >> bit;
+                    if (luminance < 160) value &= ~(0x80 >> bit);
                 }
                 out.write(value);
             }

@@ -1,0 +1,7 @@
+SmartStock 1.1.23 (Windows build 101023)
+
+Custom orders can now be held and resumed on any register in the same store, including customer details, quantities, design details, notes, payment draft entries and attached files. Holding does not reserve stock or record payments. Verified file transfers, atomic resume claims and safe retries prevent incomplete or duplicate resumes. Manager approvals are obtained again when required at checkout.
+
+Custom Inventory now displays Description immediately after Name and offers an optional Template Size column alongside the optional Date Added column.
+
+Update the store server first, then registers.

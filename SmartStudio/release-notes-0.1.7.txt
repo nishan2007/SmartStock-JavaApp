@@ -1,0 +1,7 @@
+SmartStudio 0.1.7
+
+Image Studio now supports background removal, 2x/4x CPU enhancement, and combined removal followed by enhancement. Results remain separate PNGs, with Fit/100%/200% previews and print-size guidance at 300 PPI.
+
+Corrects the native drag-and-drop handoff: accept the transfer, detach image data while active, complete the drop, then load the image. Supports saved files, standard image data and PNG streams. App-specific virtual attachments may still require saving the image first.
+
+Includes the current Badge Cards/template workspace and conversion tools. Uses SmartStock 1.1.19 client support. Update the store server before using enhancement, then ask an administrator to install Image enhancement in Status > AI Models. Sign in again to refresh model availability.

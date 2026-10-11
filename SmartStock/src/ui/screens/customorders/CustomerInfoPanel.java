@@ -56,6 +56,16 @@ public class CustomerInfoPanel extends JPanel {
     public String getCustomerAccountNumber(){return accountNumberField.getText().trim();}
     public String getCustomerEmail(){return emailField.getText().trim();}
     public boolean applyCustomerDiscount(){return applyCustomerDiscountBox.isSelected();}
+    public record Draft(CustomerOption customer,String name,String phone,String accountNumber,String email,boolean applyDiscount){}
+    public Draft draft(){return new Draft(selectedCustomer,getCustomerName(),getCustomerPhone(),getCustomerAccountNumber(),getCustomerEmail(),applyCustomerDiscount());}
+    public void restoreDraft(Draft draft){
+        clear();selectedCustomer=draft.customer();updatingSearch=true;
+        try{nameField.setText(draft.name());searchField.setText(selectedCustomer==null?draft.name():selectedCustomer.toString());phoneField.setText(draft.phone());accountNumberField.setText(draft.accountNumber());emailField.setText(draft.email());}
+        finally{updatingSearch=false;}
+        boolean available=selectedCustomer!=null&&selectedCustomer.customOrderDiscountEnabled();
+        applyCustomerDiscountBox.setVisible(available);applyCustomerDiscountBox.setSelected(available&&draft.applyDiscount());
+        applyCustomerDiscountBox.setText(available&&selectedCustomer.customOrderDiscountPercent()!=null?"Apply customer custom-order discount ("+selectedCustomer.customOrderDiscountPercent().stripTrailingZeros().toPlainString()+"%)":"Apply customer custom-order discount");
+    }
 
     public void clear() {
         selectedCustomer = null;

@@ -247,6 +247,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/products/studio-list", exchange -> handle(exchange, this::studioProductList));
         server.createContext("/v1/studio/branding", exchange -> handle(exchange, this::studioBranding));
         server.createContext("/v1/studio/remove-background", exchange -> handle(exchange, this::studioRemoveBackground));
+        server.createContext("/v1/studio/progress", exchange -> handle(exchange, this::studioProgress));
         server.createContext("/v1/products/studio-source", exchange -> handle(exchange, this::studioProductSource));
         server.createContext("/v1/products/studio-import", exchange -> handle(exchange, this::studioProductImport));
         server.createContext("/v1/products/studio-reviews", exchange -> handle(exchange, this::studioReviews));
@@ -352,6 +353,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/custom-orders/create", exchange -> handle(exchange, this::createCustomOrder));
         server.createContext("/v1/custom-orders/dashboard", exchange -> handle(exchange, this::customOrderDashboard));
         server.createContext("/v1/custom-orders/assign", exchange -> handle(exchange, this::assignCustomOrder));
+        server.createContext("/v1/custom-orders/holds", exchange -> handle(exchange, this::customOrderHolds));
         server.createContext("/v1/custom-orders/admin/state", exchange -> handle(exchange, this::customCatalogAdminState));
         server.createContext("/v1/custom-orders/admin/update", exchange -> handle(exchange, this::customCatalogAdminMutation));
         server.createContext("/v1/custom-orders/workflow/read", exchange -> handle(exchange, this::customOrderWorkflowRead));
@@ -1638,7 +1640,7 @@ public final class LanApiServer implements AutoCloseable {
             SELECT ci.custom_item_id,NULL::bigint,ci.item_name,ci.size,ci.color,ci.description,ci.sku,ci.fixed_price,
                    ci.category_id,ci.quantity_on_hand,COALESCE(br.name,''),ci.image_url,ci.item_type_id,COALESCE(it.name,'')
             FROM custom_order_items ci LEFT JOIN item_brands br ON br.brand_id=ci.brand_id LEFT JOIN item_types it ON it.item_type_id=ci.item_type_id
-            WHERE ci.sell_in_pos AND ci.is_active AND ci.product_type='INVENTORY' AND NOT ci.has_variants AND ci.fixed_price IS NOT NULL
+            WHERE ci.sell_in_pos AND ci.is_active AND ci.is_archived=FALSE AND ci.product_type='INVENTORY' AND NOT ci.has_variants AND ci.fixed_price IS NOT NULL
               AND LOWER(CONCAT_WS(' ',ci.item_name,ci.size,ci.color,ci.sku,ci.barcode,br.name)) LIKE ?
             UNION ALL
             SELECT ci.custom_item_id,v.custom_variant_id,ci.item_name||' â€” '||v.variant_name,
@@ -1647,7 +1649,7 @@ public final class LanApiServer implements AutoCloseable {
                    COALESCE(NULLIF(v.image_url,''),ci.image_url),ci.item_type_id,COALESCE(it.name,'')
             FROM custom_order_item_variants v JOIN custom_order_items ci ON ci.custom_item_id=v.custom_item_id
             LEFT JOIN item_brands br ON br.brand_id=ci.brand_id LEFT JOIN item_brands vb ON vb.brand_id=v.brand_id LEFT JOIN item_types it ON it.item_type_id=ci.item_type_id
-            WHERE ci.sell_in_pos AND ci.is_active AND v.is_active AND ci.product_type='INVENTORY' AND COALESCE(v.fixed_price,ci.fixed_price) IS NOT NULL
+            WHERE ci.sell_in_pos AND ci.is_active AND ci.is_archived=FALSE AND v.is_active AND ci.product_type='INVENTORY' AND COALESCE(v.fixed_price,ci.fixed_price) IS NOT NULL
               AND LOWER(CONCAT_WS(' ',ci.item_name,v.variant_name,COALESCE(v.size,ci.size),COALESCE(v.color,ci.color),v.sku,v.barcode,COALESCE(vb.name,br.name))) LIKE ?
             ORDER BY 3 LIMIT 250
             """)){ps.setString(1,q);ps.setString(2,q);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
@@ -2299,6 +2301,38 @@ public final class LanApiServer implements AutoCloseable {
         return ApiResult.ok(StudioBackgroundService.branding(location));
     }
 
+    private ApiResult customOrderHolds(RequestContext context)throws Exception {
+        requireMethod(context.exchange(),"POST");
+        DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        JsonObject body=context.body();String action=required(body,"action",16);
+        boolean resume="RESUME".equals(action);
+        String key=resume?requireIdempotencyKey(context,"A resume key is required."):null;
+        String operation="custom-orders.hold-resume.v1."+session.locationId();
+        try(Connection c=DB.getConnection()){
+            requireAnyPermission(c,session.userId(),"CREATE_CUSTOM_ORDER");
+            c.setAutoCommit(false);
+            try{
+                if(resume){var previous=loadIdempotentResult(c,device.deviceId(),key,operation,LanSecurity.sha256(GSON.toJson(body)));if(previous!=null){c.commit();return ApiResult.ok(previous);}}
+                var result=CustomOrderHeldCartService.execute(c,body,session.locationId(),session.userId(),device.deviceId().toString());
+                if(resume)completeIdempotency(c,device.deviceId(),key,result);
+                c.commit();return ApiResult.ok(result);
+            }catch(SQLException e){c.rollback();if(e.getMessage()!=null&&(e.getMessage().contains("unavailable or already resumed")||e.getMessage().contains("not found in this store")))throw new ApiException(409,"CUSTOM_HOLD_UNAVAILABLE",e.getMessage(),false);throw e;}
+            catch(Exception e){c.rollback();throw e;}
+        }
+    }
+
+    private ApiResult studioProgress(RequestContext context)throws Exception {
+        requireMethod(context.exchange(),"POST");
+        DevicePrincipal device=authenticateDevice(context.exchange());
+        SessionPrincipal session=authenticateSession(context.exchange(),device,true);
+        try(Connection c=DB.getConnection()){
+            StudioDeviceEnrollmentService.requireAllowed(c,device.deviceId());
+            requireAnyPermission(c,session.userId(),"NEW_ITEM","EDIT_ITEM","MANAGE_CUSTOM_ORDER_ITEMS","CUSTOM_ORDER_ITEMS","MANAGE_CUSTOM_ORDERS");
+        }
+        return ApiResult.ok(StudioJobs.status(device.deviceId()+":"+session.userId(),required(context.body(),"requestId",36),
+                context.body().has("cancel")&&context.body().get("cancel").getAsBoolean()));
+    }
     private ApiResult studioRemoveBackground(RequestContext context) throws Exception {
         requireMethod(context.exchange(), "POST");
         DevicePrincipal device = authenticateDevice(context.exchange());
@@ -2315,17 +2349,38 @@ public final class LanApiServer implements AutoCloseable {
             if (output != null && !output.isBlank() && !output.equals("review-jpeg"))
                 throw new IllegalArgumentException("The photo output format is invalid.");
             boolean review = "review-jpeg".equals(output);
-            byte[] result = review ? StudioBackgroundService.reviewJpeg(bytes, quality)
-                    : StudioBackgroundService.remove(bytes, quality, cleanEdges);
+            boolean removeBackground = !context.body().has("removeBackground") || context.body().get("removeBackground").getAsBoolean();
+            int scale = context.body().has("scale") ? strictStudioScale(context.body().get("scale")) : 1;
+            if (review && (!removeBackground || scale != 1))
+                throw new IllegalArgumentException("Catalogue review images do not support enhancement.");
+            StudioImageEnhancer.Mode mode=context.body().has("processingMode")?StudioImageEnhancer.Mode.valueOf(required(context.body(),"processingMode",10)):StudioImageEnhancer.Mode.AUTO;
+            byte[] result;
+            if(context.body().has("requestId")&&!review){
+                try(var job=StudioJobs.begin(device.deviceId()+":"+session.userId(),required(context.body(),"requestId",36))){
+                    result=StudioBackgroundService.transform(bytes,quality,cleanEdges,removeBackground,scale,mode,job);job.success();
+                }
+            }else result=review?StudioBackgroundService.reviewJpeg(bytes,quality):StudioBackgroundService.transform(bytes,quality,cleanEdges,removeBackground,scale);
             return ApiResult.ok(Map.of("contentType", review ? "image/jpeg" : "image/png", "bytesBase64",
                     Base64.getEncoder().encodeToString(result)));
         } catch (IllegalArgumentException e) {
             throw new ApiException(400, "IMAGE_INVALID", e.getMessage(), false);
+        } catch(java.util.concurrent.CancellationException e){
+            throw new ApiException(409,"STUDIO_CANCELLED","Image processing cancelled.",false);
         } catch (StudioBackgroundService.BusyException e) {
             throw new ApiException(429, "STUDIO_BUSY", e.getMessage(), true);
         } catch (CatalogStudioImageProcessor.ModelUnavailableException e) {
             throw new ApiException(503, "STUDIO_MODEL_UNAVAILABLE", e.getMessage(), false);
         }
+    }
+
+    static int strictStudioScale(com.google.gson.JsonElement value) {
+        if (value == null || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber())
+            throw new IllegalArgumentException("Choose 1×, 2× or 4×.");
+        String scale = value.getAsString();
+        return switch (scale) {
+            case "1" -> 1; case "2" -> 2; case "4" -> 4;
+            default -> throw new IllegalArgumentException("Choose 1×, 2× or 4×.");
+        };
     }
 
     private ApiResult studioFromRegister(RequestContext context) throws Exception {
@@ -2379,6 +2434,10 @@ public final class LanApiServer implements AutoCloseable {
         }
         StudioModelService store = StudioModelService.current();
         if ("install".equals(action)) {
+            String family = optional(context.body(), "family", 20);
+            if ("enhancement".equals(family))
+                return ApiResult.ok(Map.of("progress", StudioEnhancementModel.current().start()));
+            if (family != null && !family.isBlank()) throw new ApiException(400, "MODEL_FAMILY_INVALID", "Unknown model family.", false);
             StudioQuality quality;
             try { quality = StudioQuality.parse(required(context.body(), "quality", 20)); }
             catch (IllegalArgumentException e) { throw new ApiException(400, "MODEL_QUALITY_INVALID", e.getMessage(), false); }
@@ -2389,7 +2448,7 @@ public final class LanApiServer implements AutoCloseable {
             catch (Exception e) { throw new ApiException(503, "MODEL_CATALOGUE_UNAVAILABLE",
                     "Unable to check Deckers AI model updates. Check the server download configuration and retry. Installed models remain available.", true); }
         }
-        return ApiResult.ok(Map.of("models", store.status()));
+        return ApiResult.ok(Map.of("models", store.status(), "enhancement", StudioEnhancementModel.current().status()));
     }
 
     private ApiResult studioProductList(RequestContext context) throws Exception {
@@ -2733,7 +2792,17 @@ public final class LanApiServer implements AutoCloseable {
         try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{
             requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,operation,hash);if(old!=null){c.commit();return ApiResult.ok(old);}
             AuthenticatedUser user=loadUser(c,s.userId(),s.locationId());bindServerIdentity(c,d,s,user);ServerCustomOrderDataService.OrderSaveRequest supplied=GSON.fromJson(x.body(),ServerCustomOrderDataService.OrderSaveRequest.class);
-            String number=ServerCustomOrderDataService.saveCustomOrder(c,trustedCustomOrderRequest(c,d,s,user,supplied));Map<String,Object>result=Map.of("orderNumber",number);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);
+            if(supplied==null)throw new ApiException(400,"VALIDATION_ERROR","Enter a custom order.",false);
+            boolean pending="PENDING".equals(supplied.pricingState());
+            LanSalesService.Approval deferApproval=pending?approvePricingDeferral(c,d,s,user,supplied.pricingDeferReason(),supplied.pricingDeferApprovalToken()):null;
+            String number=ServerCustomOrderDataService.saveCustomOrder(c,trustedCustomOrderRequest(c,d,s,user,supplied));
+            if(pending) {
+                int approver=deferApproval==null?s.userId():deferApproval.approverUserId();String approverName=deferApproval==null?displayName(user):deferApproval.approverName();
+                try(var p=c.prepareStatement("UPDATE custom_orders SET pricing_state='PENDING',pricing_defer_reason=?,pricing_defer_by_user_id=?,pricing_defer_by_name=?,pricing_apply_customer_discount=? WHERE order_number=? AND location_id=? RETURNING custom_order_id")) {
+                    p.setString(1,supplied.pricingDeferReason());p.setInt(2,approver);p.setString(3,approverName);p.setBoolean(4,supplied.applyCustomerDiscount());p.setString(5,number);p.setInt(6,s.locationId());try(var r=p.executeQuery()){r.next();CustomOrderPricingService.audit(c,r.getLong(1),"DEFER_PRICING","pricing_state","FINAL","PENDING",supplied.pricingDeferReason()+"; approved by: "+approverName,s.userId(),displayName(user),d.deviceId().toString(),loadDeviceDisplayName(c,d.deviceId()));}
+                }
+            }
+            Map<String,Object>result=Map.of("orderNumber",number);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);
         }catch(ApiException e){c.rollback();throw e;}catch(SQLException e){c.rollback();throw customOrderSqlException(e);}catch(Exception e){c.rollback();throw e;}finally{ServerRequestIdentity.clear();c.setAutoCommit(true);}}}
     private ApiException customOrderSqlException(SQLException failure) {
         String message=failure.getMessage()==null?"":failure.getMessage().trim();
@@ -2755,6 +2824,8 @@ public final class LanApiServer implements AutoCloseable {
         if(request.lines().size()>250)
             throw new ApiException(400,"VALIDATION_ERROR","A custom order cannot contain more than 250 lines.",false);
 
+        boolean pending="PENDING".equals(request.pricingState());
+        if(request.pricingState()!=null&&!List.of("PENDING","FINAL").contains(request.pricingState()))throw new ApiException(400,"VALIDATION_ERROR","Invalid pricing state.",false);
         BigDecimal total=BigDecimal.ZERO,customerDiscountAmount=BigDecimal.ZERO;
         List<ServerCustomOrderDataService.OrderLineRequest> lines=new ArrayList<>();
         Map<String,LanSalesService.Approval> approvals=new LinkedHashMap<>();
@@ -2765,12 +2836,12 @@ public final class LanApiServer implements AutoCloseable {
         ServerCustomOrderDataService.CustomerOption customer=trustedCustomOrderCustomer(c,request.selectedCustomer(),request.customerName(),request.customerPhone());
         BigDecimal customerRate=request.applyCustomerDiscount()&&customer.customOrderDiscountEnabled()?customer.customOrderDiscountPercent():BigDecimal.ZERO;
         for(ServerCustomOrderDataService.OrderLineRequest line:request.lines()) {
-            if(line==null||line.unitPrice()==null||line.unitPrice().compareTo(BigDecimal.ZERO)<0)
+            if(line==null||(!pending&&line.unitPrice()==null)||(line.unitPrice()!=null&&line.unitPrice().signum()<0))
                 throw new ApiException(400,"VALIDATION_ERROR","Every custom-order line must have a valid non-negative total.",false);
-            try { CustomerSuppliedItem.validate(line); } catch (IllegalArgumentException e) { throw new ApiException(400,"VALIDATION_ERROR",e.getMessage(),false); }
+            try { CustomerSuppliedItem.validate(line,pending); } catch (IllegalArgumentException e) { throw new ApiException(400,"VALIDATION_ERROR",e.getMessage(),false); }
             if (line.customItemId()==null && line.customerItem()==null) {
                 requireAnyPermission(c,s.userId(),"MANUAL_CUSTOM_ORDER_ENTRY");
-                if (line.itemName()==null || line.itemName().isBlank() || line.itemName().length()>200 || line.customVariantId()!=null || !"FIXED".equals(line.pricingType()) || line.baseItemPrice()==null || line.baseItemPrice().signum()<0)
+                if (line.itemName()==null || line.itemName().isBlank() || line.itemName().length()>200 || line.customVariantId()!=null || !"FIXED".equals(line.pricingType()) || (!pending&&line.baseItemPrice()==null) || (line.baseItemPrice()!=null&&line.baseItemPrice().signum()<0))
                     throw new ApiException(400,"VALIDATION_ERROR","Enter a valid manual item name and non-negative fixed price.",false);
             }
             if (line.printAddons()!=null) for (var addon:line.printAddons()) {
@@ -2781,7 +2852,7 @@ public final class LanApiServer implements AutoCloseable {
                         throw new ApiException(400,"VALIDATION_ERROR","Enter a valid manual add-on name and non-negative fixed price.",false);
                 }
             }
-            boolean discounted=line.lineDiscountPercent()!=null&&line.lineDiscountPercent().signum()>0;
+            boolean discounted=!pending&&line.lineDiscountPercent()!=null&&line.lineDiscountPercent().signum()>0;
             Integer discountBy=discounted?s.userId():null;
             String discountName=discounted?displayName(user):null;
             if(discounted&&!hasAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_DISCOUNT","CUSTOM_ORDER_OVERRIDES")) {
@@ -2794,7 +2865,7 @@ public final class LanApiServer implements AutoCloseable {
                 discountBy=approval.approverUserId();discountName=approval.approverName();
             }
 
-            boolean overridden=line.priceOverridePrice()!=null||(line.priceOverrideReason()!=null&&!line.priceOverrideReason().isBlank());
+            boolean overridden=!pending&&(line.priceOverridePrice()!=null||(line.priceOverrideReason()!=null&&!line.priceOverrideReason().isBlank()));
             Integer priceBy=overridden?s.userId():null;
             String priceName=overridden?displayName(user):null;
             if(overridden&&!hasAnyPermission(c,s.userId(),"CUSTOM_ORDER_PRICE_OVERRIDE","CUSTOM_ORDER_OVERRIDES")) {
@@ -2806,14 +2877,15 @@ public final class LanApiServer implements AutoCloseable {
                 if(approval==null){approval=consumeApproval(c,d,s,token,"CUSTOM_ORDER_PRICE_OVERRIDE","Custom Order Price Override",reason);approvals.put(cacheKey,approval);}
                 priceBy=approval.approverUserId();priceName=approval.approverName();
             }
-            BigDecimal originalTotal=utils.CurrencyFormatter.normalize(line.originalLineTotal()==null?line.unitPrice():line.originalLineTotal());
+            BigDecimal originalTotal=utils.CurrencyFormatter.normalize(line.originalLineTotal()==null?(line.unitPrice()==null?BigDecimal.ZERO:line.unitPrice()):line.originalLineTotal());
             BigDecimal manualRate=line.lineDiscountPercent()==null?BigDecimal.ZERO:line.lineDiscountPercent();
-            BigDecimal effectiveRate=manualRate.max(customerRate==null?BigDecimal.ZERO:customerRate);
+            BigDecimal effectiveRate=pending?BigDecimal.ZERO:manualRate.max(customerRate==null?BigDecimal.ZERO:customerRate);
             BigDecimal effectiveReduction=utils.CurrencyFormatter.normalize(originalTotal.multiply(effectiveRate).divide(BigDecimal.valueOf(100),2,java.math.RoundingMode.HALF_UP));
             BigDecimal normalizedUnitPrice=utils.CurrencyFormatter.normalize(originalTotal.subtract(effectiveReduction).max(BigDecimal.ZERO));
             customerDiscountAmount=customerDiscountAmount.add(effectiveReduction.subtract(line.lineDiscountAmount()==null?BigDecimal.ZERO:line.lineDiscountAmount()).max(BigDecimal.ZERO));
             BigDecimal chargedUnitPrice=roundToNearestTwenty
                     ? utils.CurrencyFormatter.roundToNearestTwenty(normalizedUnitPrice) : normalizedUnitPrice;
+            if(pending)chargedUnitPrice=BigDecimal.ZERO;
             total=total.add(chargedUnitPrice);
             lines.add(new ServerCustomOrderDataService.OrderLineRequest(
                     line.customItemId(),line.customVariantId(),line.customerItem()==null?line.itemName():line.customerItem().name(),line.variantName(),line.pricingType(),
@@ -2828,10 +2900,10 @@ public final class LanApiServer implements AutoCloseable {
 
         total=utils.CurrencyFormatter.normalize(total);
         BigDecimal paid=utils.CurrencyFormatter.normalize(request.amountPaid());
-        if(paid.signum()<0||paid.compareTo(total)>0)
+        if(paid.signum()<0||(!pending&&paid.compareTo(total)>0))
             throw new ApiException(400,"VALIDATION_ERROR","The upfront payment must be between zero and the order total.",false);
-        BigDecimal balance=utils.CurrencyFormatter.normalize(total.subtract(paid));
-        BigDecimal requiredDeposit=loadRequiredCustomOrderDeposit(c,s.locationId(),total);
+        BigDecimal balance=pending?BigDecimal.ZERO:utils.CurrencyFormatter.normalize(total.subtract(paid));
+        BigDecimal requiredDeposit=pending?BigDecimal.ZERO:loadRequiredCustomOrderDeposit(c,s.locationId(),total);
         boolean depositOverride=paid.compareTo(requiredDeposit)<0;
         Integer depositBy=depositOverride?s.userId():null;
         String depositName=depositOverride?displayName(user):null;
@@ -2847,11 +2919,12 @@ public final class LanApiServer implements AutoCloseable {
         String method=paid.signum()==0?null:(request.paymentMethod()==null?"":request.paymentMethod().trim().toUpperCase(java.util.Locale.ROOT));
         if(method!=null&&!List.of("CASH","CARD","CHEQUE","MMG").contains(method))
             throw new ApiException(400,"VALIDATION_ERROR","The upfront payment method is invalid.",false);
-        String status=paid.signum()==0?"UNPAID":balance.signum()==0?"PAID":"PARTIAL";
+        if(method!=null&&!"CASH".equals(method)&&(request.paymentReference()==null||request.paymentReference().isBlank()))throw new ApiException(400,"VALIDATION_ERROR","A payment reference is required for this payment method.",false);
+        String status=pending?"PRICE_PENDING":paid.signum()==0?"UNPAID":balance.signum()==0?"PAID":"PARTIAL";
         return new ServerCustomOrderDataService.OrderSaveRequest(customer,customer.name(),customer.phone(),request.dueDate(),
                 total,paid,balance,method,request.paymentReference(),status,s.userId(),displayName(user),s.locationId(),
                 user.locationName(),d.deviceId().toString(),loadDeviceDisplayName(c,d.deviceId()),requiredDeposit,
-                depositOverride?request.depositOverrideReason():null,depositBy,depositName,request.orderNotes(),lines,null,request.authorization(),request.applyCustomerDiscount(),customerRate,utils.CurrencyFormatter.normalize(customerDiscountAmount));
+                depositOverride?request.depositOverrideReason():null,depositBy,depositName,request.orderNotes(),lines,null,request.authorization(),request.applyCustomerDiscount(),pending?BigDecimal.ZERO:customerRate,pending?BigDecimal.ZERO:utils.CurrencyFormatter.normalize(customerDiscountAmount),pending?"PENDING":"FINAL",request.pricingDeferReason(),null);
     }
     private ServerCustomOrderDataService.CustomerOption trustedCustomOrderCustomer(Connection c,ServerCustomOrderDataService.CustomerOption selected,String name,String phone)throws Exception {
         String cleanPhone=phone==null?"":phone.trim();
@@ -2867,7 +2940,7 @@ public final class LanApiServer implements AutoCloseable {
     }
     private ApiResult customOrderDashboard(RequestContext x)throws Exception {
         requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);
-        try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"ORDERS_MANAGER_DASHBOARD","MANAGE_CUSTOM_ORDERS");AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());return ApiResult.ok(Map.of("dashboard",LanOrdersDashboardService.load(c,s.locationId(),java.time.ZoneId.of(u.locationTimezone()))));}
+        try(Connection c=DB.getConnection()){requireAnyPermission(c,s.userId(),"ORDERS_MANAGER_DASHBOARD","MANAGE_CUSTOM_ORDERS");if("DELIVERED".equals(optional(x.body(),"view",30)))return ApiResult.ok(Map.of("delivered",LanOrdersDashboardService.delivered(c,s.locationId(),"ALL".equals(optional(x.body(),"range",30)))));AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());return ApiResult.ok(Map.of("dashboard",LanOrdersDashboardService.load(c,s.locationId(),java.time.ZoneId.of(u.locationTimezone()))));}
     }
     private ApiResult assignCustomOrder(RequestContext x)throws Exception {
         requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String key=requireIdempotencyKey(x,"A valid idempotency key is required for this order assignment."),operation="custom-orders.assign.v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));
@@ -3218,7 +3291,7 @@ public final class LanApiServer implements AutoCloseable {
     private static List<ServerQuotationInvoiceService.QuotationLineInput> applyCustomerDiscount(List<ServerQuotationInvoiceService.QuotationLineInput> lines,BigDecimal rate){if(rate==null||rate.signum()<=0)return lines;return lines.stream().map(line->new ServerQuotationInvoiceService.QuotationLineInput(line.productId(),line.itemName(),line.sku(),line.quantity(),line.unitPrice(),line.originalUnitPrice(),rate.max(line.discountPercent()==null?BigDecimal.ZERO:line.discountPercent()),line.deliveryMethod(),line.notes(),line.priceOverrideReason(),line.priceOverrideByUserId(),line.priceOverrideByName(),line.priceOverrideApprovalToken(),line.custom())).toList();}
     private static void snapshotQuotationDiscount(Connection c,long id,BigDecimal rate)throws SQLException{boolean applied=rate!=null&&rate.signum()>0;try(PreparedStatement ps=c.prepareStatement("UPDATE quotations SET customer_discount_percent=?,customer_discount_applied=? WHERE quotation_id=?")){ps.setBigDecimal(1,rate);ps.setBoolean(2,applied);ps.setLong(3,id);ps.executeUpdate();}QuotationInvoiceAuditService.recordQuotationAudit(c,id,applied?"CUSTOMER_DISCOUNT_APPLIED":"CUSTOMER_DISCOUNT_DISABLED","customer_discount_percent",null,rate,applied?"Automatic customer invoice discount applied.":"Automatic customer invoice discount not applied.");}
     private BigDecimal configuredCustomQuotationPrice(Connection c,ServerQuotationInvoiceService.CustomLineInput custom)throws Exception{
-        BigDecimal price;String pricing;try(PreparedStatement ps=c.prepareStatement("SELECT pricing_type,COALESCE(fixed_price,0),COALESCE(area_price,0) FROM custom_order_items WHERE custom_item_id=? AND is_active=TRUE")){ps.setLong(1,custom.customItemId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(400,"CUSTOM_ITEM_NOT_FOUND","A quotation custom item no longer exists.",false);pricing=rs.getString(1);price="AREA".equals(pricing)?rs.getBigDecimal(3):rs.getBigDecimal(2);}}
+        BigDecimal price;String pricing;try(PreparedStatement ps=c.prepareStatement("SELECT pricing_type,COALESCE(fixed_price,0),COALESCE(area_price,0) FROM custom_order_items WHERE custom_item_id=? AND is_archived=FALSE AND is_active=TRUE")){ps.setLong(1,custom.customItemId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(400,"CUSTOM_ITEM_NOT_FOUND","A quotation custom item no longer exists.",false);pricing=rs.getString(1);price="AREA".equals(pricing)?rs.getBigDecimal(3):rs.getBigDecimal(2);}}
         if(custom.customVariantId()!=null)try(PreparedStatement ps=c.prepareStatement("SELECT fixed_price FROM custom_order_item_variants WHERE custom_variant_id=? AND custom_item_id=? AND is_active=TRUE")){ps.setLong(1,custom.customVariantId());ps.setLong(2,custom.customItemId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(400,"CUSTOM_VARIANT_NOT_FOUND","The custom-item variant is invalid.",false);if(rs.getBigDecimal(1)!=null)price=rs.getBigDecimal(1);}}
         if("AREA".equals(pricing))price=price.multiply(customArea(custom));if(custom.printAddons()!=null)for(var addon:custom.printAddons())if(addon.charge()!=null)price=price.add(addon.charge());return price.setScale(2,java.math.RoundingMode.HALF_UP);
     }
@@ -3226,7 +3299,7 @@ public final class LanApiServer implements AutoCloseable {
     private void validateCustomQuotationLine(Connection c,ServerQuotationInvoiceService.CustomLineInput custom)throws Exception{
         if(custom==null)return;
         if(custom.customItemId()==null)throw new ApiException(400,"VALIDATION_ERROR","Select a custom item.",false);
-        try(PreparedStatement ps=c.prepareStatement("SELECT pricing_type,has_variants FROM custom_order_items WHERE custom_item_id=? AND is_active=TRUE")){
+        try(PreparedStatement ps=c.prepareStatement("SELECT pricing_type,has_variants FROM custom_order_items WHERE custom_item_id=? AND is_archived=FALSE AND is_active=TRUE")){
             ps.setLong(1,custom.customItemId());try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new ApiException(400,"CUSTOM_ITEM_NOT_FOUND","A quotation custom item no longer exists.",false);
                 if(rs.getBoolean(2)&&custom.customVariantId()==null)throw new ApiException(400,"VALIDATION_ERROR","Select a custom-item variant.",false);
                 if("AREA".equals(rs.getString(1))&&(custom.widthValue()==null||custom.lengthValue()==null||custom.widthValue().signum()<=0||custom.lengthValue().signum()<=0))throw new ApiException(400,"VALIDATION_ERROR","Enter valid custom-item dimensions.",false);}}
@@ -3353,8 +3426,86 @@ public final class LanApiServer implements AutoCloseable {
         }catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}
     }
 
-    private ApiResult customOrderWorkflowRead(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){String action=required(x.body(),"action",40);requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_LOOKUP","CUSTOM_ORDER_OVERRIDES");Map<String,Object>r=new LinkedHashMap<>();switch(action){case"ALL"->r.put("orders",LanCustomOrderWorkflowService.orders(c,s.locationId(),null,"",500));case"MINE"->r.put("orders",LanCustomOrderWorkflowService.orders(c,s.locationId(),s.userId(),"",500));case"LOOKUP"->r.put("orders",LanCustomOrderWorkflowService.orders(c,s.locationId(),null,optional(x.body(),"search",500),100));case"RETURNS"->r.put("lines",LanCustomOrderWorkflowService.returnLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"DELIVERIES"->r.put("lines",LanCustomOrderWorkflowService.deliveryLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"PRODUCTION"->r.put("lines",LanCustomOrderWorkflowService.productionLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"DETAILS"->r.put("details",LanCustomOrderWorkflowService.details(c,requiredLong(x.body(),"orderId"),s.locationId()));default->throw new ApiException(400,"VALIDATION_ERROR","The custom order lookup is invalid.",false);}return ApiResult.ok(r);}}
-    private ApiResult customOrderWorkflowMutation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",40),key=requireIdempotencyKey(x,"A valid idempotency key is required for this custom order change."),op="custom-orders.workflow."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,op,hash);if(old!=null){c.commit();return ApiResult.ok(old);}AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());String deviceName=loadDeviceDisplayName(c,d.deviceId());long orderId=requiredLong(x.body(),"orderId");switch(action){case"PAYMENT"->{requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_PAYMENTS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.payment(c,orderId,x.body().get("amount").getAsBigDecimal(),required(x.body(),"method",30),optional(x.body(),"reference",500),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"PRODUCTION"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_PRODUCTION_STEPS","CUSTOM_ORDER_OVERRIDES");Long[]ids=GSON.fromJson(x.body().get("lineIds"),Long[].class);LanCustomOrderWorkflowService.production(c,orderId,ids==null?List.of():List.of(ids),required(x.body(),"status",40),optional(x.body(),"notes",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"DELIVER_LINES"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_DELIVERY","CUSTOM_ORDER_OVERRIDES");Long[]ids=GSON.fromJson(x.body().get("lineIds"),Long[].class);LanCustomOrderWorkflowService.deliver(c,orderId,ids==null?List.of():List.of(ids),optional(x.body(),"notes",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"DELIVER_ORDER"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_DELIVERY","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.markOrderDelivered(c,orderId,s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"LINE_RETURN"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_RETURNS","CUSTOM_ORDER_REFUNDS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.ReturnRequest[]requests=GSON.fromJson(x.body().get("returns"),LanCustomOrderWorkflowService.ReturnRequest[].class);BigDecimal total=BigDecimal.ZERO;if(requests!=null)for(var r:requests)if(r.amount()!=null)total=total.add(r.amount());BigDecimal limit=BigDecimal.ZERO;try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(custom_order_refund_approval_limit,0) FROM company_customization WHERE location_id=?")){ps.setInt(1,s.locationId());try(ResultSet rs=ps.executeQuery()){if(rs.next())limit=rs.getBigDecimal(1);}}if(limit!=null&&limit.signum()>0&&total.compareTo(limit)>0&&!hasAnyPermission(c,s.userId(),"CUSTOM_ORDER_REFUND_APPROVAL","CUSTOM_ORDER_OVERRIDES")){String reason=required(x.body(),"approvalReason",2000);consumeApproval(c,d,s,optional(x.body(),"approvalToken",512),"CUSTOM_ORDER_REFUND_APPROVAL","Custom Order Refund Approval",reason);}LanCustomOrderWorkflowService.lineReturn(c,orderId,requests==null?List.of():List.of(requests),required(x.body(),"method",30),optional(x.body(),"reference",500),required(x.body(),"reason",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}default->throw new ApiException(400,"VALIDATION_ERROR","The custom order change is invalid.",false);}Map<String,Object>result=Map.of("updated",true);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
+    private LanSalesService.Approval approvePricingDeferral(Connection c,DevicePrincipal d,SessionPrincipal s,AuthenticatedUser user,String reason,String token)throws Exception {
+        if(reason==null||reason.isBlank()||reason.length()>2000)throw new ApiException(400,"VALIDATION_ERROR","Enter a pricing deferral reason (up to 2000 characters).",false);
+        if(hasPermission(c,s.userId(),"CUSTOM_ORDER_DEFER_PRICING"))return new LanSalesService.Approval(s.userId(),displayName(user),reason.trim());
+        return consumeApproval(c,d,s,token,"CUSTOM_ORDER_DEFER_PRICING","Defer Custom Order Pricing",reason);
+    }
+    private boolean approveUnpricedDelivery(Connection c,DevicePrincipal d,SessionPrincipal s,AuthenticatedUser user,long orderId,JsonObject body)throws Exception {
+        if(!CustomOrderPricingService.pending(c,orderId,s.locationId()))return false;
+        String reason=required(body,"unpricedDeliveryReason",2000);
+        // Delivery while unpriced always needs a manager approval, including for privileged operators.
+        var approval=consumeApproval(c,d,s,optional(body,"unpricedDeliveryApprovalToken",512),"CUSTOM_ORDER_UNPRICED_DELIVERY_OVERRIDE","Deliver Custom Order Before Pricing",reason);
+        CustomOrderPricingService.audit(c,orderId,"UNPRICED_DELIVERY_APPROVED","pricing_state","PENDING","PENDING",reason+"; approved by: "+approval.approverName(),s.userId(),displayName(user),d.deviceId().toString(),loadDeviceDisplayName(c,d.deviceId()));
+        return true;
+    }
+    private void requireCustomOrderRefundApproval(Connection c,DevicePrincipal d,SessionPrincipal s,JsonObject body)throws Exception {
+        requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_RETURNS","CUSTOM_ORDER_REFUNDS","CUSTOM_ORDER_OVERRIDES");
+        BigDecimal amount=body.get("amount").getAsBigDecimal(),limit=BigDecimal.ZERO;
+        try(var p=c.prepareStatement("SELECT COALESCE(custom_order_refund_approval_limit,0) FROM company_customization WHERE location_id=?")){p.setInt(1,s.locationId());try(var r=p.executeQuery()){if(r.next())limit=r.getBigDecimal(1);}}
+        if(limit.signum()>0&&amount.compareTo(limit)>0&&!hasAnyPermission(c,s.userId(),"CUSTOM_ORDER_REFUND_APPROVAL","CUSTOM_ORDER_OVERRIDES"))consumeApproval(c,d,s,optional(body,"approvalToken",512),"CUSTOM_ORDER_REFUND_APPROVAL","Custom Order Refund Approval",optional(body,"approvalReason",2000));
+    }
+    private void finalizeCustomOrderPrice(Connection c,DevicePrincipal d,SessionPrincipal s,AuthenticatedUser user,long orderId,JsonObject body)throws Exception {
+        requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDERS");
+        var details=CustomOrderPricingService.details(c,orderId,s.locationId());
+        CustomOrderPricingService.PricingLine[] submitted=GSON.fromJson(body.get("lines"),CustomOrderPricingService.PricingLine[].class);
+        if(submitted==null||submitted.length!=details.lines().size())throw new ApiException(409,"ORDER_CHANGED","Price every saved order line. Reload the order.",false);
+        Map<Long,CustomOrderPricingService.Snapshot> remaining=new LinkedHashMap<>();for(var line:details.lines())remaining.put(line.lineId(),line);
+        List<CustomOrderPricingService.AuthorizedLine> work=new ArrayList<>();Map<String,LanSalesService.Approval> approvals=new LinkedHashMap<>();
+        for(var line:submitted) {
+            var saved=line==null?null:remaining.remove(line.lineId());
+            if(saved==null)throw new ApiException(400,"VALIDATION_ERROR","Invalid or duplicate order line.",false);
+            List<CustomOrderDataService.PrintAddonRequest> addons=line.addons()==null?List.of():line.addons();
+            if(addons.size()>100)throw new ApiException(400,"VALIDATION_ERROR","Too many print add-ons.",false);
+            // Names and material/preset identities are server-owned. New manual charges retain the manual-entry permission.
+            List<CustomOrderDataService.PrintAddonRequest> trustedAddons=new ArrayList<>();
+            for(var addon:addons) {
+                if(addon==null)throw new ApiException(400,"VALIDATION_ERROR","Invalid print add-on.",false);
+                if(addon.printMaterialId()==null) {
+                    boolean existing=saved.addons().stream().anyMatch(a->a.printMaterialId()==null&&java.util.Objects.equals(a.materialName(),addon.materialName()));
+                    if(!existing)requireAnyPermission(c,s.userId(),"MANUAL_CUSTOM_ORDER_ENTRY");
+                    if(addon.materialName()==null||addon.materialName().isBlank()||addon.materialName().length()>200||addon.printSizePresetId()!=null||!"FIXED_PRESET".equals(addon.pricingMode())||addon.printLineCount()!=1)throw new ApiException(400,"VALIDATION_ERROR","Invalid manual add-on.",false);
+                    trustedAddons.add(addon);
+                } else {
+                    try(var p=c.prepareStatement("SELECT m.material_name,p.preset_name,p.pricing_mode FROM custom_order_print_materials m LEFT JOIN custom_order_print_size_presets p ON p.print_material_id=m.print_material_id AND p.print_size_preset_id=? WHERE m.print_material_id=?")) {
+                        p.setObject(1,addon.printSizePresetId());p.setLong(2,addon.printMaterialId());try(var r=p.executeQuery()) {
+                            if(!r.next()||(addon.printSizePresetId()!=null&&r.getString(2)==null))throw new ApiException(400,"VALIDATION_ERROR","Invalid print material or preset.",false);
+                            String mode=addon.printSizePresetId()==null?"FIXED_PRESET":r.getString(3);
+                            trustedAddons.add(new CustomOrderDataService.PrintAddonRequest(addon.printMaterialId(),r.getString(1),addon.printSizePresetId(),r.getString(2),mode,addon.printDescription(),"PER_LINE".equals(mode)?addon.printLineCount():1,addon.printCharge()));
+                        }
+                    }
+                }
+            }
+            var trusted=new CustomOrderPricingService.PricingLine(line.lineId(),line.width(),line.length(),line.rate(),trustedAddons,line.discountPercent(),line.discountReason(),line.discountApprovalToken(),line.priceOverrideReason(),line.priceOverrideApprovalToken());
+            CustomOrderPricingService.Calculated price;
+            try{price=CustomOrderPricingService.calculate(saved,trusted,details.customerDiscountPercent(),details.roundToNearestTwenty());}catch(IllegalArgumentException ex){throw new ApiException(400,"VALIDATION_ERROR",ex.getMessage(),false);}
+            boolean override=saved.configuredRate()!=null&&line.rate().compareTo(saved.configuredRate())!=0;
+            Integer priceBy=null,discountBy=null;String priceName=null,discountName=null;
+            if(override) {
+                if(line.priceOverrideReason()==null||line.priceOverrideReason().isBlank()||line.priceOverrideReason().length()>2000)throw new ApiException(400,"VALIDATION_ERROR","A price override reason is required.",false);
+                if(hasAnyPermission(c,s.userId(),"CUSTOM_ORDER_PRICE_OVERRIDE","CUSTOM_ORDER_OVERRIDES")){priceBy=s.userId();priceName=displayName(user);}else {
+                    String cacheKey="PRICE|"+line.priceOverrideApprovalToken()+"|"+line.priceOverrideReason();var approval=approvals.get(cacheKey);
+                    if(approval==null){approval=consumeApproval(c,d,s,line.priceOverrideApprovalToken(),"CUSTOM_ORDER_PRICE_OVERRIDE","Custom Order Price Override",line.priceOverrideReason());approvals.put(cacheKey,approval);}priceBy=approval.approverUserId();priceName=approval.approverName();
+                }
+            }
+            if(line.discountPercent()!=null&&line.discountPercent().signum()>0) {
+                if(line.discountReason()==null||line.discountReason().isBlank()||line.discountReason().length()>2000)throw new ApiException(400,"VALIDATION_ERROR","A discount reason is required.",false);
+                if(hasAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_DISCOUNT","CUSTOM_ORDER_OVERRIDES")){discountBy=s.userId();discountName=displayName(user);}else {
+                    String cacheKey="DISCOUNT|"+line.discountApprovalToken()+"|"+line.discountReason();var approval=approvals.get(cacheKey);
+                    if(approval==null){approval=consumeApproval(c,d,s,line.discountApprovalToken(),"CUSTOM_ORDER_LINE_DISCOUNT","Custom Order Line Discount Override",line.discountReason());approvals.put(cacheKey,approval);}discountBy=approval.approverUserId();discountName=approval.approverName();
+                }
+            }
+            work.add(new CustomOrderPricingService.AuthorizedLine(saved,trusted,price,discountBy,discountName,priceBy,priceName));
+        }
+        try{CustomOrderPricingService.finalizePrice(c,orderId,s.locationId(),details,work,GSON.fromJson(body.get("authorization"),CustomerChargeAuthorizationService.Authorization.class),s.userId(),displayName(user),d.deviceId().toString(),loadDeviceDisplayName(c,d.deviceId()));}catch(IllegalArgumentException ex){throw new ApiException(409,"CUSTOM_ORDER_PRICING_REJECTED",ex.getMessage(),false);}
+    }
+    private ApiException customOrderWorkflowSqlException(SQLException failure) {
+        String message=failure.getMessage()==null?"":failure.getMessage();
+        boolean safe=List.of("Order was not found","This order already has a final price","This order cannot be repriced","The price was already finalized","Manager approval is required to deliver","Refund the pending-order deposit","Use the regular refund workflow","Choose a refund payment method","Enter a positive whole-dollar refund amount","A deposit refund reason","A refund reference","Refund cannot exceed deposits","Select a payment method for the deposit","This order still has a balance due","Cancelled orders cannot be changed","This register needs an active assigned cash drawer","Payment cannot be more than the balance due").stream().anyMatch(message::startsWith);
+        return new ApiException(409,"CUSTOM_ORDER_REJECTED",safe?message:"The custom order change was rejected. Reload the order and review the details.",false);
+    }
+    private ApiResult customOrderWorkflowRead(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);try(Connection c=DB.getConnection()){String action=required(x.body(),"action",40);requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_LOOKUP","CUSTOM_ORDER_OVERRIDES");Map<String,Object>r=new LinkedHashMap<>();switch(action){case"CURRENT_MINE"->r.put("orders",LanCustomOrderWorkflowService.currentAssignedOrders(c,s.locationId(),s.userId()));case"ALL"->r.put("orders",LanCustomOrderWorkflowService.allOrders(c,s.locationId(),optional(x.body(),"search",500)));case"MINE"->r.put("orders",LanCustomOrderWorkflowService.orders(c,s.locationId(),s.userId(),"",500));case"LOOKUP"->r.put("orders",LanCustomOrderWorkflowService.lookupOrders(c,s.locationId(),optional(x.body(),"search",500),100));case"CANCELLATION_LINES"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_OVERRIDES");r.put("lines",LanCustomOrderWorkflowService.cancellationLines(c,requiredLong(x.body(),"orderId"),s.locationId()));}case"RETURNS"->r.put("lines",LanCustomOrderWorkflowService.returnLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"DELIVERIES"->r.put("lines",LanCustomOrderWorkflowService.deliveryLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"PRODUCTION"->r.put("lines",LanCustomOrderWorkflowService.productionLines(c,requiredLong(x.body(),"orderId"),s.locationId()));case"PRICING"->{requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDERS");try{r.put("pricing",CustomOrderPricingService.details(c,requiredLong(x.body(),"orderId"),s.locationId()));}catch(SQLException ex){throw customOrderWorkflowSqlException(ex);}}case"DETAILS_V2"->r.put("orderDetails",CustomOrderDetailsService.read(c,requiredLong(x.body(),"orderId"),s.locationId()));case"DETAILS"->r.put("details",LanCustomOrderWorkflowService.details(c,requiredLong(x.body(),"orderId"),s.locationId()));default->throw new ApiException(400,"VALIDATION_ERROR","The custom order lookup is invalid.",false);}return ApiResult.ok(r);}}
+    private ApiResult customOrderWorkflowMutation(RequestContext x)throws Exception{requireMethod(x.exchange(),"POST");DevicePrincipal d=authenticateDevice(x.exchange());SessionPrincipal s=authenticateSession(x.exchange(),d,true);String action=required(x.body(),"action",40),key=requireIdempotencyKey(x,"A valid idempotency key is required for this custom order change."),op="custom-orders.workflow."+action.toLowerCase(java.util.Locale.ROOT)+".v1",hash=LanSecurity.sha256(GSON.toJson(x.body()));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{if("CANCEL_ORDER".equals(action))requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_OVERRIDES");if("FINALIZE_PRICE".equals(action))requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDERS");if("DEPOSIT_REFUND".equals(action))requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_RETURNS","CUSTOM_ORDER_REFUNDS","CUSTOM_ORDER_OVERRIDES");Map<String,Object>old=loadIdempotentResult(c,d.deviceId(),key,op,hash);if(old!=null){c.commit();return ApiResult.ok(old);}AuthenticatedUser u=loadUser(c,s.userId(),s.locationId());String deviceName=loadDeviceDisplayName(c,d.deviceId());long orderId=requiredLong(x.body(),"orderId");switch(action){case"FINALIZE_PRICE"->{requireAnyPermission(c,s.userId(),"MANAGE_CUSTOM_ORDERS");finalizeCustomOrderPrice(c,d,s,u,orderId,x.body());}case"DEPOSIT_REFUND"->{requireCustomOrderRefundApproval(c,d,s,x.body());LanCustomOrderWorkflowService.refundPendingDeposit(c,orderId,x.body().get("amount").getAsBigDecimal(),required(x.body(),"method",30),optional(x.body(),"reference",500),required(x.body(),"reason",2000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"CANCEL_ORDER"->{LanCustomOrderWorkflowService.ReturnRequest[] returns=GSON.fromJson(x.body().get("returns"),LanCustomOrderWorkflowService.ReturnRequest[].class);LanCustomOrderWorkflowService.returnAndCancel(c,orderId,returns==null?List.of():List.of(returns),required(x.body(),"method",30),optional(x.body(),"reference",500),required(x.body(),"reason",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"PAYMENT"->{requireAnyPermission(c,s.userId(),"CREATE_CUSTOM_ORDER","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_PAYMENTS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.payment(c,orderId,x.body().get("amount").getAsBigDecimal(),required(x.body(),"method",30),optional(x.body(),"reference",500),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"PRODUCTION"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_PRODUCTION_STEPS","CUSTOM_ORDER_OVERRIDES");Long[]ids=GSON.fromJson(x.body().get("lineIds"),Long[].class);LanCustomOrderWorkflowService.production(c,orderId,ids==null?List.of():List.of(ids),required(x.body(),"status",40),optional(x.body(),"notes",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}case"DELIVER_LINES"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_DELIVERY","CUSTOM_ORDER_OVERRIDES");Long[]ids=GSON.fromJson(x.body().get("lineIds"),Long[].class);LanCustomOrderWorkflowService.deliver(c,orderId,ids==null?List.of():List.of(ids),optional(x.body(),"notes",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName,approveUnpricedDelivery(c,d,s,u,orderId,x.body()));}case"DELIVER_ORDER"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_DELIVERY","MANAGE_CUSTOM_ORDERS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.markOrderDelivered(c,orderId,s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName,approveUnpricedDelivery(c,d,s,u,orderId,x.body()));}case"LINE_RETURN"->{requireAnyPermission(c,s.userId(),"CUSTOM_ORDER_LINE_RETURNS","CUSTOM_ORDER_REFUNDS","CUSTOM_ORDER_OVERRIDES");LanCustomOrderWorkflowService.ReturnRequest[]requests=GSON.fromJson(x.body().get("returns"),LanCustomOrderWorkflowService.ReturnRequest[].class);BigDecimal total=BigDecimal.ZERO;if(requests!=null)for(var r:requests)if(r.amount()!=null)total=total.add(r.amount());BigDecimal limit=BigDecimal.ZERO;try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(custom_order_refund_approval_limit,0) FROM company_customization WHERE location_id=?")){ps.setInt(1,s.locationId());try(ResultSet rs=ps.executeQuery()){if(rs.next())limit=rs.getBigDecimal(1);}}if(limit!=null&&limit.signum()>0&&total.compareTo(limit)>0&&!hasAnyPermission(c,s.userId(),"CUSTOM_ORDER_REFUND_APPROVAL","CUSTOM_ORDER_OVERRIDES")){String reason=required(x.body(),"approvalReason",2000);consumeApproval(c,d,s,optional(x.body(),"approvalToken",512),"CUSTOM_ORDER_REFUND_APPROVAL","Custom Order Refund Approval",reason);}LanCustomOrderWorkflowService.lineReturn(c,orderId,requests==null?List.of():List.of(requests),required(x.body(),"method",30),optional(x.body(),"reference",500),required(x.body(),"reason",3000),s.locationId(),s.userId(),displayName(u),d.deviceId().toString(),deviceName);}default->throw new ApiException(400,"VALIDATION_ERROR","The custom order change is invalid.",false);}Map<String,Object>result=Map.of("updated",true);completeIdempotency(c,d.deviceId(),key,result);c.commit();return ApiResult.ok(result);}catch(SQLException e){c.rollback();throw customOrderWorkflowSqlException(e);}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
 
     private ApiResult companyCustomizationRead(RequestContext x) throws Exception {
         requireMethod(x.exchange(), "POST");

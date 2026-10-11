@@ -1,0 +1,5 @@
+SmartStock 1.1.10
+
+- Fixes inverted CT221B price tags: text and barcodes print black on white instead of white on black.
+- Corrects white padding at the right edge of the label bitmap.
+- Includes the application changes shipped in 1.1.9.

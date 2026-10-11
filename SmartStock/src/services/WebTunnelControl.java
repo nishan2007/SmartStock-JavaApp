@@ -14,11 +14,31 @@ final class WebTunnelControl {
     static boolean windows(){return System.getProperty("os.name","").toLowerCase(Locale.ROOT).contains("windows");}
     static List<ProcessHandle> connectors(String id){
         String expected=directory(id).toString().toLowerCase(Locale.ROOT);
+        if(windows())return windowsConnectors(expected);
         return ProcessHandle.allProcesses().filter(p->{var info=p.info();
             String command=info.command().orElse("").toLowerCase(Locale.ROOT);
             String line=info.commandLine().orElse("").toLowerCase(Locale.ROOT);
             return command.endsWith("cloudflared.exe")&&line.contains(expected);
         }).toList();
+    }
+    private static List<ProcessHandle> windowsConnectors(String expected){
+        // Windows Java ProcessHandle does not expose commandLine reliably.
+        // CIM verifies the executable name and installed tunnel directory;
+        // only process IDs leave the child process, never connector tokens.
+        var exe=Path.of(System.getenv("SystemRoot"),"System32","WindowsPowerShell","v1.0","powershell.exe");
+        String script="$ErrorActionPreference='Stop';Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'cloudflared.exe' -and $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($env:SMARTSTOCK_TUNNEL_DIRECTORY) } | ForEach-Object { [Console]::WriteLine($_.ProcessId) }";
+        Process process=null;
+        try{
+            var builder=new ProcessBuilder(exe.toString(),"-NoProfile","-NonInteractive","-Command",script).redirectError(ProcessBuilder.Redirect.DISCARD);
+            builder.environment().put("SMARTSTOCK_TUNNEL_DIRECTORY",expected);process=builder.start();
+            if(!process.waitFor(5,TimeUnit.SECONDS))throw new IllegalStateException("Tunnel status check timed out.");
+            if(process.exitValue()!=0)throw new IllegalStateException("Tunnel process status could not be checked.");
+            String output=new String(process.getInputStream().readNBytes(4096),java.nio.charset.StandardCharsets.US_ASCII);
+            return output.lines().filter(line->line.matches("[0-9]+"))
+                    .map(Long::parseLong).map(ProcessHandle::of).flatMap(Optional::stream).filter(ProcessHandle::isAlive).toList();
+        }catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException("Tunnel status check interrupted.",e);}
+        catch(java.io.IOException e){throw new IllegalStateException("Tunnel process status could not be checked.",e);}
+        finally{if(process!=null&&process.isAlive())process.destroyForcibly();}
     }
     static Map<String,Object> status(String id){
         var processes=connectors(id);var out=new LinkedHashMap<String,Object>();

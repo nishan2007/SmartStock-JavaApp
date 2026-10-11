@@ -17,6 +17,7 @@ public final class AiModelsDialog extends JDialog {
     private final JButton refresh = new JButton("Check model updates");
     private final Timer poll = new Timer(1500, e -> load(false));
     private boolean loading;
+    private final Row enhancement = new Row(null);
 
     public AiModelsDialog(Component parent) {
         super(parent instanceof Window window ? window : SwingUtilities.getWindowAncestor(parent), "AI Models", ModalityType.MODELESS);
@@ -30,6 +31,7 @@ public final class AiModelsDialog extends JDialog {
             Row row = new Row(quality); rows.put(quality, row);
             content.add(Box.createVerticalStrut(16)); content.add(row.panel);
         }
+        content.add(Box.createVerticalStrut(16)); content.add(enhancement.panel);
         content.add(Box.createVerticalStrut(16)); content.add(message);
         content.add(Box.createVerticalStrut(12)); content.add(refresh);
         DeckersSwing.styleUtilityButton(refresh, DeckersPalette.PURPLE);
@@ -52,10 +54,13 @@ public final class AiModelsDialog extends JDialog {
                 loading = false; refresh.setEnabled(true);
                 if (!isDisplayable()) return;
                 try {
-                    for (var value : get().getAsJsonArray("models")) {
+                    JsonObject data = get();
+                    for (var value : data.getAsJsonArray("models")) {
                         JsonObject model = value.getAsJsonObject();
                         rows.get(StudioQuality.parse(model.get("quality").getAsString())).update(model);
                     }
+                    if (data.has("enhancement")) enhancement.update(data.getAsJsonObject("enhancement"));
+                    else enhancement.info.setText("Update the store server to enable enhancement.");
                     message.setText("Models work offline after installation. Downloads continue if you close this screen.");
                     poll.start();
                 } catch (Exception e) {
@@ -77,14 +82,17 @@ public final class AiModelsDialog extends JDialog {
         Row(StudioQuality quality) {
             panel.setLayout(new BorderLayout(12, 8));
             JPanel labels = DeckersSwing.panel(); labels.setLayout(new BoxLayout(labels, BoxLayout.Y_AXIS));
-            labels.add(DeckersSwing.totalLabel(quality.toString(), true)); labels.add(info); labels.add(status);
+            labels.add(DeckersSwing.totalLabel(quality == null ? "Image enhancement · 2× / 4×" : quality.toString(), true)); labels.add(info); labels.add(status);
             panel.add(labels, BorderLayout.CENTER); panel.add(action, BorderLayout.EAST); panel.add(progress, BorderLayout.SOUTH);
             progress.setStringPainted(true); progress.setString("Not installed"); action.setEnabled(false);
             DeckersSwing.styleUtilityButton(action, DeckersPalette.PURPLE);
             action.addActionListener(e -> {
                 submitting = true; action.setEnabled(false);
                 new SwingWorker<Void, Void>() {
-                    @Override protected Void doInBackground() throws Exception { LanApiClient.installStudioModel(quality); return null; }
+                    @Override protected Void doInBackground() throws Exception {
+                        if (quality == null) LanApiClient.installStudioEnhancementModel();
+                        else LanApiClient.installStudioModel(quality); return null;
+                    }
                     @Override protected void done() {
                         submitting = false;
                         try { get(); poll.start(); load(false); }

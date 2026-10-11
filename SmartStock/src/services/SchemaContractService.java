@@ -91,6 +91,9 @@ public final class SchemaContractService {
             ,"database/migrations/v1_after/20261008180000_custom_order_signature_controls.sql"
             ,"database/migrations/v1_after/20261008190000_manual_custom_order_entry.sql"
             ,"database/migrations/v1_after/20261003173205_cross_store_egress_local.sql"
+            ,"database/migrations/v1_after/20261011120000_custom_order_pending_pricing.sql"
+            ,"database/migrations/v1_after/20261011140000_custom_item_archiving.sql"
+            ,"database/migrations/v1_after/20261011160000_custom_order_held_carts.sql"
     );
     private static final List<String> CLOUD_POST_V1 = List.of(
             "database/migrations/v1_after/20260809190000_revoke_anon_security_definer_execute.sql",
@@ -118,6 +121,7 @@ public final class SchemaContractService {
             ,"database/migrations/v1_after/20261008170100_custom_order_spoil_permissions.sql"
             ,"database/migrations/v1_after/20261008190000_manual_custom_order_entry.sql"
             ,"database/migrations/v1_after/20261003173203_cross_store_egress_cloud.sql"
+            ,"database/migrations/v1_after/20261011120100_custom_order_pending_pricing_permissions.sql"
     );
     private static final Set<String> VALIDATED_LOCAL_DATABASES =
             ConcurrentHashMap.newKeySet();
@@ -129,7 +133,8 @@ public final class SchemaContractService {
             "COMPANY_CUSTOMIZATION", "LOCAL_DEVICE_SETTINGS", "CUSTOM_ORDER_PRICE_OVERRIDE",
             "CUSTOM_ORDER_ITEMS", "MANAGE_CUSTOM_ORDER_ITEMS", "ADD_MISC_SALE_ITEM", "VIEW_DRAWER_HISTORY",
             "REMOVE_CUSTOM_ORDER_FILES", "CUSTOM_ORDER_FILE_SIZE_OVERRIDE",
-            "RECORD_CUSTOM_ORDER_SPOILS", "REVERSE_CUSTOM_ORDER_SPOILS", "MANUAL_CUSTOM_ORDER_ENTRY");
+            "RECORD_CUSTOM_ORDER_SPOILS", "REVERSE_CUSTOM_ORDER_SPOILS", "MANUAL_CUSTOM_ORDER_ENTRY",
+            "CUSTOM_ORDER_DEFER_PRICING", "CUSTOM_ORDER_UNPRICED_DELIVERY_OVERRIDE");
 
 
     private SchemaContractService() {
@@ -498,6 +503,9 @@ public final class SchemaContractService {
         ensureStudioDeviceAccessUpgrade(connection);
         ensureCustomerChargeAuthorizationUpgrade(connection);
         ensureAutomaticCustomerDiscountUpgrade(connection);
+        ensureCustomOrderPendingPricingUpgrade(connection);
+        ensureCustomItemArchivingUpgrade(connection);
+        ensureCustomOrderHeldCartsUpgrade(connection);
         ensureEmployeeRegistrationUpgrade(connection);
         ensureEmploymentPortalUpgrade(connection);
         ensureBuiltinPermissionsUpgrade(connection);
@@ -911,6 +919,42 @@ public final class SchemaContractService {
         }catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Customer charge authorization support could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
     }
 
+    public static void ensureCustomOrderHeldCartsUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")||tableExists(connection,"public","custom_order_held_carts"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20261011160000_custom_order_held_carts.sql"));
+            try(var p=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                p.setString(1,resourceFingerprint(localContractResources()));p.setString(2,catalogFingerprint(connection,List.of("public"),false));p.setInt(3,BASELINE_VERSION);p.executeUpdate();
+            }
+            connection.commit();
+        } catch(Exception ex) {connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Held custom order carts could not be installed.",ex);} finally {connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCustomItemArchivingUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")||columnExists(connection,"public","custom_order_items","is_archived"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20261011140000_custom_item_archiving.sql"));
+            try(var p=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                p.setString(1,resourceFingerprint(localContractResources()));p.setString(2,catalogFingerprint(connection,List.of("public"),false));p.setInt(3,BASELINE_VERSION);p.executeUpdate();
+            }
+            connection.commit();
+        } catch(Exception ex) {connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Custom item archiving could not be installed.",ex);} finally {connection.setAutoCommit(auto);}
+    }
+
+    public static void ensureCustomOrderPendingPricingUpgrade(Connection connection)throws SQLException {
+        if(!tableExists(connection,"public","smartstock_schema_metadata")||columnExists(connection,"public","custom_orders","pricing_state"))return;
+        boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);
+        try {
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20261011120000_custom_order_pending_pricing.sql"));
+            try(var p=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")) {
+                p.setString(1,resourceFingerprint(localContractResources()));p.setString(2,catalogFingerprint(connection,List.of("public"),false));p.setInt(3,BASELINE_VERSION);p.executeUpdate();
+            }
+            connection.commit();
+        } catch(Exception ex) {connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Pending order pricing could not be installed.",ex);} finally {connection.setAutoCommit(auto);}
+    }
+
     public static void ensureAutomaticCustomerDiscountUpgrade(Connection connection)throws SQLException{
         if(!tableExists(connection,"public","smartstock_schema_metadata")||(columnExists(connection,"public","customer_accounts","sales_discount_enabled")&&columnExists(connection,"public","customer_accounts","invoice_discount_enabled")&&columnExists(connection,"public","customer_accounts","custom_order_discount_enabled")&&columnExists(connection,"public","sales","customer_discount_applied")&&columnExists(connection,"public","quotations","customer_discount_applied")&&columnExists(connection,"public","invoices","customer_discount_applied")&&columnExists(connection,"public","custom_orders","customer_discount_applied")))return;
         boolean auto=connection.getAutoCommit();connection.setAutoCommit(false);try{SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20260911150000_automatic_customer_discounts.sql"));try(PreparedStatement ps=connection.prepareStatement("UPDATE public.smartstock_schema_metadata SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=? WHERE schema_scope='LOCAL' AND baseline_version=?")){ps.setString(1,resourceFingerprint(localContractResources()));ps.setString(2,catalogFingerprint(connection,List.of("public"),false));ps.setInt(3,BASELINE_VERSION);ps.executeUpdate();}connection.commit();}catch(Exception ex){connection.rollback();if(ex instanceof SQLException sql)throw sql;throw new SQLException("Automatic customer discounts could not be installed.",ex);}finally{connection.setAutoCommit(auto);}
@@ -1195,6 +1239,7 @@ public final class SchemaContractService {
             // stores must apply it before checking the current required catalog.
             SqlScriptRunner.runSql(connection, SqlScriptRunner.readResource(
                     "database/migrations/v1_after/20261008190000_manual_custom_order_entry.sql"));
+            SqlScriptRunner.runSql(connection,SqlScriptRunner.readResource("database/migrations/v1_after/20261011120100_custom_order_pending_pricing_permissions.sql"));
             try (PreparedStatement update = connection.prepareStatement("""
                     UPDATE public.smartstock_schema_metadata
                     SET resource_fingerprint_sha256=?,catalog_fingerprint_sha256=?

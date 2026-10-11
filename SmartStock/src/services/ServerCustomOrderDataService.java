@@ -35,6 +35,7 @@ public final class ServerCustomOrderDataService {
                        COALESCE(has_variants, FALSE) AS has_variants,
                        is_active
                 FROM custom_order_items
+                WHERE is_archived=FALSE
                 ORDER BY is_active DESC, item_name
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql);
@@ -83,7 +84,7 @@ public final class ServerCustomOrderDataService {
                        COALESCE(NULLIF(v.color,''),i.color,'') effective_color, v.sku, v.fixed_price
                 FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id
                 WHERE v.custom_item_id = ?
-                  AND v.is_active = TRUE
+                  AND v.is_active = TRUE AND i.is_archived=FALSE
                 ORDER BY v.variant_name
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -308,9 +309,9 @@ public final class ServerCustomOrderDataService {
                     cash_drawer_id, cash_drawer_name, cash_drawer_session_id,
                     minimum_deposit_required, deposit_override_reason,
                     deposit_override_by_user_id, deposit_override_by_name,
-                    customer_discount_percent,customer_discount_applied,customer_discount_amount
+                    customer_discount_percent,customer_discount_applied,customer_discount_amount,pricing_state,pricing_apply_customer_discount
                 )
-                VALUES (?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, 'NEW', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String lineSql = """
                 INSERT INTO custom_order_lines (
@@ -426,6 +427,8 @@ public final class ServerCustomOrderDataService {
                 orderPs.setBigDecimal(26,defaultZero(request.customerDiscountPercent()));
                 orderPs.setBoolean(27,request.customerDiscountPercent()!=null&&request.customerDiscountPercent().signum()>0);
                 orderPs.setBigDecimal(28,defaultZero(request.customerDiscountAmount()));
+                orderPs.setString(29,"PENDING".equals(request.pricingState())?"PENDING":"FINAL");
+                orderPs.setBoolean(30,request.applyCustomerDiscount());
                 orderPs.executeUpdate();
 
                 long orderId;
@@ -451,7 +454,7 @@ public final class ServerCustomOrderDataService {
                     paymentPs.executeUpdate();
                 }
                 BigDecimal accountHistoryAmount = hasAccountBalanceDue ? request.balanceDue() : BigDecimal.ZERO;
-                String accountHistoryType = hasAccountBalanceDue ? "CUSTOM_ORDER_BALANCE" : "CUSTOM_ORDER_PAID";
+                String accountHistoryType = "PENDING".equals(request.pricingState()) ? "CUSTOM_ORDER_DEPOSIT" : hasAccountBalanceDue ? "CUSTOM_ORDER_BALANCE" : "CUSTOM_ORDER_PAID";
                 String accountHistoryNote = hasAccountBalanceDue
                         ? "Custom order balance charged to account. payment_method=" + blankToNull(request.paymentMethod())
                         + ", amount_paid=" + request.amountPaid()
@@ -483,7 +486,11 @@ public final class ServerCustomOrderDataService {
 
                 int sortOrder = 1;
                 for (OrderLineRequest line : request.lines()) {
-                    CustomerSuppliedItem.validate(line);
+                    if(line.customItemId()!=null)try(PreparedStatement available=conn.prepareStatement("SELECT 1 FROM custom_order_items WHERE custom_item_id=? AND is_archived=FALSE FOR SHARE")){
+                        available.setLong(1,line.customItemId());
+                        try(ResultSet found=available.executeQuery()){if(!found.next())throw new SQLException("This custom item is archived or no longer available. Refresh the catalog.");}
+                    }
+                    CustomerSuppliedItem.validate(line,"PENDING".equals(request.pricingState()));
                     ItemAttributes attributes = resolveItemAttributes(conn, line.customItemId(), line.customVariantId(), line.itemSize(), line.itemColor());
                     setNullableLong(linePs, 2, line.customItemId());
                     linePs.setLong(1, orderId);
@@ -572,6 +579,7 @@ public final class ServerCustomOrderDataService {
                         "customer_id", customerId,
                         "location_id", request.locationId() == null ? "" : request.locationId(),
                         "device_id", String.valueOf(request.deviceId()),
+                        "pricing_state", "PENDING".equals(request.pricingState())?"PENDING":"FINAL",
                         "total_amount", request.total(),
                         "amount_paid", request.amountPaid(),
                         "balance_due", request.balanceDue(),
@@ -718,7 +726,7 @@ public final class ServerCustomOrderDataService {
                            NULL::BIGINT AS custom_variant_id,
                            20 AS rank
                     FROM custom_order_items coi
-                    WHERE coi.is_active = TRUE
+                    WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
                       AND UPPER(COALESCE(coi.sku, '')) = UPPER(?)
                     UNION ALL
                     SELECT coiv.custom_item_id,
@@ -726,7 +734,7 @@ public final class ServerCustomOrderDataService {
                            10 AS rank
                     FROM custom_order_item_variants coiv
                     JOIN custom_order_items coi ON coi.custom_item_id = coiv.custom_item_id
-                    WHERE coi.is_active = TRUE
+                    WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
                       AND coiv.is_active = TRUE
                       AND UPPER(COALESCE(coiv.sku, '')) = UPPER(?)
                     UNION ALL
@@ -734,7 +742,7 @@ public final class ServerCustomOrderDataService {
                            NULL::BIGINT AS custom_variant_id,
                            30 AS rank
                     FROM custom_order_items coi
-                    WHERE coi.is_active = TRUE
+                    WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
                       AND UPPER(COALESCE(coi.barcode, '')) = UPPER(?)
                     UNION ALL
                     SELECT coib.custom_item_id,
@@ -742,7 +750,7 @@ public final class ServerCustomOrderDataService {
                            40 AS rank
                     FROM custom_order_item_barcodes coib
                     JOIN custom_order_items coi ON coi.custom_item_id = coib.custom_item_id
-                    WHERE coi.is_active = TRUE
+                    WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
                       AND UPPER(coib.barcode) = UPPER(?)
                     UNION ALL
                     SELECT coiv.custom_item_id,
@@ -750,7 +758,7 @@ public final class ServerCustomOrderDataService {
                            15 AS rank
                     FROM custom_order_item_variants coiv
                     JOIN custom_order_items coi ON coi.custom_item_id = coiv.custom_item_id
-                    WHERE coi.is_active = TRUE
+                    WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
                       AND coiv.is_active = TRUE
                       AND UPPER(COALESCE(coiv.barcode, '')) = UPPER(?)
                     UNION ALL
@@ -760,14 +768,14 @@ public final class ServerCustomOrderDataService {
                     FROM custom_order_item_variant_barcodes coivb
                     JOIN custom_order_item_variants coiv ON coiv.custom_variant_id=coivb.custom_variant_id
                     JOIN custom_order_items coi ON coi.custom_item_id=coiv.custom_item_id
-                    WHERE coi.is_active=TRUE AND coiv.is_active=TRUE
+                    WHERE coi.is_active=TRUE AND coi.is_archived=FALSE AND coiv.is_active=TRUE
                       AND UPPER(coivb.barcode)=UPPER(?)
                     UNION ALL
                     SELECT coi.custom_item_id,
                            NULL::BIGINT AS custom_variant_id,
                            60 AS rank
                     FROM custom_order_items coi
-                    WHERE coi.is_active = TRUE
+                    WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
                       AND %s
                     UNION ALL
                     SELECT coiv.custom_item_id,
@@ -775,7 +783,7 @@ public final class ServerCustomOrderDataService {
                            50 AS rank
                     FROM custom_order_item_variants coiv
                     JOIN custom_order_items coi ON coi.custom_item_id = coiv.custom_item_id
-                    WHERE coi.is_active = TRUE
+                    WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
                       AND coiv.is_active = TRUE
                       AND %s
                 )
@@ -917,7 +925,33 @@ public final class ServerCustomOrderDataService {
             String depositApprovalToken,
             CustomerChargeAuthorizationService.Authorization authorization,boolean applyCustomerDiscount,
             BigDecimal customerDiscountPercent,BigDecimal customerDiscountAmount
-    ) {
+    , String pricingState, String pricingDeferReason, String pricingDeferApprovalToken) {
+        public OrderSaveRequest(CustomerOption selectedCustomer,
+            String customerName,
+            String customerPhone,
+            LocalDate dueDate,
+            BigDecimal total,
+            BigDecimal amountPaid,
+            BigDecimal balanceDue,
+            String paymentMethod,
+            String paymentReference,
+            String paymentStatus,
+            Integer takenByUserId,
+            String takenByName,
+            Integer locationId,
+            String locationName,
+            String deviceId,
+            String deviceName,
+            BigDecimal minimumDepositRequired,
+            String depositOverrideReason,
+            Integer depositOverrideByUserId,
+            String depositOverrideByName,
+            String orderNotes,
+            List<OrderLineRequest> lines,
+            String depositApprovalToken,
+            CustomerChargeAuthorizationService.Authorization authorization,boolean applyCustomerDiscount,
+            BigDecimal customerDiscountPercent,BigDecimal customerDiscountAmount) { this(selectedCustomer,customerName,customerPhone,dueDate,total,amountPaid,balanceDue,paymentMethod,paymentReference,paymentStatus,takenByUserId,takenByName,locationId,locationName,deviceId,deviceName,minimumDepositRequired,depositOverrideReason,depositOverrideByUserId,depositOverrideByName,orderNotes,lines,depositApprovalToken,authorization,applyCustomerDiscount,customerDiscountPercent,customerDiscountAmount,null,null,null); }
+
         public OrderSaveRequest(CustomerOption selectedCustomer,String customerName,String customerPhone,LocalDate dueDate,BigDecimal total,BigDecimal amountPaid,BigDecimal balanceDue,String paymentMethod,String paymentReference,String paymentStatus,Integer takenByUserId,String takenByName,Integer locationId,String locationName,String deviceId,String deviceName,BigDecimal minimumDepositRequired,String depositOverrideReason,Integer depositOverrideByUserId,String depositOverrideByName,String orderNotes,List<OrderLineRequest>lines,String depositApprovalToken){this(selectedCustomer,customerName,customerPhone,dueDate,total,amountPaid,balanceDue,paymentMethod,paymentReference,paymentStatus,takenByUserId,takenByName,locationId,locationName,deviceId,deviceName,minimumDepositRequired,depositOverrideReason,depositOverrideByUserId,depositOverrideByName,orderNotes,lines,depositApprovalToken,null,true,BigDecimal.ZERO,BigDecimal.ZERO);}
         public OrderSaveRequest(CustomerOption selectedCustomer,String customerName,String customerPhone,LocalDate dueDate,BigDecimal total,BigDecimal amountPaid,BigDecimal balanceDue,String paymentMethod,String paymentReference,String paymentStatus,Integer takenByUserId,String takenByName,Integer locationId,String locationName,String deviceId,String deviceName,BigDecimal minimumDepositRequired,String depositOverrideReason,Integer depositOverrideByUserId,String depositOverrideByName,String orderNotes,List<OrderLineRequest>lines,String depositApprovalToken,CustomerChargeAuthorizationService.Authorization authorization){this(selectedCustomer,customerName,customerPhone,dueDate,total,amountPaid,balanceDue,paymentMethod,paymentReference,paymentStatus,takenByUserId,takenByName,locationId,locationName,deviceId,deviceName,minimumDepositRequired,depositOverrideReason,depositOverrideByUserId,depositOverrideByName,orderNotes,lines,depositApprovalToken,authorization,true,BigDecimal.ZERO,BigDecimal.ZERO);}
     }

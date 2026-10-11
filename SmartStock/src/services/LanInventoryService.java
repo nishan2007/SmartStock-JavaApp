@@ -77,7 +77,7 @@ final class LanInventoryService {
                     COALESCE(coi.quantity_on_hand,0),COALESCE(it.name,''),COALESCE(ib.name,''),
                     COALESCE(coi.fixed_price,coi.area_price,0),'' color,'' flavor,COALESCE(coi.image_url,''),'' size
                   FROM custom_order_items coi LEFT JOIN item_types it ON it.item_type_id=coi.item_type_id
-                  LEFT JOIN item_brands ib ON ib.brand_id=coi.brand_id WHERE coi.is_active=TRUE
+                  LEFT JOIN item_brands ib ON ib.brand_id=coi.brand_id WHERE coi.is_active=TRUE AND coi.is_archived=FALSE
                     AND COALESCE(coi.product_type,'INVENTORY')='INVENTORY'
                     AND COALESCE(coi.has_variants,FALSE)=FALSE AND %s
                   UNION ALL
@@ -88,7 +88,7 @@ final class LanInventoryService {
                     '' color,'' flavor,COALESCE(NULLIF(coiv.image_url,''),coi.image_url,''),'' size
                   FROM custom_order_item_variants coiv JOIN custom_order_items coi ON coi.custom_item_id=coiv.custom_item_id
                   LEFT JOIN item_types it ON it.item_type_id=coi.item_type_id LEFT JOIN item_brands ib ON ib.brand_id=coi.brand_id
-                  WHERE coi.is_active=TRUE AND coiv.is_active=TRUE
+                  WHERE coi.is_active=TRUE AND coi.is_archived=FALSE AND coiv.is_active=TRUE
                     AND COALESCE(coi.product_type,'INVENTORY')='INVENTORY' AND %s
                 ) matched ORDER BY item_type,name LIMIT 300
                 """.formatted(ProductSearchHelper.predicate("p", locationId, query),
@@ -363,7 +363,7 @@ final class LanInventoryService {
             }
         }
         if ("CUSTOM_ITEM".equals(type)) {
-            try (PreparedStatement ps = c.prepareStatement("SELECT item_name,COALESCE(quantity_on_hand,0) FROM custom_order_items WHERE custom_item_id=? AND is_active=TRUE AND COALESCE(product_type,'INVENTORY')='INVENTORY' AND COALESCE(has_variants,FALSE)=FALSE FOR UPDATE")) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT item_name,COALESCE(quantity_on_hand,0) FROM custom_order_items WHERE custom_item_id=? AND is_archived=FALSE AND is_active=TRUE AND COALESCE(product_type,'INVENTORY')='INVENTORY' AND COALESCE(has_variants,FALSE)=FALSE FOR UPDATE")) {
                 ps.setInt(1, itemId); try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) throw rule(404, "ITEM_NOT_FOUND", "A custom receiving item no longer exists.");
                     return new LockedStock(type, itemId, null, rs.getString(1), null, rs.getInt(2));
@@ -371,7 +371,7 @@ final class LanInventoryService {
             }
         }
         if ("CUSTOM_VARIANT".equals(type)) {
-            try (PreparedStatement ps = c.prepareStatement("SELECT v.custom_item_id,i.item_name||' - '||v.variant_name,v.variant_name,COALESCE(v.quantity_on_hand,0) FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id WHERE v.custom_variant_id=? AND v.is_active=TRUE AND i.is_active=TRUE AND COALESCE(i.product_type,'INVENTORY')='INVENTORY' FOR UPDATE OF v")) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT v.custom_item_id,i.item_name||' - '||v.variant_name,v.variant_name,COALESCE(v.quantity_on_hand,0) FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id WHERE v.custom_variant_id=? AND v.is_active=TRUE AND i.is_active=TRUE AND i.is_archived=FALSE AND COALESCE(i.product_type,'INVENTORY')='INVENTORY' FOR UPDATE OF v")) {
                 ps.setInt(1, itemId); try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) throw rule(404, "ITEM_NOT_FOUND", "A custom receiving variant no longer exists.");
                     return new LockedStock(type, itemId, rs.getInt(1), rs.getString(2), rs.getString(3), rs.getInt(4));

@@ -50,7 +50,11 @@ public final class CustomOrderDataService {
     }
 
     public static String saveCustomOrder(OrderSaveRequest request) throws SQLException {
-        return call(() -> LanApiClient.saveCustomOrder(request, UUID.randomUUID().toString()));
+        return saveCustomOrder(request, UUID.randomUUID().toString());
+    }
+
+    public static String saveCustomOrder(OrderSaveRequest request, String key) throws SQLException {
+        return call(() -> LanApiClient.saveCustomOrder(request, key));
     }
 
     public static LookupResult lookupCustomItem(String search) throws SQLException {
@@ -136,7 +140,15 @@ public final class CustomOrderDataService {
             Integer locationId, String locationName, String deviceId, String deviceName,
             BigDecimal minimumDepositRequired, String depositOverrideReason, Integer depositOverrideByUserId,
             String depositOverrideByName, String orderNotes, List<OrderLineRequest> lines,
-            String depositApprovalToken,LanApiClient.ChargeAuthorization authorization,boolean applyCustomerDiscount) {
+            String depositApprovalToken,LanApiClient.ChargeAuthorization authorization,boolean applyCustomerDiscount, String pricingState, String pricingDeferReason, String pricingDeferApprovalToken) {
+        public OrderSaveRequest(CustomerOption selectedCustomer, String customerName, String customerPhone, LocalDate dueDate,
+            BigDecimal total, BigDecimal amountPaid, BigDecimal balanceDue, String paymentMethod,
+            String paymentReference, String paymentStatus, Integer takenByUserId, String takenByName,
+            Integer locationId, String locationName, String deviceId, String deviceName,
+            BigDecimal minimumDepositRequired, String depositOverrideReason, Integer depositOverrideByUserId,
+            String depositOverrideByName, String orderNotes, List<OrderLineRequest> lines,
+            String depositApprovalToken,LanApiClient.ChargeAuthorization authorization,boolean applyCustomerDiscount) { this(selectedCustomer,customerName,customerPhone,dueDate,total,amountPaid,balanceDue,paymentMethod,paymentReference,paymentStatus,takenByUserId,takenByName,locationId,locationName,deviceId,deviceName,minimumDepositRequired,depositOverrideReason,depositOverrideByUserId,depositOverrideByName,orderNotes,lines,depositApprovalToken,authorization,applyCustomerDiscount,null,null,null); }
+
         public OrderSaveRequest(CustomerOption selectedCustomer,String customerName,String customerPhone,LocalDate dueDate,
                                 BigDecimal total,BigDecimal amountPaid,BigDecimal balanceDue,String paymentMethod,
                                 String paymentReference,String paymentStatus,Integer takenByUserId,String takenByName,

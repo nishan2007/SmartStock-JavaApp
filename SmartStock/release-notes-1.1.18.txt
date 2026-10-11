@@ -1,0 +1,5 @@
+SmartStock 1.1.18
+
+- Prevent repeated Save clicks from creating duplicate custom orders.
+- Retry an uncertain custom order save with its original request and key, returning the existing order if the server already saved it.
+- Clear a confirmed order before printing so printing problems cannot cause another submission.

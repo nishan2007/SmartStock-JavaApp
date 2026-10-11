@@ -336,7 +336,8 @@ public class MainMenu extends JFrame {
                 startNotificationRefreshTimer();
                 promptToStartDrawIfNeeded();
                 Timer inventoryWarmupTimer = new Timer(1_500, ignored ->
-                        InventoryCatalogCache.warmIfNeeded().exceptionally(failure -> null));
+                        { InventoryCatalogCache.warmIfNeeded().exceptionally(failure -> null);
+                          ui.screens.customorders.CustomOrders.warmAfterLogin(); });
                 inventoryWarmupTimer.setRepeats(false);
                 inventoryWarmupTimer.start();
             }

@@ -43,15 +43,33 @@ SELECT COALESCE(SUM(p.payment_amount),0) FROM custom_order_payments p JOIN custo
     }
     private static int countLowStock(Connection c)throws SQLException {
         String sql="""
-SELECT COUNT(*) FROM (SELECT 1 FROM custom_order_items WHERE is_active=TRUE AND COALESCE(has_variants,FALSE)=FALSE AND COALESCE(reorder_level,0)>0 AND COALESCE(quantity_on_hand,0)<=COALESCE(reorder_level,0) UNION ALL SELECT 1 FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id WHERE i.is_active=TRUE AND v.is_active=TRUE AND COALESCE(v.reorder_level,0)>0 AND COALESCE(v.quantity_on_hand,0)<=COALESCE(v.reorder_level,0)) low_stock
+SELECT COUNT(*) FROM (SELECT 1 FROM custom_order_items WHERE is_archived=FALSE AND is_active=TRUE AND COALESCE(has_variants,FALSE)=FALSE AND COALESCE(reorder_level,0)>0 AND COALESCE(quantity_on_hand,0)<=COALESCE(reorder_level,0) UNION ALL SELECT 1 FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id WHERE i.is_archived=FALSE AND i.is_active=TRUE AND v.is_active=TRUE AND COALESCE(v.reorder_level,0)>0 AND COALESCE(v.quantity_on_hand,0)<=COALESCE(v.reorder_level,0)) low_stock
 """;
         try(PreparedStatement ps=c.prepareStatement(sql);ResultSet rs=ps.executeQuery()){return rs.next()?rs.getInt(1):0;}
     }
     private static List<ActionRow> actions(Connection c,int locationId)throws SQLException {
         String sql="""
-SELECT custom_order_id,order_number,status,due_date,customer_name,customer_phone,COALESCE(location_name,'') location_name,COALESCE(assigned_to_name,'') assigned_to_name,COALESCE(balance_due,0) balance_due FROM custom_orders WHERE status NOT IN ('DELIVERED','CANCELLED') AND (due_date<=CURRENT_DATE OR status IN ('NEW','ASSIGNED','READY') OR COALESCE(balance_due,0)>0) AND location_id=? ORDER BY CASE WHEN due_date<CURRENT_DATE THEN 0 WHEN due_date=CURRENT_DATE THEN 1 ELSE 2 END,due_date NULLS LAST,created_at DESC LIMIT 100
+SELECT custom_order_id,order_number,status,due_date,customer_name,customer_phone,COALESCE(location_name,'') location_name,COALESCE(assigned_to_name,'') assigned_to_name,COALESCE(balance_due,0) balance_due,pricing_state FROM custom_orders WHERE status NOT IN ('DELIVERED','CANCELLED') AND location_id=? ORDER BY CASE WHEN due_date<CURRENT_DATE THEN 0 WHEN due_date=CURRENT_DATE THEN 1 ELSE 2 END,due_date NULLS LAST,created_at DESC,custom_order_id DESC
 """;
-        List<ActionRow>out=new ArrayList<>();try(PreparedStatement ps=c.prepareStatement(sql)){ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){Date due=rs.getDate("due_date");out.add(new ActionRow(rs.getLong("custom_order_id"),rs.getString("order_number"),rs.getString("status"),due==null?null:due.toLocalDate(),rs.getString("customer_name"),rs.getString("customer_phone"),rs.getString("location_name"),rs.getString("assigned_to_name"),zero(rs.getBigDecimal("balance_due"))));}}}return out;
+        List<ActionRow>out=new ArrayList<>();try(PreparedStatement ps=c.prepareStatement(sql)){ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){Date due=rs.getDate("due_date");out.add(new ActionRow(rs.getLong("custom_order_id"),rs.getString("order_number"),rs.getString("status"),due==null?null:due.toLocalDate(),rs.getString("customer_name"),rs.getString("customer_phone"),rs.getString("location_name"),rs.getString("assigned_to_name"),zero(rs.getBigDecimal("balance_due")),rs.getString("pricing_state")));}}}return out;
+    }
+    public static List<DeliveredRow> delivered(Connection c,int locationId,boolean all)throws SQLException {
+        String sql="SELECT custom_order_id,order_number,customer_name,COALESCE(customer_phone,''),delivered_at,COALESCE(balance_due,0),pricing_state FROM custom_orders WHERE location_id=? AND status='DELIVERED'"
+                +(all?"":" AND delivered_at>=CURRENT_TIMESTAMP-INTERVAL '7 days'")
+                +" ORDER BY delivered_at DESC NULLS LAST,custom_order_id DESC";
+        List<DeliveredRow> result=new ArrayList<>();
+        try(PreparedStatement ps=c.prepareStatement(sql)){
+            ps.setInt(1,locationId);
+            try(ResultSet rs=ps.executeQuery()){while(rs.next()){
+                Timestamp at=rs.getTimestamp(5);
+                result.add(new DeliveredRow(rs.getLong(1),rs.getString(2),rs.getString(3),rs.getString(4),
+                        at==null?0:at.getTime(),zero(rs.getBigDecimal(6)),rs.getString(7)));
+            }}
+        }
+        return result;
+    }
+    public record DeliveredRow(long orderId,String orderNumber,String customer,String phone,long deliveredAtEpochMillis,BigDecimal balance,String pricingState){
+        public DeliveredRow(long orderId,String orderNumber,String customer,String phone,long deliveredAtEpochMillis,BigDecimal balance){this(orderId,orderNumber,customer,phone,deliveredAtEpochMillis,balance,"FINAL");}
     }
     private static List<ExceptionRow> exceptions(Connection c,int locationId)throws SQLException {
         String sql="""
@@ -61,7 +79,7 @@ SELECT p.created_at,'REFUND' event_type,co.order_number,co.customer_name,COALESC
     }
     private static List<LowStockRow> lowStock(Connection c)throws SQLException {
         String sql="""
-SELECT CONCAT_WS(' - ',item_name,NULLIF(size,''),NULLIF(color,'')),'' variant_name,quantity_on_hand,reorder_level FROM custom_order_items WHERE is_active=TRUE AND COALESCE(has_variants,FALSE)=FALSE AND COALESCE(reorder_level,0)>0 AND COALESCE(quantity_on_hand,0)<=COALESCE(reorder_level,0) UNION ALL SELECT i.item_name,CONCAT_WS(' - ',v.variant_name,COALESCE(NULLIF(v.size,''),NULLIF(i.size,'')),COALESCE(NULLIF(v.color,''),NULLIF(i.color,''))),v.quantity_on_hand,v.reorder_level FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id WHERE i.is_active=TRUE AND v.is_active=TRUE AND COALESCE(v.reorder_level,0)>0 AND COALESCE(v.quantity_on_hand,0)<=COALESCE(v.reorder_level,0) ORDER BY item_name,variant_name LIMIT 100
+SELECT CONCAT_WS(' - ',item_name,NULLIF(size,''),NULLIF(color,'')) AS item_name,'' variant_name,quantity_on_hand,reorder_level FROM custom_order_items WHERE is_archived=FALSE AND is_active=TRUE AND COALESCE(has_variants,FALSE)=FALSE AND COALESCE(reorder_level,0)>0 AND COALESCE(quantity_on_hand,0)<=COALESCE(reorder_level,0) UNION ALL SELECT i.item_name,CONCAT_WS(' - ',v.variant_name,COALESCE(NULLIF(v.size,''),NULLIF(i.size,'')),COALESCE(NULLIF(v.color,''),NULLIF(i.color,''))),v.quantity_on_hand,v.reorder_level FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id WHERE i.is_archived=FALSE AND i.is_active=TRUE AND v.is_active=TRUE AND COALESCE(v.reorder_level,0)>0 AND COALESCE(v.quantity_on_hand,0)<=COALESCE(v.reorder_level,0) ORDER BY item_name,variant_name LIMIT 100
 """;
         List<LowStockRow>out=new ArrayList<>();try(PreparedStatement ps=c.prepareStatement(sql);ResultSet rs=ps.executeQuery()){while(rs.next()){BigDecimal q=zero(rs.getBigDecimal(3)),r=zero(rs.getBigDecimal(4));out.add(new LowStockRow(rs.getString(1),rs.getString(2),q,r,q.signum()<=0?"Out":"Low"));}}return out;
     }
@@ -76,6 +94,8 @@ SELECT a.created_at,co.order_number,a.action_type,COALESCE(a.field_name,''),COAL
         if(!List.of("NEW","ASSIGNED","IN_PROGRESS","READY","COMPLETED").contains(status))throw new SQLException("The selected order status is invalid.");
         String oldStatus,oldAssigned;BigDecimal balance;
         try(PreparedStatement ps=c.prepareStatement("SELECT status,assigned_to_name,COALESCE(balance_due,0) FROM custom_orders WHERE custom_order_id=? AND location_id=? FOR UPDATE")){ps.setLong(1,orderId);ps.setInt(2,locationId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("Order was not found for the selected store.");oldStatus=rs.getString(1);oldAssigned=rs.getString(2);balance=zero(rs.getBigDecimal(3));}}
+        if("CANCELLED".equals(oldStatus))throw new SQLException("Cancelled orders cannot be reassigned or reopened.");
+        if("DELIVERED".equals(status)&&CustomOrderPricingService.pending(c,orderId,locationId))throw new SQLException("Use Deliver Lines in order lookup for manager approval before pricing.");
         if("DELIVERED".equals(status)&&balance.signum()>0)throw new SQLException("This order still has a balance due. Complete payment before marking it delivered.");
         String employeeName=null;if(employeeId!=null){try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(NULLIF(full_name,''),username) FROM users WHERE user_id=? AND COALESCE(is_active,TRUE)=TRUE AND (EXISTS(SELECT 1 FROM user_locations WHERE user_id=? AND location_id=?) OR NOT EXISTS(SELECT 1 FROM user_locations WHERE user_id=?))")){ps.setInt(1,employeeId);ps.setInt(2,employeeId);ps.setInt(3,locationId);ps.setInt(4,employeeId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("The selected employee is not active at this store.");employeeName=rs.getString(1);}}}
         if(employeeId!=null&&"NEW".equals(status))status="ASSIGNED";
@@ -89,7 +109,9 @@ SELECT a.created_at,co.order_number,a.action_type,COALESCE(a.field_name,''),COAL
 
     public record Dashboard(Metrics metrics,List<ActionRow>actions,List<ExceptionRow>exceptions,List<LowStockRow>lowStock,List<AuditRow>audit){}
     public record Metrics(int overdue,int dueToday,int ready,int assigned,int cancelled,BigDecimal unpaid,BigDecimal refunds,int lowStock){}
-    public record ActionRow(long orderId,String orderNumber,String status,LocalDate dueDate,String customer,String phone,String store,String assigned,BigDecimal balance){}
+    public record ActionRow(long orderId,String orderNumber,String status,LocalDate dueDate,String customer,String phone,String store,String assigned,BigDecimal balance,String pricingState){
+        public ActionRow(long orderId,String orderNumber,String status,LocalDate dueDate,String customer,String phone,String store,String assigned,BigDecimal balance){this(orderId,orderNumber,status,dueDate,customer,phone,store,assigned,balance,"FINAL");}
+    }
     public record ExceptionRow(long atEpochMillis,String type,String orderNumber,String customer,BigDecimal amount,String user,String reason){}
     public record LowStockRow(String item,String variant,BigDecimal quantity,BigDecimal reorder,String status){}
     public record AuditRow(long atEpochMillis,String orderNumber,String action,String field,String oldValue,String newValue,String user,String device,String reason){}

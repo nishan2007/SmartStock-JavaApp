@@ -12,6 +12,23 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class StudioImageTransferTest {
     @TempDir Path folder;
+    @Test void brokenNativeFileAndBitmapFallBackToPngWhileDropIsActive() throws Exception {
+        BufferedImage image = new BufferedImage(40,48,BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(5,5,0x8044aaee);
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();ImageIO.write(image,"png",bytes);
+        boolean[] active={true};
+        Transferable source=new Transferable() {
+            public DataFlavor[] getTransferDataFlavors(){return new DataFlavor[]{DataFlavor.javaFileListFlavor,DataFlavor.imageFlavor,StudioImageTransfer.PNG};}
+            public boolean isDataFlavorSupported(DataFlavor f){return java.util.Arrays.asList(getTransferDataFlavors()).contains(f);}
+            public Object getTransferData(DataFlavor f)throws IOException {
+                if(!active[0])throw new IOException("Native drop expired");
+                if(f.equals(StudioImageTransfer.PNG))return new ByteArrayInputStream(bytes.toByteArray());
+                throw new IOException("Source cannot render this advertised format");
+            }
+        };
+        var loader=StudioImageTransfer.capture(source);active[0]=false;
+        assertEquals(0x8044aaee,loader.call().image().getRGB(5,5));
+    }
 
     @Test void copiedPngPreservesTransparentPixelsAndOriginalDimensions() throws Exception {
         BufferedImage image = new BufferedImage(40, 48, BufferedImage.TYPE_INT_ARGB);
@@ -76,6 +93,25 @@ class StudioImageTransferTest {
         boolean[] active = {true};
         var loader = StudioImageTransfer.capture(expiring(StudioImageTransfer.result(image, new byte[0]), active));
         active[0] = false;
+        image.setRGB(5, 5, 0); // The source owns and may invalidate its bitmap after dropComplete.
+        assertEquals(0x8044aaee, loader.call().image().getRGB(5, 5));
+    }
+
+    @Test void pngOnlyDropCapturesStreamBeforeNativeTransferExpires() throws Exception {
+        BufferedImage image = new BufferedImage(40, 48, BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(5, 5, 0x8044aaee);
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(); ImageIO.write(image, "png", bytes);
+        boolean[] active = {true};
+        Transferable pngOnly = new Transferable() {
+            public DataFlavor[] getTransferDataFlavors() { return new DataFlavor[]{StudioImageTransfer.PNG}; }
+            public boolean isDataFlavorSupported(DataFlavor flavor) { return StudioImageTransfer.PNG.equals(flavor); }
+            public Object getTransferData(DataFlavor flavor) throws UnsupportedFlavorException {
+                if (!isDataFlavorSupported(flavor)) throw new UnsupportedFlavorException(flavor);
+                return new ByteArrayInputStream(bytes.toByteArray());
+            }
+        };
+        assertTrue(StudioImageTransfer.supports(pngOnly));
+        var loader = StudioImageTransfer.capture(expiring(pngOnly, active)); active[0] = false;
         assertEquals(0x8044aaee, loader.call().image().getRGB(5, 5));
     }
 

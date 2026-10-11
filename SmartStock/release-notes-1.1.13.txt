@@ -1,0 +1,7 @@
+SmartStock 1.1.13
+
+Adds Cancel Order to Order Lookup for administrators and users with Custom Order Overrides permission. Cancellation opens its own return/refund dialog with all remaining lines, stock handling for each line, refund method and reference, and a required reason.
+
+One confirmation records returns, refunds, inventory treatment and cancellation together. Cancelled orders keep their history and cannot be changed through payment, production, delivery or reassignment. Delivered orders use the existing return workflow; invoice-billed production orders remain managed through Quotations & Invoices.
+
+Update the store server before registers.

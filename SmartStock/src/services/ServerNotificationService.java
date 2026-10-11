@@ -262,7 +262,7 @@ public final class ServerNotificationService {
                            COALESCE(quantity_on_hand, 0) AS quantity_on_hand,
                            COALESCE(reorder_level, 0) AS reorder_level
                     FROM custom_order_items
-                    WHERE is_active = TRUE
+                    WHERE is_active = TRUE AND is_archived=FALSE
                       AND COALESCE(has_variants, FALSE) = FALSE
                       AND COALESCE(reorder_level, 0) > 0
                       AND COALESCE(quantity_on_hand, 0) <= COALESCE(reorder_level, 0)
@@ -272,7 +272,7 @@ public final class ServerNotificationService {
                            COALESCE(v.reorder_level, 0) AS reorder_level
                     FROM custom_order_item_variants v
                     JOIN custom_order_items i ON i.custom_item_id = v.custom_item_id
-                    WHERE i.is_active = TRUE
+                    WHERE i.is_active = TRUE AND i.is_archived=FALSE
                       AND v.is_active = TRUE
                       AND COALESCE(v.reorder_level, 0) > 0
                       AND COALESCE(v.quantity_on_hand, 0) <= COALESCE(v.reorder_level, 0)

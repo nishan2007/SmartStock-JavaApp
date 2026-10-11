@@ -114,6 +114,14 @@ class CustomOrderSlipFormatterTest {
         }
     }
 
+    @Test void pendingSlipShowsDepositWithoutZeroTotalOrPaidClaim() {
+        var data=new CustomOrderSlipData("CO-PENDING","Customer","6000000","",null,null,"Cashier","Store","POS","CARD","deposit-ref","PRICE_PENDING",BigDecimal.ZERO,new BigDecimal("3000"),BigDecimal.ZERO,"",List.of(new CustomOrderSlipData.Line("Custom product","","","",BigDecimal.ZERO)));
+        var receipt=new CompanyCustomizationManager.ReceiptSettings("Deckers", "", "", "", "", "", "", "", "", "", "", "", "", false,true,true,true,true,true,true,false,false,BigDecimal.ZERO,1,BigDecimal.ZERO,false,CompanyCustomizationManager.AccountPaymentReceiptSettings.defaults());
+        var settings=new CompanyCustomizationManager.CustomOrderSlipSettings(true,false,"ORDER SLIP","","","",0,false,true,true,true,true,true,true,true,true,true,true,false,false,false);
+        String text=CustomOrderSlipFormatter.format40Column(data,receipt,settings);
+        assertTrue(text.contains("Price pending"));assertTrue(text.contains("3,000"));assertFalse(text.contains("$0"));assertFalse(text.contains("PAID"));
+    }
+
     private static CustomOrderSlipData sampleData() {
         return new CustomOrderSlipData("CO-001", "Alex Customer", "", "", null,
                 Timestamp.from(Instant.parse("2026-05-22T12:00:00Z")), "Cashier", "Main Store", "POS-01",

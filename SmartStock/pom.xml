@@ -5,7 +5,7 @@
 
   <groupId>edu.fiu</groupId>
   <artifactId>inventory-management</artifactId>
-  <version>1.1.7</version>
+  <version>1.1.23</version>
 
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
@@ -16,6 +16,7 @@
   </properties>
 
   <dependencies>
+    <dependency><groupId>net.java.dev.jna</groupId><artifactId>jna</artifactId><version>5.17.0</version></dependency>
     <dependency>
       <groupId>com.googlecode.libphonenumber</groupId>
       <artifactId>libphonenumber</artifactId>
@@ -78,6 +79,7 @@
     <sourceDirectory>src</sourceDirectory>
     <testSourceDirectory>test</testSourceDirectory>
     <resources>
+      <resource><directory>target/native-resources</directory></resource>
       <resource>
         <directory>src</directory>
         <includes>
@@ -190,4 +192,13 @@
       </plugin>
     </plugins>
   </build>
+  <profiles>
+    <profile><id>windows-studio-gpu</id><activation><os><family>Windows</family></os></activation>
+      <build><plugins><plugin><groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId><version>3.5.0</version>
+        <executions><execution><id>stage-directml</id><phase>generate-resources</phase><goals><goal>exec</goal></goals>
+          <configuration><executable>powershell</executable><arguments><argument>-NoProfile</argument><argument>-ExecutionPolicy</argument><argument>Bypass</argument><argument>-File</argument><argument>${project.basedir}/tools/stage-directml.ps1</argument></arguments></configuration>
+        </execution></executions>
+      </plugin></plugins></build>
+    </profile>
+  </profiles>
 </project>

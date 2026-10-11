@@ -7,6 +7,13 @@ store server. The R2 bucket remains private; only the selected installer objects
 are exposed through these routes. Arbitrary bucket paths and update ZIPs are not
 publicly served.
 
+SmartStudio has its separate public route `/download/smartstudio/windows`.
+The protected deployment configuration's `STUDIO_INSTALLERS_JSON` selects a
+previously uploaded and fully verified Studio manifest by platform. Each manifest
+uses the multipart uploader's `kind: "studio"` schema. The route checks the stored
+size and SHA-256 metadata without changing the SmartStock installer selection.
+The deployment tool preserves this Studio selection across redeployments.
+
 Operator uploads and publication under `/_release/` still require the protected
 `INSTALLER_PUBLISH_KEY`. Publication downloads and verifies the complete artifact
 before changing the selected installer. Each installer request checks its size,

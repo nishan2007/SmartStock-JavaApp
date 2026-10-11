@@ -26,3 +26,8 @@
 *.dmg binary
 *.exe binary
 *.msi binary
+
+# Generated website asset hashes must survive Windows checkout unchanged.
+SmartStock/src/storefront-web/**/*.css text eol=lf
+SmartStock/src/storefront-web/**/*.js text eol=lf
+SmartStock/src/storefront-web/**/*.html text eol=lf

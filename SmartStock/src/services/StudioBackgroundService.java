@@ -43,6 +43,51 @@ public final class StudioBackgroundService {
         return process(bytes, quality, false, true);
     }
 
+    /** One worker covers the complete remove-then-enhance pipeline. Scale 1 preserves legacy removal. */
+    public static byte[] transform(byte[] bytes, StudioQuality quality, boolean cleanEdges,
+                                   boolean removeBackground, int scale) throws Exception {
+        return transform(bytes, quality, cleanEdges, removeBackground, scale, (java.nio.file.Path)null, (java.nio.file.Path)null);
+    }
+
+    static byte[] transform(byte[] bytes, StudioQuality quality, boolean cleanEdges,
+                            boolean removeBackground, int scale, java.nio.file.Path removalModel,
+                            java.nio.file.Path enhancementModel) throws Exception {
+        return transform(bytes,quality,cleanEdges,removeBackground,scale,removalModel,enhancementModel,StudioImageEnhancer.Mode.AUTO,null);
+    }
+    public static byte[] transform(byte[] bytes,StudioQuality quality,boolean cleanEdges,boolean removeBackground,int scale,
+                                  StudioImageEnhancer.Mode mode,StudioImageEnhancer.Progress progress)throws Exception {
+        return transform(bytes,quality,cleanEdges,removeBackground,scale,null,null,mode,progress);
+    }
+    private static byte[] transform(byte[] bytes,StudioQuality quality,boolean cleanEdges,boolean removeBackground,int scale,
+                                   java.nio.file.Path removalModel,java.nio.file.Path enhancementModel,
+                                   StudioImageEnhancer.Mode mode,StudioImageEnhancer.Progress progress)throws Exception {
+        if (scale == 1 && removeBackground) return remove(bytes, quality, cleanEdges);
+        StudioImageEnhancer.validateScale(scale);
+        validate(bytes);
+        if (!WORKER.tryAcquire()) throw new BusyException();
+        try {
+            var original = ImageIO.read(new ByteArrayInputStream(bytes));
+            StudioImageEnhancer.validateDimensions(original.getWidth(), original.getHeight(), scale);
+            // Check enhancement availability before spending time removing a background.
+            var model = enhancementModel == null ? StudioEnhancementModel.current().resolve() : enhancementModel;
+            StudioEnhancementModel.verify(model);
+            if (removeBackground) {
+                if(progress!=null){if(progress.cancelled())throw new java.util.concurrent.CancellationException("Image processing cancelled");progress.update("CPU",0,0,"Removing background");}
+                try (var remover = removalModel == null ? new CatalogStudioImageProcessor(quality)
+                        : new CatalogStudioImageProcessor(removalModel, quality)) {
+                    original = ImageIO.read(new ByteArrayInputStream(remover.removeBackgroundPng(bytes, cleanEdges)));
+                }
+            }
+            try (var enhancer = new StudioImageEnhancer(model)) {
+                var output = new java.io.ByteArrayOutputStream();
+                var enhanced=enhancer.enhance(original,scale,mode,progress==null?(device,done,total,note)->{}:progress);
+                if(progress!=null){if(progress.cancelled())throw new java.util.concurrent.CancellationException("Image processing cancelled");progress.update("",0,0,"Saving PNG");}
+                ImageIO.write(enhanced, "png", output);
+                return output.toByteArray();
+            }
+        } finally { WORKER.release(); }
+    }
+
     private static byte[] process(byte[] bytes, StudioQuality quality, boolean cleanEdges, boolean review) throws Exception {
         validate(bytes);
         if (!WORKER.tryAcquire()) throw new BusyException();
@@ -62,6 +107,8 @@ public final class StudioBackgroundService {
         brand.put("phone", info.phoneLine1()); brand.put("email", info.emailLine1());
         brand.put("studioBestQualityAvailable", StudioModelService.current().available(StudioQuality.BEST));
         brand.put("studioFastQualityAvailable", StudioModelService.current().available(StudioQuality.FAST));
+        brand.put("studioEnhancementAvailable", StudioEnhancementModel.current().available());
+        brand.put("studioProgressAvailable",true);
         if (!info.logoPath().isBlank()) {
             try {
                 var logo = ServerImageAssetService.load(info.logoPath());

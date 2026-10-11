@@ -356,4 +356,13 @@ class SmartStockUpdaterTest {
                 properties, tempDir.resolve("java.exe"),
                 tempDir.resolve("inventory-management-1.0.38.jar"), true));
     }
+    @Test
+    void windowsReopeningUsesExistingExplorerDesktopAndQuotesPaths() {
+        String script=SmartStockUpdater.windowsDesktopRelaunchScript(
+                List.of("C:/Program Files/SmartStock/SmartStock.exe"),Path.of("C:/Store's App"));
+        assertTrue(script.contains("FindWindowSW(0,0,8,"));
+        assertTrue(script.contains("$desktop.Document.Application.ShellExecute"));
+        assertTrue(script.contains(Path.of("C:/Store's App").toString().replace("'", "''")));
+        assertFalse(script.contains("Start-Process"));
+    }
 }

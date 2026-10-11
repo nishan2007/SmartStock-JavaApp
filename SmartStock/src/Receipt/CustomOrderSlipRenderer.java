@@ -99,8 +99,8 @@ public class CustomOrderSlipRenderer {
             }
             if (slipSettings.showPaymentSummary()) {
                 String payment = clean(data.paymentMethod()) + " / " + clean(data.paymentStatus());
-                currentY = drawLabelLine(g, left, right, currentY, "PAYMENT METHOD:", payment, "BAL:", money(data.balanceDue()));
-                currentY = drawLabelLine(g, left, right, currentY, "AMT:", money(data.amountPaid()), "TOTAL:", money(data.totalAmount()));
+                currentY = drawLabelLine(g, left, right, currentY, "PAYMENT METHOD:", payment, "BAL:", data.pricePending()?"Pending":money(data.balanceDue()));
+                currentY = drawLabelLine(g, left, right, currentY, data.pricePending()?"DEPOSIT:":"AMT:", money(data.amountPaid()), "TOTAL:", data.pricePending()?"Price pending":money(data.totalAmount()));
             }
             if (slipSettings.showPaymentReference() && data.paymentReference() != null && !data.paymentReference().isBlank()) {
                 currentY = drawFullLine(g, left, right, currentY, "PAYMENT REF:", data.paymentReference());
@@ -133,7 +133,7 @@ public class CustomOrderSlipRenderer {
                 if (line.variantName() != null && !line.variantName().isBlank()) {
                     text.append(" / ").append(line.variantName());
                 }
-                if (settings.showPricing()) {
+                if (settings.showPricing() && !data.pricePending()) {
                     text.append(" - ").append(money(line.lineTotal()));
                 }
                 for (String wrapped : wrap(g, text.toString(), right - left)) {

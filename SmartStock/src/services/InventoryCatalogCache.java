@@ -26,7 +26,11 @@ public final class InventoryCatalogCache {
 
     public static synchronized Optional<Snapshot> current() {
         Scope scope = currentScope();
-        return snapshot != null && snapshot.scope().equals(scope) ? Optional.of(snapshot) : Optional.empty();
+        return snapshot != null && snapshot.scope().equals(scope) && isFresh(snapshot, Instant.now()) ? Optional.of(snapshot) : Optional.empty();
+    }
+
+    static boolean isFresh(Snapshot value, Instant now) {
+        return value.loadedAt().plusSeconds(60).isAfter(now);
     }
 
     public static CompletableFuture<Snapshot> warmIfNeeded() {

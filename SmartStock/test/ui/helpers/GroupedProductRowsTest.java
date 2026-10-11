@@ -36,4 +36,30 @@ class GroupedProductRowsTest {
             assertEquals(13L,model.getValueAt(0,3));assertEquals(11,model.getValueAt(1,0));
         });
     }
+    @Test void customItemsWithNegativeIdsSurviveGroupingSortingAndRecapture() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            var model=new DefaultTableModel(new Object[]{"ID","Name","Price","Quantity"},0);
+            JTable table=new JTable(model);
+            var rows=new GroupedProductRows(table,0,1,2,3);
+            model.addRow(new Object[]{-37,"Red polo shirt",new BigDecimal("25"),62});
+            model.addRow(new Object[]{-1000000001,"Black shirt XL",new BigDecimal("30"),8});
+            model.addRow(new Object[]{11,"Blue bottle",new BigDecimal("25"),8});
+            rows.capture(List.of(group()),"");
+            assertEquals(3,model.getRowCount());
+            assertEquals(-37,model.getValueAt(0,0));
+            assertFalse(rows.isParent(0));
+            table.setRowSelectionInterval(0,0);
+            assertFalse(rows.expandSelected());
+            assertNull(rows.groupAt(0));
+            assertFalse(rows.isParent(1));
+            assertTrue(rows.isParent(2));
+            table.setRowSelectionInterval(2,2);
+            assertTrue(rows.expandSelected());
+            assertEquals(4,model.getRowCount());
+            rows.capture(List.of(group()),"shirt");
+            assertEquals(4,model.getRowCount());
+            assertEquals(-37,model.getValueAt(0,0));
+            assertEquals(-1000000001,model.getValueAt(1,0));
+        });
+    }
 }

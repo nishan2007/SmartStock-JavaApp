@@ -46,6 +46,6 @@ class CustomVariantPersistenceArchitectureTest {
         String dialog=screen.substring(screen.indexOf("private void variantsDialog()"),screen.indexOf("private void selectMaterial()"));
         assertFalse(dialog.contains("d.dispose()"));
         assertTrue(dialog.contains("Variant saved. You can add another variant now."));
-        assertTrue(dialog.contains("state=loaded;render();load.run();reset.run()"));
+        assertTrue(dialog.contains("state=loaded;render();if(inventoryPanel!=null)inventoryPanel.setState(loaded);load.run();reset.run()"));
     }
 }

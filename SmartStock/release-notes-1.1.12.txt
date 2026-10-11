@@ -1,0 +1,13 @@
+SmartStock 1.1.12
+
+Fixes file drag and drop across the custom-order attachment panels, including saved-order Attachments. Files dropped onto instructions, buttons, or the list now use the same file validation and upload flow as Add Files. Select an order line before adding files to a saved order.
+
+Moves Sell in normal POS beside the item name in the desktop custom-item editor and adds a Sell in POS status column. Saves the selected setting consistently and clears it when starting a new item.
+
+Includes the 2 x 1-inch Shirts label with approximately 0.1-inch margins and the per-computer default price-tag printer from the previous update.
+
+Update the store server before registers. Physical printer, barcode scan and Windows Explorer drag-and-drop checks remain separate.
+
+Refreshes the POS catalogue when reopening Make a Sale and after custom-item changes. Cached catalogue data expires after one minute so other registers' changes become visible.
+
+Fixes POS search hiding custom items and shirt variants by distinguishing real custom-item IDs from grouped-product headings.

@@ -301,11 +301,11 @@ final class LanSalesService {
                        COALESCE(vb.name,br.name,''),COALESCE(NULLIF(v.size,''),ci.size,''),COALESCE(NULLIF(v.color,''),ci.color,'')
                 FROM custom_order_item_variants v JOIN custom_order_items ci ON ci.custom_item_id=v.custom_item_id
                 LEFT JOIN item_brands br ON br.brand_id=ci.brand_id LEFT JOIN item_brands vb ON vb.brand_id=v.brand_id
-                WHERE v.custom_variant_id=? AND ci.sell_in_pos AND ci.is_active AND v.is_active AND ci.product_type='INVENTORY' FOR UPDATE OF ci,v
+                WHERE v.custom_variant_id=? AND ci.sell_in_pos AND ci.is_active AND ci.is_archived=FALSE AND v.is_active AND ci.product_type='INVENTORY' FOR UPDATE OF ci,v
                 """:"""
                 SELECT ci.custom_item_id,NULL::bigint,ci.item_name,ci.fixed_price,ci.sku,COALESCE(br.name,''),COALESCE(ci.size,''),COALESCE(ci.color,'')
                 FROM custom_order_items ci LEFT JOIN item_brands br ON br.brand_id=ci.brand_id
-                WHERE ci.custom_item_id=? AND ci.sell_in_pos AND ci.is_active AND NOT ci.has_variants AND ci.product_type='INVENTORY' FOR UPDATE OF ci
+                WHERE ci.custom_item_id=? AND ci.sell_in_pos AND ci.is_active AND ci.is_archived=FALSE AND NOT ci.has_variants AND ci.product_type='INVENTORY' FOR UPDATE OF ci
                 """;
             try(PreparedStatement ps=c.prepareStatement(sql)){ps.setLong(1,id);try(ResultSet rs=ps.executeQuery()){if(rs.next())out.put(virtualId,new CatalogLine(virtualId,rs.getString(3),money(rs.getBigDecimal(4)),"INVENTORY",BigDecimal.ZERO,rs.getString(5),rs.getLong(1),variant?rs.getLong(2):null,rs.getString(6),rs.getString(7),rs.getString(8)));}}
         }

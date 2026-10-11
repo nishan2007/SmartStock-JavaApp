@@ -1,0 +1,9 @@
+SmartStock 1.1.11
+
+Adds a Shirts price-tag template for 2 x 1-inch labels with approximately 0.1-inch margins. Prints the main item name without the variant, prominent size and colour, price, barcode and SKU.
+
+Adds a default price-tag printer saved per computer. Set it from Price Tag Printing; print dialogs preselect it while allowing another printer for individual jobs.
+
+Includes the clearer custom-order details and corrected CT221B black-on-white label output from previous updates.
+
+Update the store server before registers. Physical label printing and barcode scanning require verification on the installed printer.

@@ -1,0 +1,7 @@
+SmartStock 1.1.20
+
+Area-priced custom orders charge the configured maximum material width multiplied by the entered order length, including unused material. The entered width remains the actual design width. The preview and saved details show the charged dimensions and area.
+
+Area-priced designs require a Portrait or Landscape selection. Orientation is saved with the order design details, included in order review and printed slips, and restored when editing a cart line. Orientation does not change the material charge.
+
+Retains the current SmartStock workspace improvements. Update the store server first, then registers. Application packages contain no AI model weights.

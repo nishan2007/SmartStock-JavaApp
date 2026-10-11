@@ -1,0 +1,7 @@
+SmartStock 1.1.21
+
+Custom orders can be saved with Price pending, unfinished measurements and an optional deposit. Deferring pricing requires a special permission or manager approval and a reason. Managers can finalize prices after production, including after separately approved unpriced delivery. Deposits are deducted; excess deposits must be refunded before finalization. Pending totals and balances display clearly on lists, details, customer history and slips.
+
+Includes the current custom-order inventory, quantity grouping, structured details, attachment and submission improvements, configured-width area pricing, and design orientation. Includes the latest catalog cache, grouped product selection, price-tag layout, hardware settings, web-status responsiveness, mobile image handling, updater and Studio image-processing fixes from the workspace.
+
+Update the store server first, then registers. Application packages contain no AI model weights; installed models remain in the persistent store profile.

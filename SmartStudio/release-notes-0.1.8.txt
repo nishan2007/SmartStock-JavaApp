@@ -1,0 +1,8 @@
+SmartStudio 0.1.8
+
+Register Windows native PNG image transfers before accepting image drops.
+Add Paste image for photos copied from WhatsApp Web, avoiding a save-to-disk step when the browser supplies clipboard image data.
+When an advertised native file or bitmap format fails, try the source's other supplied image formats before rejecting the drop.
+Preserve transparent pixels and detach all image data before completing the native drop.
+
+Real WhatsApp drag-and-drop acceptance remains to be checked on the affected computer.

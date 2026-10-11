@@ -16,6 +16,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
     final DefaultTableModel model;
     final JTable table;
     final JTextArea detailsArea;
+    final CustomOrderDetailsPanel orderDetails;
     final JComboBox<String> methodBox;
     final JTextField amountField;
     final JTextField referenceField;
@@ -32,7 +33,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         searchPanel.add(searchButton, BorderLayout.EAST);
 
         model = new DefaultTableModel(
-                new Object[]{"ID", "Order #", "Status", "Customer", "Phone", "Total", "Paid", "Balance", "Payment", "Reference", "Created"},
+                CustomOrderListColumns.headings(),
                 0
         ) {
             @Override
@@ -41,6 +42,8 @@ class CustomOrdersLookupTabPanel extends JPanel {
             }
         };
         table = new JTable(model);
+        CustomOrderListColumns.installSorting(table, new javax.swing.table.TableRowSorter<>(model));
+        CustomOrderListColumns.installDateRenderers(table);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.setRowHeight(28);
         table.getColumnModel().getColumn(0).setMaxWidth(70);
@@ -54,6 +57,12 @@ class CustomOrdersLookupTabPanel extends JPanel {
         amountField = new JTextField(8);
         referenceField = new JTextField(14);
         JButton payButton = new JButton("Apply Payment");
+        JButton cancelButton = new JButton("Cancel Order");
+        styleDialogButton(cancelButton);
+        cancelButton.setEnabled(handler.canCancelOrders());
+        JButton finalizePriceButton = new JButton("Finalize price");
+        styleDialogButton(finalizePriceButton);finalizePriceButton.setEnabled(handler.canFinalizePrice());
+        finalizePriceButton.addActionListener(e->{Long id=handler.selectedLookupOrderId(table,model);if(id==null){JOptionPane.showMessageDialog(this,"Select an order first.");return;}handler.finalizePrice(id,success->{if(success)refreshAfterMutation(handler,id);});});
         JButton refundButton = new JButton("Refund");
         JButton productionButton = new JButton("Production");
         JButton mediaButton = new JButton("Files & Design Approval");
@@ -79,33 +88,43 @@ class CustomOrdersLookupTabPanel extends JPanel {
         printSlipButton.setEnabled(false);
         reprintLabelButton.setEnabled(false);
 
-        JPanel detailsHeader = new JPanel(new BorderLayout(8, 0));
-        detailsHeader.add(new JLabel("Order Details"), BorderLayout.WEST);
-        JPanel printControls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        orderDetails = new CustomOrderDetailsPanel(enabled -> payButton.setEnabled(enabled));
+        if(handler.canUpdateProduction())orderDetails.setProductionUpdater((orderId,lineId,status,completion)->
+                handler.updateProductionLines(orderId,List.of(lineId),status,"Updated from line details",this,success->{
+                    completion.accept(success);
+                    if(success)refreshAfterMutation(handler,orderId);
+                }));
+        JPanel printControls = new JPanel(new OrderDetailsWrapLayout());
         printControls.add(mediaButton);
         printControls.add(previewSlipButton);
-        printControls.add(printSlipButton);
-        printControls.add(reprintLabelButton);
-        detailsHeader.add(printControls, BorderLayout.EAST);
+        JButton printMenu = new JButton("Print ▾");
+        JPopupMenu printOptions = new JPopupMenu();
+        JMenuItem slipOption = new JMenuItem("Print Slip"); slipOption.addActionListener(e -> printSlipButton.doClick()); printOptions.add(slipOption);
+        JMenuItem labelsOption = new JMenuItem("Reprint Order Labels"); labelsOption.addActionListener(e -> reprintLabelButton.doClick()); printOptions.add(labelsOption);
+        printMenu.addActionListener(e -> printOptions.show(printMenu, 0, printMenu.getHeight())); printControls.add(printMenu);
+        JPanel detailsHeader = detailsHeader(printControls);
         JPanel detailsPanel = new JPanel(new BorderLayout(0, 8));
         detailsPanel.add(detailsHeader, BorderLayout.NORTH);
-        detailsPanel.add(new JScrollPane(detailsArea), BorderLayout.CENTER);
+        detailsPanel.add(orderDetails, BorderLayout.CENTER);
         JPanel center = new JPanel(new GridLayout(1, 2, 10, 0));
         center.add(new JScrollPane(table));
         center.add(detailsPanel);
 
-        JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        actionPanel.add(new JLabel("Amount:"));
-        actionPanel.add(amountField);
-        actionPanel.add(new JLabel("Method:"));
-        actionPanel.add(methodBox);
-        actionPanel.add(new JLabel("Reference:"));
-        actionPanel.add(referenceField);
-        actionPanel.add(payButton);
-        actionPanel.add(refundButton);
-        actionPanel.add(productionButton);
+        JPanel actionPanel = new JPanel(new OrderDetailsWrapLayout());
+        JPanel paymentControls = orderDetails.paymentActions;
+        paymentControls.add(new JLabel("Amount:"));
+        paymentControls.add(amountField);
+        paymentControls.add(new JLabel("Method:"));
+        paymentControls.add(methodBox);
+        paymentControls.add(new JLabel("Reference:"));
+        paymentControls.add(referenceField);
+        paymentControls.add(payButton);
+        paymentControls.add(refundButton);
+        paymentControls.add(finalizePriceButton);
+        orderDetails.itemActions.add(productionButton);
 
-        actionPanel.add(deliveredButton);
+        orderDetails.itemActions.add(deliveredButton);
+        actionPanel.add(cancelButton);
         actionPanel.add(closeButton);
 
         searchButton.addActionListener(e -> handler.loadLookupOrders(model, searchField.getText().trim()));
@@ -120,10 +139,11 @@ class CustomOrdersLookupTabPanel extends JPanel {
                     previewSlipButton.setEnabled(true);
                     printSlipButton.setEnabled(true);
                     reprintLabelButton.setEnabled(true);
-                    handler.loadOrderDetails(orderId, detailsArea);
-                    BigDecimal balance = handler.parseNullableMoneyValue(model.getValueAt(table.convertRowIndexToModel(table.getSelectedRow()), 7));
+                    handler.loadStructuredOrderDetails(orderId, orderDetails);
+                    BigDecimal balance = handler.parseNullableMoneyValue(model.getValueAt(table.convertRowIndexToModel(table.getSelectedRow()), model.findColumn("Balance")));
                     amountField.setText(balance == null ? "" : balance.toPlainString());
                 } else {
+                    orderDetails.empty();
                     previewSlipButton.setEnabled(false);
                     printSlipButton.setEnabled(false);
                     reprintLabelButton.setEnabled(false);
@@ -147,15 +167,32 @@ class CustomOrdersLookupTabPanel extends JPanel {
             handler.applyLookupPayment(orderId, amountField.getText().trim(),
                     methodBox.getSelectedItem().toString(), referenceField.getText().trim(), this,
                     success -> {
-                        payButton.setEnabled(true);
+                        payButton.setEnabled(orderDetails.canPay());
                         if (success) refreshAfterMutation(handler, orderId);
                     });
+        });
+        cancelButton.addActionListener(e -> {
+            Long id=handler.selectedLookupOrderId(table,model);
+            if(id==null){JOptionPane.showMessageDialog(this,"Select an order first.");return;}
+            int row=table.convertRowIndexToModel(table.getSelectedRow());
+            BigDecimal paid=handler.parseNullableMoneyValue(model.getValueAt(row,model.findColumn("Paid")));
+            cancelButton.setEnabled(false);
+            handler.loadCancellationLines(id,lines->{
+                if(lines==null){cancelButton.setEnabled(handler.canCancelOrders());return;}
+                CancellationRequest request=promptCancellation(lines,paid==null?BigDecimal.ZERO:paid);
+                if(request==null){cancelButton.setEnabled(handler.canCancelOrders());return;}
+                handler.cancelOrder(id,request,success->{cancelButton.setEnabled(handler.canCancelOrders());if(success)refreshAfterMutation(handler,id);});
+            });
         });
         refundButton.addActionListener(e -> {
             Long orderId = handler.selectedLookupOrderId(table, model);
             if (orderId == null) {
                 JOptionPane.showMessageDialog(this, "Select an order first.");
                 return;
+            }
+            int row=table.convertRowIndexToModel(table.getSelectedRow());
+            if("Price pending".equals(model.getValueAt(row,model.findColumn("Total")))) {
+                handler.refundPendingDeposit(orderId,methodBox.getSelectedItem().toString(),referenceField.getText().trim(),success->{if(success)refreshAfterMutation(handler,orderId);});return;
             }
             refundButton.setEnabled(false);
             handler.loadReturnableLines(orderId, lines -> {
@@ -265,6 +302,20 @@ class CustomOrdersLookupTabPanel extends JPanel {
         add(actionPanel, BorderLayout.SOUTH);
     }
 
+    static JPanel detailsHeader(JPanel controls) {
+        JPanel header = new JPanel(new BorderLayout(0, 4));
+        JLabel title = new JLabel("Order Details");
+        title.setBorder(new EmptyBorder(0, 8, 0, 0));
+        header.add(title, BorderLayout.NORTH);
+        header.add(controls, BorderLayout.CENTER);
+        controls.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override public void componentResized(java.awt.event.ComponentEvent event) {
+                header.revalidate();
+            }
+        });
+        return header;
+    }
+
     private String selectedOrderNumber() {
         int selectedRow = table.getSelectedRow();
         if (selectedRow < 0) return null;
@@ -275,8 +326,41 @@ class CustomOrdersLookupTabPanel extends JPanel {
     private void refreshAfterMutation(Handler handler, Long orderId) {
         handler.loadLookupOrders(model, searchField.getText().trim());
         handler.refreshRelatedOrders();
-        handler.loadOrderDetails(orderId, detailsArea);
+        if (orderId.equals(handler.selectedLookupOrderId(table, model))) handler.loadStructuredOrderDetails(orderId, orderDetails);
     }
+
+    private CancellationRequest promptCancellation(List<LineReturnOption> lines,BigDecimal paid) {
+        DefaultTableModel rows=new DefaultTableModel(new Object[]{"Item","Variant","Amount cancelled","Stock action"},0){
+            public boolean isCellEditable(int row,int column){return column==3;}
+        };
+        for(LineReturnOption line:lines)rows.addRow(new Object[]{line.itemName(),line.variantName(),line.remainingAmount().toPlainString(),"No Restock"});
+        JTable items=new JTable(rows);items.setRowHeight(28);
+        items.getColumnModel().getColumn(3).setCellEditor(new DefaultCellEditor(new JComboBox<>(new String[]{"No Restock","Restock","Damaged","Customer Kept","Waste"})));
+        JTextArea reason=new JTextArea(3,30);reason.setLineWrap(true);reason.setWrapStyleWord(true);
+        JComboBox<String> method=new JComboBox<>(new String[]{"Cash","Card","Cheque","MMG","Account"});
+        method.setSelectedItem(methodBox.getSelectedItem());
+        JTextField reference=new JTextField(20);
+        JPanel fields=new JPanel(new GridLayout(0,2,8,8));
+        fields.add(new JLabel("Refund to customer: "+paid.toPlainString()));fields.add(new JLabel("All remaining lines will be returned."));
+        fields.add(new JLabel("Refund method:"));fields.add(method);
+        fields.add(new JLabel("Refund reference:"));fields.add(reference);
+        method.setEnabled(paid.signum()>0);reference.setEnabled(paid.signum()>0);
+        fields.add(new JLabel("Cancellation reason:"));fields.add(new JScrollPane(reason));
+        JPanel panel=new JPanel(new BorderLayout(8,8));panel.add(new JScrollPane(items),BorderLayout.CENTER);panel.add(fields,BorderLayout.SOUTH);
+        panel.setPreferredSize(new Dimension(780,380));
+        while(JOptionPane.showConfirmDialog(this,panel,"Cancel Order — Return & Refund",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE)==JOptionPane.OK_OPTION){
+            if(items.isEditing()&&!items.getCellEditor().stopCellEditing())continue;
+            if(reason.getText().isBlank()){JOptionPane.showMessageDialog(this,"A cancellation reason is required.");continue;}
+            String selected=paid.signum()>0?method.getSelectedItem().toString():"Account";
+            if(List.of("Card","Cheque","MMG").contains(selected)&&reference.getText().isBlank()){JOptionPane.showMessageDialog(this,"Enter a refund reference.");continue;}
+            List<LineReturnRequest> returns=new ArrayList<>();
+            for(int i=0;i<lines.size();i++)returns.add(new LineReturnRequest(lines.get(i).lineId(),lines.get(i).remainingAmount(),false,restockCode(rows.getValueAt(i,3))));
+            return new CancellationRequest(returns,selected,reference.getText().trim(),reason.getText().trim());
+        }
+        return null;
+    }
+
+    record CancellationRequest(List<LineReturnRequest> lines,String method,String reference,String reason){}
 
     private RefundRequest promptLineRefund(List<LineReturnOption> lines) {
         JComboBox<String> reasonBox = new JComboBox<>(new String[]{
@@ -405,7 +489,8 @@ class CustomOrdersLookupTabPanel extends JPanel {
 
             @Override
             public boolean isCellEditable(int row, int column) {
-                return column == 0;
+                return column == 0 && !"DELIVERED".equals(getValueAt(row, 4))
+                        && !"FULL".equals(getValueAt(row, 5));
             }
         };
         for (LineDeliveryOption line : lines) {
@@ -428,6 +513,17 @@ class CustomOrdersLookupTabPanel extends JPanel {
         notesArea.setLineWrap(true);
         notesArea.setWrapStyleWord(true);
         JPanel panel = new JPanel(new BorderLayout(8, 8));
+        JButton deliverAllButton = new JButton("Deliver All");
+        styleDialogButton(deliverAllButton);
+        deliverAllButton.setToolTipText("Select all pending lines. Press OK to record delivery.");
+        deliverAllButton.addActionListener(e -> {
+            if(deliveryTable.isEditing())deliveryTable.getCellEditor().stopCellEditing();
+            for(int row=0;row<deliveryModel.getRowCount();row++)
+                deliveryModel.setValueAt(deliveryModel.isCellEditable(row,0),row,0);
+        });
+        JPanel deliveryActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        deliveryActions.add(deliverAllButton);
+        panel.add(deliveryActions, BorderLayout.NORTH);
         panel.add(new JScrollPane(deliveryTable), BorderLayout.CENTER);
         JPanel notesPanel = new JPanel(new BorderLayout(8, 0));
         notesPanel.add(new JLabel("Notes:"), BorderLayout.WEST);
@@ -439,6 +535,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         if (choice != JOptionPane.OK_OPTION) {
             return null;
         }
+        if(deliveryTable.isEditing())deliveryTable.getCellEditor().stopCellEditing();
         List<Long> lineIds = new ArrayList<>();
         for (int row = 0; row < deliveryModel.getRowCount(); row++) {
             if (Boolean.TRUE.equals(deliveryModel.getValueAt(row, 0))) {
@@ -591,6 +688,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         void loadLookupOrders(DefaultTableModel model, String search);
         Long selectedLookupOrderId(JTable table, DefaultTableModel model);
         void loadOrderDetails(Long orderId, JTextArea detailsArea);
+        default void loadStructuredOrderDetails(Long orderId, CustomOrderDetailsPanel panel) { }
         void loadReturnableLines(Long orderId, Consumer<List<LineReturnOption>> completion);
         void loadDeliverableLines(Long orderId, Consumer<List<LineDeliveryOption>> completion);
         BigDecimal parseNullableMoneyValue(Object value);
@@ -604,6 +702,12 @@ class CustomOrdersLookupTabPanel extends JPanel {
         void loadProductionLines(Long orderId, Consumer<List<ProductionLineOption>> completion);
         void updateProductionLines(Long orderId, List<Long> lineIds, String productionStatus,
                                    String notes, Component parent, Consumer<Boolean> completion);
+        default boolean canCancelOrders(){return false;}
+        default void loadCancellationLines(Long id,Consumer<List<LineReturnOption>> completion){loadReturnableLines(id,completion);}
+        default void cancelOrder(Long id,CancellationRequest request,Consumer<Boolean> completion){completion.accept(false);}
+        default boolean canFinalizePrice(){return false;}
+        default void finalizePrice(Long id,Consumer<Boolean> completion){completion.accept(false);}
+        default void refundPendingDeposit(Long id,String method,String reference,Consumer<Boolean> completion){completion.accept(false);}
         boolean canRefundPayments();
         boolean canDeliverOrderLines();
         boolean canUpdateProduction();

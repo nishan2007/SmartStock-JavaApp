@@ -1,0 +1,7 @@
+SmartStock 1.1.22 (Windows build 101022)
+
+Custom Inventory now provides expandable variant groups, inline editing, Save Changes and automatic saving with Enter, image hover previews, editable Sell in POS, optional date-added display and chronological sorting. Parent rows summarize distinct variant sizes, colours and brands.
+
+Custom items can be archived separately from Active. Archived items are hidden from normal item lists, new orders, POS, receiving and low-stock lists; use Archived items to restore them. Existing order history, stock and variant records are preserved. The server installs the archive schema upgrade automatically.
+
+This release includes the previously published 1.1.21 features. Update the store server first, then registers.

@@ -1,0 +1,5 @@
+SmartStudio 0.1.9
+
+Includes the latest image drop and clipboard handling, badge card and template workspace improvements, and image-processing changes from the current workspace. Uses SmartStock client 1.1.21, including the current server/API and custom-order fixes.
+
+Windows native image transfers and Paste image remain available for WhatsApp Web and other browser sources. Application packages contain no AI model weights.

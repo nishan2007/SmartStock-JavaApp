@@ -40,11 +40,11 @@ public class PriceTagLayoutEditor extends JPanel {
     public void reset(){boxes.clear();boxes.putAll(PriceTagPrintService.defaultLayout());rotations.replaceAll((k,v)->0);select();}
     public CompanyCustomizationManager.PriceTagTemplateSettings settings(){return new CompanyCustomizationManager.PriceTagTemplateSettings(original.name(),original.showCompany(),
             original.showName(),original.showPrice(),original.showSku(),original.showBarcode(),original.showSize(),
-            original.showDescription(),original.widthInches(),original.heightInches(),PriceTagPrintService.encodeLayout(boxes,rotations),
+            original.showDescription(),original.widthInches(),original.heightInches(),PriceTagPrintService.withMainNameOnly(PriceTagPrintService.withBrand(PriceTagPrintService.encodeLayout(boxes,rotations),PriceTagPrintService.brandVisible(original.layoutData())),PriceTagPrintService.mainNameOnly(original.layoutData())),
             original.labelsAcross(),original.columnGapInches(),original.rowGapInches());}
     private class Canvas extends JPanel {
         private Point press; private boolean resize;
-        Canvas(){setPreferredSize(new Dimension(650,610));setBackground(new Color(242,244,248));
+        Canvas(){putClientProperty("SmartStock.touchScroll", false);setPreferredSize(new Dimension(650,610));setBackground(new Color(242,244,248));
             addMouseListener(new MouseAdapter(){public void mousePressed(MouseEvent e){
                 Point p=logical(e.getPoint()); press=null;
                 for(var entry:boxes.entrySet()) if(PriceTagPrintService.elementVisible(original,entry.getKey()) && entry.getValue().contains(p)) {
@@ -65,7 +65,7 @@ public class PriceTagLayoutEditor extends JPanel {
         private Point logical(Point p){Rectangle r=paper();return new Point((p.x-r.x)*1000/Math.max(1,r.width),(p.y-r.y)*500/Math.max(1,r.height));}
         protected void paintComponent(Graphics graphics){super.paintComponent(graphics);Graphics2D g=(Graphics2D)graphics.create();
             try {Rectangle p=paper();g.setColor(Color.WHITE);g.fill(p);
-                try {var image=PriceTagPrintService.render(new PriceTagPrintService.PriceTagItem("Sample Item","","","061-0001","061-0001",BigDecimal.valueOf(100)),settings());
+                try {var image=PriceTagPrintService.render(new PriceTagPrintService.PriceTagItem("Sample Item","","","","061-0001","061-0001",BigDecimal.valueOf(100),"Sample Brand"),settings());
                     g.drawImage(image,p.x,p.y,p.width,p.height,null);
                 } catch(IllegalArgumentException ex){g.setColor(Color.RED);g.drawString("Barcode does not fit: rotate or enlarge its box.",10,getHeight()-25);}
                 for(var entry:boxes.entrySet())if(PriceTagPrintService.elementVisible(original,entry.getKey())) {

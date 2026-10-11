@@ -280,13 +280,14 @@ public class CompanyCustomization extends JFrame {
     private String selectedPreferenceCardKey;
     private boolean badgeFontsLoading;
     private final JCheckBox priceTagShowCompanyBox = new JCheckBox("Show company name");
+    private final JCheckBox priceTagShowBrandBox = new JCheckBox("Show brand");
     private final JCheckBox priceTagShowNameBox = new JCheckBox("Show item name");
     private final JCheckBox priceTagShowPriceBox = new JCheckBox("Show price");
     private final JCheckBox priceTagShowSkuBox = new JCheckBox("Show SKU");
     private final JCheckBox priceTagShowBarcodeBox = new JCheckBox("Show barcode");
     private final JCheckBox priceTagShowSizeBox = new JCheckBox("Show size");
     private final JCheckBox priceTagShowDescriptionBox = new JCheckBox("Show description");
-    private final JComboBox<String> priceTagTemplateSlotBox = new JComboBox<>(new String[]{"Template 1", "Template 2", "Template 3", "Template 4", "Template 5"});
+    private final JComboBox<String> priceTagTemplateSlotBox = new JComboBox<>(new String[]{"Template 1", "Template 2", "Template 3", "Template 4", "Template 5", "Shirts"});
     private final JTextField priceTagTemplateNameField = new JTextField(16);
     private final JSpinner priceTagWidthSpinner = new JSpinner(new SpinnerNumberModel(2.25d, .5d, 6d, .25d));
     private final JSpinner priceTagHeightSpinner = new JSpinner(new SpinnerNumberModel(1.25d, .5d, 4d, .25d));
@@ -1039,7 +1040,7 @@ public class CompanyCustomization extends JFrame {
         private static final int PREVIEW_WIDTH=810,PREVIEW_HEIGHT=510,HANDLE=12;
         private final CustomerCardService.CardData sample=new CustomerCardService.CardData(0,"Sample Customer","Customer Type","CUST-00001","592-555-0100","customer@example.com",2020,1);
         private CustomerCardService.Template template;private String selected;private Point press;private Rectangle start;private boolean resizing;
-        CustomerCardLayoutCanvas(){setPreferredSize(new Dimension(PREVIEW_WIDTH,PREVIEW_HEIGHT));setMinimumSize(new Dimension(640,400));setBackground(new Color(226,232,240));
+        CustomerCardLayoutCanvas(){putClientProperty("SmartStock.touchScroll", false);setPreferredSize(new Dimension(PREVIEW_WIDTH,PREVIEW_HEIGHT));setMinimumSize(new Dimension(640,400));setBackground(new Color(226,232,240));
             MouseAdapter mouse=new MouseAdapter(){public void mousePressed(MouseEvent e){if(template==null||!template.configured())return;selected=hit(e.getPoint());if(selected==null){repaint();return;}press=toCard(e.getPoint());start=new Rectangle(CustomerCardService.layoutRects(template.layoutData()).get(selected));Rectangle shown=toPreview(start);resizing=shown!=null&&e.getX()>=shown.x+shown.width-HANDLE&&e.getY()>=shown.y+shown.height-HANDLE;repaint();}
                 public void mouseDragged(MouseEvent e){if(selected==null||press==null||start==null)return;Point p=toCard(e.getPoint());Rectangle updated=new Rectangle(start);if(resizing){updated.width+=p.x-press.x;updated.height+=p.y-press.y;}else{updated.x+=p.x-press.x;updated.y+=p.y-press.y;}String layout=CustomerCardService.updateLayoutRect(template.layoutData(),selected,updated);template=new CustomerCardService.Template(template.name(),template.configured(),template.background(),template.header(),template.backgroundImage(),layout);repaint();}
                 public void mouseReleased(MouseEvent e){press=null;start=null;resizing=false;}};addMouseListener(mouse);addMouseMotionListener(mouse);}
@@ -1073,7 +1074,7 @@ public class CompanyCustomization extends JFrame {
         JLabel heading = new JLabel("Price Tag Sticker Template"); heading.setFont(new Font("SansSerif", Font.BOLD, 20)); controls.add(heading); controls.add(Box.createVerticalStrut(12));
         controls.add(new JLabel("Each template has its own size and is available in Price Tag Printing.")); controls.add(Box.createVerticalStrut(14));
         JPanel slot = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); slot.add(new JLabel("Template:")); slot.add(priceTagTemplateSlotBox); slot.add(new JLabel("Name:")); slot.add(priceTagTemplateNameField); controls.add(slot); controls.add(Box.createVerticalStrut(8));
-        controls.add(priceTagShowCompanyBox); controls.add(priceTagShowNameBox); controls.add(priceTagShowPriceBox); controls.add(priceTagShowSkuBox); controls.add(priceTagShowBarcodeBox); controls.add(priceTagShowSizeBox); controls.add(priceTagShowDescriptionBox); controls.add(Box.createVerticalStrut(10));
+        controls.add(priceTagShowCompanyBox); controls.add(priceTagShowNameBox); controls.add(priceTagShowPriceBox); controls.add(priceTagShowSkuBox); controls.add(priceTagShowBarcodeBox); controls.add(priceTagShowSizeBox); controls.add(priceTagShowDescriptionBox); controls.add(priceTagShowBrandBox); controls.add(Box.createVerticalStrut(10));
         JPanel sizes = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); sizes.add(new JLabel("Sticker size (inches):")); sizes.add(priceTagWidthSpinner); sizes.add(new JLabel("wide ×")); sizes.add(priceTagHeightSpinner); sizes.add(new JLabel("high")); controls.add(sizes);
         JPanel orientation = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         JButton portrait = new JButton("Portrait"), landscape = new JButton("Landscape");
@@ -1086,6 +1087,7 @@ public class CompanyCustomization extends JFrame {
         rowGap.add(new JLabel("Gap between rows (inches):")); rowGap.add(priceTagRowGapSpinner); controls.add(rowGap);
         controls.add(new JLabel("For two 0.5 × 1 inch labels, set width 0.5, height 1, and labels across 2."));
         JButton preview = new JButton("Refresh preview"); JButton editLayout = new JButton("Open Template Editor"); JButton save = new JButton("Save template"); JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 10)); buttons.add(preview); buttons.add(editLayout); buttons.add(save); controls.add(buttons);
+        priceTagShowBrandBox.addActionListener(e -> refreshPriceTagPreview());
         priceTagTemplateSlotBox.addActionListener(e -> { savePriceTagFieldsToSlot(); activePriceTagTemplateSlot = priceTagTemplateSlotBox.getSelectedIndex(); loadPriceTagTemplateFields(); });
         preview.addActionListener(e -> refreshPriceTagPreview()); editLayout.addActionListener(e -> openPriceTagTemplateEditor()); save.addActionListener(e -> { try { savePriceTagFieldsToSlot(); CompanyCustomizationManager.savePriceTagTemplateSettings(priceTagTemplates); refreshPriceTagPreview(); JOptionPane.showMessageDialog(this, "All five price tag templates saved."); } catch (Exception ex) { JOptionPane.showMessageDialog(this, ex.getMessage(), "Price Tags", JOptionPane.ERROR_MESSAGE); } });
         panel.add(controls, BorderLayout.WEST); priceTagPreviewLabel.setHorizontalAlignment(SwingConstants.CENTER); panel.add(new JScrollPane(priceTagPreviewLabel), BorderLayout.CENTER); loadPriceTagTemplateFields(); return panel;
@@ -1094,8 +1096,8 @@ public class CompanyCustomization extends JFrame {
     private CompanyCustomizationManager.PriceTagTemplateSettings priceTagSettingsFromFields() {
         try { priceTagWidthSpinner.commitEdit(); priceTagHeightSpinner.commitEdit(); priceTagLabelsAcrossSpinner.commitEdit(); priceTagColumnGapSpinner.commitEdit(); priceTagRowGapSpinner.commitEdit(); }
         catch (java.text.ParseException ex) { throw new IllegalArgumentException("Enter valid label dimensions and gaps."); }
-        String layout = priceTagTemplates.size() == 5 ? priceTagTemplates.get(activePriceTagTemplateSlot).layoutData() : ""; return new CompanyCustomizationManager.PriceTagTemplateSettings(priceTagTemplateNameField.getText(), priceTagShowCompanyBox.isSelected(), priceTagShowNameBox.isSelected(), priceTagShowPriceBox.isSelected(), priceTagShowSkuBox.isSelected(), priceTagShowBarcodeBox.isSelected(), priceTagShowSizeBox.isSelected(), priceTagShowDescriptionBox.isSelected(), ((Number) priceTagWidthSpinner.getValue()).doubleValue(), ((Number) priceTagHeightSpinner.getValue()).doubleValue(), layout, ((Number) priceTagLabelsAcrossSpinner.getValue()).intValue(), ((Number) priceTagColumnGapSpinner.getValue()).doubleValue(), ((Number) priceTagRowGapSpinner.getValue()).doubleValue()); }
-    private void savePriceTagFieldsToSlot() { if (priceTagTemplates.size() == 5) priceTagTemplates.set(activePriceTagTemplateSlot, priceTagSettingsFromFields()); }
+        String layout = priceTagTemplates.size() > activePriceTagTemplateSlot ? priceTagTemplates.get(activePriceTagTemplateSlot).layoutData() : ""; layout = services.PriceTagPrintService.withBrand(layout,priceTagShowBrandBox.isSelected()); return new CompanyCustomizationManager.PriceTagTemplateSettings(priceTagTemplateNameField.getText(), priceTagShowCompanyBox.isSelected(), priceTagShowNameBox.isSelected(), priceTagShowPriceBox.isSelected(), priceTagShowSkuBox.isSelected(), priceTagShowBarcodeBox.isSelected(), priceTagShowSizeBox.isSelected(), priceTagShowDescriptionBox.isSelected(), ((Number) priceTagWidthSpinner.getValue()).doubleValue(), ((Number) priceTagHeightSpinner.getValue()).doubleValue(), layout, ((Number) priceTagLabelsAcrossSpinner.getValue()).intValue(), ((Number) priceTagColumnGapSpinner.getValue()).doubleValue(), ((Number) priceTagRowGapSpinner.getValue()).doubleValue()); }
+    private void savePriceTagFieldsToSlot() { if (priceTagTemplates.size() > activePriceTagTemplateSlot) priceTagTemplates.set(activePriceTagTemplateSlot, priceTagSettingsFromFields()); }
     private void orientPriceTag(boolean portrait) {
         var s = priceTagSettingsFromFields();
         priceTagWidthSpinner.setValue(portrait ? Math.min(s.widthInches(),s.heightInches()) : Math.max(s.widthInches(),s.heightInches()));
@@ -1110,8 +1112,8 @@ public class CompanyCustomization extends JFrame {
     private List<Integer> selectedItemTypeQuickPickPhotoIds() {
         return selectedItemTypeQuickPickIds().stream().filter(quickPickPhotoItemTypeIds::contains).toList();
     }
-    private void loadPriceTagTemplateFields() { if (priceTagTemplates.size() != 5) return; activePriceTagTemplateSlot = priceTagTemplateSlotBox.getSelectedIndex(); CompanyCustomizationManager.PriceTagTemplateSettings s = priceTagTemplates.get(activePriceTagTemplateSlot); priceTagTemplateNameField.setText(s.name()); priceTagShowCompanyBox.setSelected(s.showCompany()); priceTagShowNameBox.setSelected(s.showName()); priceTagShowPriceBox.setSelected(s.showPrice()); priceTagShowSkuBox.setSelected(s.showSku()); priceTagShowBarcodeBox.setSelected(s.showBarcode()); priceTagShowSizeBox.setSelected(s.showSize()); priceTagShowDescriptionBox.setSelected(s.showDescription()); priceTagWidthSpinner.setValue(s.widthInches()); priceTagHeightSpinner.setValue(s.heightInches()); priceTagLabelsAcrossSpinner.setValue(s.labelsAcross()); priceTagColumnGapSpinner.setValue(s.columnGapInches()); priceTagRowGapSpinner.setValue(s.rowGapInches()); refreshPriceTagPreview(); }
-    private void refreshPriceTagPreview() { try { priceTagPreviewLabel.setText(""); priceTagPreviewLabel.setIcon(new ImageIcon(PriceTagPrintService.renderStockPreview(new PriceTagPrintService.PriceTagItem("Sample Inventory Item", "Large", "Blue", "A sample product description", "061-0001", "061-0001", java.math.BigDecimal.valueOf(2500)), priceTagSettingsFromFields()))); } catch (IllegalArgumentException ex) {priceTagPreviewLabel.setIcon(null);priceTagPreviewLabel.setText(ex.getMessage());} }
+    private void loadPriceTagTemplateFields() { if (priceTagTemplates.size() <= priceTagTemplateSlotBox.getSelectedIndex()) return; activePriceTagTemplateSlot = priceTagTemplateSlotBox.getSelectedIndex(); CompanyCustomizationManager.PriceTagTemplateSettings s = priceTagTemplates.get(activePriceTagTemplateSlot); priceTagTemplateNameField.setText(s.name()); priceTagShowCompanyBox.setSelected(s.showCompany()); priceTagShowBrandBox.setSelected(services.PriceTagPrintService.brandVisible(s.layoutData())); priceTagShowNameBox.setSelected(s.showName()); priceTagShowPriceBox.setSelected(s.showPrice()); priceTagShowSkuBox.setSelected(s.showSku()); priceTagShowBarcodeBox.setSelected(s.showBarcode()); priceTagShowSizeBox.setSelected(s.showSize()); priceTagShowDescriptionBox.setSelected(s.showDescription()); priceTagWidthSpinner.setValue(s.widthInches()); priceTagHeightSpinner.setValue(s.heightInches()); priceTagLabelsAcrossSpinner.setValue(s.labelsAcross()); priceTagColumnGapSpinner.setValue(s.columnGapInches()); priceTagRowGapSpinner.setValue(s.rowGapInches()); refreshPriceTagPreview(); }
+    private void refreshPriceTagPreview() { try { priceTagPreviewLabel.setText(""); priceTagPreviewLabel.setIcon(new ImageIcon(PriceTagPrintService.renderStockPreview(new PriceTagPrintService.PriceTagItem("Sample Inventory Item", "Large", "Blue", "A sample product description", "061-0001", "061-0001", java.math.BigDecimal.valueOf(2500), "Sample Brand"), priceTagSettingsFromFields()))); } catch (IllegalArgumentException ex) {priceTagPreviewLabel.setIcon(null);priceTagPreviewLabel.setText(ex.getMessage());} }
     private void openPriceTagTemplateEditor() {
         savePriceTagFieldsToSlot(); int slot = priceTagTemplateSlotBox.getSelectedIndex();
         JDialog dialog = new JDialog(this, "Price Tag Template Editor — " + priceTagTemplates.get(slot).name(), Dialog.ModalityType.APPLICATION_MODAL);
@@ -4043,6 +4045,7 @@ public class CompanyCustomization extends JFrame {
         private boolean resizing;
 
         BadgeTemplateEditorPanel(String side, int maxCardWidth) {
+            putClientProperty("SmartStock.touchScroll", false);
             this.side = side;
             this.maxCardWidth = maxCardWidth;
             int preferredHeight = (int) Math.round(maxCardWidth * (CARD_HEIGHT / (double) CARD_WIDTH)) + 24;

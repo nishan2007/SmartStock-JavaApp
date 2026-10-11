@@ -30,15 +30,25 @@ public final class SmartStudio extends JFrame {
     private final JProgressBar progress = new JProgressBar();
     private final JTextField host = new JTextField("127.0.0.1"), port = new JTextField("8443"), identifier = new JTextField();
     private final JPasswordField phrase = new JPasswordField(), password = new JPasswordField();
-    private final Preview original = new Preview("Original image"), result = new Preview("Transparent result");
+    private final Preview original = new Preview("Original image"), result = new Preview("Processed result");
     private final JComboBox<StudioQuality> quality = new JComboBox<>(StudioQuality.values());
     private final JCheckBox cleanEdges = new JCheckBox("Clean edges", true);
+    private final JCheckBox removeBackground = new JCheckBox("Remove background", true);
+    private final JComboBox<String> enhancement = new JComboBox<>(new String[]{"Original size", "2×", "4×"});
+    private boolean enhancementAvailable;
+    private boolean processingProgressAvailable;
+    private String imageRequestId;
+    private final JComboBox<String> processingMode=new JComboBox<>(new String[]{"Auto","CPU only","GPU preferred"});
+    private final JButton cancelImage=button("Cancel processing",DeckersPalette.PURPLE);
     private final JComboBox<String> previewBackground = new JComboBox<>(new String[]{"Checkerboard", "White", "Black"});
-    private final JButton choose = button("Choose image", DeckersPalette.PURPLE), remove = button("Remove background", DeckersPalette.ORANGE), save = button("Save PNG", DeckersPalette.PURPLE);
+    private final JComboBox<String> previewZoom = new JComboBox<>(new String[]{"Fit", "100%", "200%"});
+    private final JButton choose = button("Choose image", DeckersPalette.PURPLE), remove = button("Process image", DeckersPalette.ORANGE), save = button("Save PNG", DeckersPalette.PURPLE);
     private final JButton copy = button("Copy result", DeckersPalette.PURPLE);
+    private final JButton paste = button("Paste image", DeckersPalette.PURPLE);
     private byte[] sourceBytes, outputBytes;
     private String fileName = "image";
     private boolean busy, signedIn;
+    private BadgeCardsPanel badgeCards;
     private long lastActivity = System.currentTimeMillis();
     private int idleMinutes;
     private Runnable imageReady = () -> { };
@@ -116,6 +126,7 @@ public final class SmartStudio extends JFrame {
         if (DatabaseConfig.hasConfigFile()) port.setText(String.valueOf(config.serverPort()));
         addWindowListener(new WindowAdapter() { @Override public void windowClosing(WindowEvent e) {
             if (busy) { status.setText("Please wait for the current operation to finish."); return; }
+            if (badgeCards != null && !badgeCards.discard()) return;
             work("Closing…", () -> { LanApiClient.logoutWithoutWaiting(); return true; }, ignored -> dispose());
         }});
         Toolkit.getDefaultToolkit().addAWTEventListener(activityWatcher, AWTEvent.KEY_EVENT_MASK | AWTEvent.MOUSE_EVENT_MASK);
@@ -202,21 +213,45 @@ public final class SmartStudio extends JFrame {
     private JPanel studioPage() {
         JPanel panel = DeckersSwing.panel(); panel.setLayout(new BorderLayout(16,16));
         JPanel tools = DeckersSwing.panel(); tools.setLayout(new FlowLayout(FlowLayout.LEFT,12,0));
-        tools.add(choose); tools.add(remove); tools.add(save); tools.add(copy);
+        tools.add(choose); tools.add(paste); tools.add(remove); tools.add(save); tools.add(copy);
+        paste.setToolTipText("In WhatsApp Web, right-click the photo and choose Copy image, then paste here.");
+        paste.addActionListener(e -> pasteImage());
+        panel.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke(KeyEvent.VK_V, InputEvent.CTRL_DOWN_MASK), "paste-image");
+        panel.getActionMap().put("paste-image",new AbstractAction(){public void actionPerformed(ActionEvent e){pasteImage();}});
         JButton logout = button("Sign out",DeckersPalette.PURPLE);
         JButton updates=button("Check for updates",DeckersPalette.PURPLE);
         updates.addActionListener(e -> checkUpdates());
-        JPanel options = DeckersSwing.panel(); options.setLayout(new FlowLayout(FlowLayout.LEFT,12,6));
-        options.add(DeckersSwing.metaLabel("Quality")); options.add(quality); quality.setSelectedItem(StudioQuality.BEST);
+        JPanel options = DeckersSwing.panel(); options.setLayout(new BoxLayout(options, BoxLayout.Y_AXIS));
+        JPanel processOptions = DeckersSwing.panel(); processOptions.setLayout(new FlowLayout(FlowLayout.LEFT,12,6));
+        JPanel viewOptions = DeckersSwing.panel(); viewOptions.setLayout(new FlowLayout(FlowLayout.LEFT,12,6));
+        options.add(processOptions); options.add(viewOptions);
+        removeBackground.setOpaque(false); removeBackground.setForeground(DeckersPalette.text());
+        processOptions.add(removeBackground); processOptions.add(DeckersSwing.metaLabel("Enhance")); processOptions.add(enhancement);
+        JPanel runtimeOptions=DeckersSwing.panel();runtimeOptions.setLayout(new FlowLayout(FlowLayout.LEFT,12,6));
+        runtimeOptions.add(DeckersSwing.metaLabel("Processing"));runtimeOptions.add(processingMode);runtimeOptions.add(cancelImage);options.add(runtimeOptions);
+        cancelImage.addActionListener(e->{String id=imageRequestId;if(id==null)return;cancelImage.setEnabled(false);status.setText("Cancellation requested…");
+            new SwingWorker<Void,Void>(){protected Void doInBackground()throws Exception{LanApiClient.studioProgress(id,true);return null;}
+                protected void done(){try{get();}catch(Exception ex){showError(ex.getCause()==null?ex:ex.getCause());}}}.execute();});
+        removeBackground.addActionListener(e -> updateButtons()); enhancement.addActionListener(e -> updateButtons());
+        processOptions.add(DeckersSwing.metaLabel("Removal quality")); processOptions.add(quality); quality.setSelectedItem(StudioQuality.BEST);
         quality.setToolTipText("Best quality uses a more detailed model and can take longer on the store server.");
-        cleanEdges.setOpaque(false); cleanEdges.setForeground(DeckersPalette.text()); options.add(cleanEdges);
+        cleanEdges.setOpaque(false); cleanEdges.setForeground(DeckersPalette.text()); processOptions.add(cleanEdges);
         cleanEdges.setToolTipText("Reduce background colour around uncertain edges. Turn off to compare the original cutout.");
-        options.add(DeckersSwing.metaLabel("Preview background")); options.add(previewBackground);
+        viewOptions.add(DeckersSwing.metaLabel("Preview background")); viewOptions.add(previewBackground);
+        viewOptions.add(DeckersSwing.metaLabel("Zoom")); viewOptions.add(previewZoom);
+        previewZoom.addActionListener(e -> {
+            double zoom = previewZoom.getSelectedIndex() == 0 ? 0 : previewZoom.getSelectedIndex();
+            original.zoom = zoom; result.zoom = zoom;
+            original.revalidate(); result.revalidate(); original.repaint(); result.repaint();
+        });
         JPanel updateBar=DeckersSwing.panel();updateBar.setLayout(new FlowLayout(FlowLayout.RIGHT,12,0));updateBar.add(updates);updateBar.add(logout);
         original.setToolTipText("Drop one PNG or JPEG file here, including from a connected network drive.");
         original.setTransferHandler(new TransferHandler() {
             public boolean canImport(TransferSupport support) {
-                if (busy || !StudioImageTransfer.supports(support.getTransferable())) return false;
+                // Inspect advertised formats without requesting a native Transferable during dragOver.
+                if (busy || !(support.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.javaFileListFlavor)
+                        || support.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.imageFlavor)
+                        || support.isDataFlavorSupported(StudioImageTransfer.PNG))) return false;
                 if (support.isDrop()) {
                     if ((support.getSourceDropActions() & COPY) == 0) return false;
                     support.setDropAction(COPY);
@@ -228,7 +263,8 @@ public final class SmartStudio extends JFrame {
                 try {
                     // Native drop data expires when this callback returns.
                     var loader = StudioImageTransfer.capture(support.getTransferable());
-                    loadSource(loader);
+                    // Finish the native drop before changing controls or starting SwingWorker.
+                    SwingUtilities.invokeLater(() -> loadSource(loader));
                     return true;
                 } catch (Exception ex) {
                     SwingUtilities.invokeLater(() -> showError(ex));
@@ -236,16 +272,28 @@ public final class SmartStudio extends JFrame {
                 }
             }
         });
+        StudioImageDrop.install(original, () -> busy, this::loadSource, this::showError);
         previewBackground.addActionListener(e -> { result.backgroundMode=previewBackground.getSelectedIndex(); result.repaint(); });
         JPanel toolbar = DeckersSwing.panel(); toolbar.setLayout(new BorderLayout(0,8)); toolbar.add(tools,BorderLayout.NORTH); toolbar.add(options);
         toolbar.add(updateBar,BorderLayout.SOUTH);
-        JPanel previews = new JPanel(new GridLayout(1,2,16,0)); previews.setOpaque(false); previews.add(original); previews.add(result);
-        panel.add(toolbar,BorderLayout.NORTH); panel.add(previews); panel.add(DeckersSwing.metaLabel("Original-size transparent PNG • Best quality can take longer • Preview colours are not saved."),BorderLayout.SOUTH);
+        JPanel previews = new JPanel(new GridLayout(1,2,16,0)); previews.setOpaque(false); previews.add(new JScrollPane(original)); previews.add(new JScrollPane(result));
+        panel.add(toolbar,BorderLayout.NORTH); panel.add(previews); panel.add(DeckersSwing.metaLabel("Remove, enhance, or both • Processing stays on the store server • Inspect faces and lettering before printing."),BorderLayout.SOUTH);
         choose.addActionListener(e -> selectImage()); remove.addActionListener(e -> {
             StudioQuality selected = (StudioQuality) quality.getSelectedItem(); boolean cleanup = cleanEdges.isSelected();
-            work(selected == StudioQuality.BEST ? "Removing background with Best quality… This can take a few minutes." : "Removing background…",
-                    () -> LanApiClient.removeStudioBackground(sourceBytes, selected, cleanup), bytes -> {
-            try { BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes)); if (image == null) throw new IllegalStateException("The server returned an invalid image."); outputBytes = bytes; result.image=image; result.repaint(); status.setText(selected + (cleanup ? " • Edges cleaned" : "") + " • " + image.getWidth() + " × " + image.getHeight() + " • Ready to save PNG."); }
+            boolean cutout = removeBackground.isSelected(); int scale = enhancement.getSelectedIndex() == 0 ? 1 : enhancement.getSelectedIndex() == 1 ? 2 : 4;
+            String mode=new String[]{"AUTO","CPU","GPU"}[processingMode.getSelectedIndex()];
+            imageRequestId=processingProgressAvailable&&scale>1?java.util.UUID.randomUUID().toString():null;
+            String requestId=imageRequestId;
+            work(scale > 1 ? "Preparing enhancement…" : "Removing background…",
+                    () -> {try{return requestId==null?LanApiClient.transformStudioPhoto(sourceBytes,selected,cleanup,cutout,scale):
+                        LanApiClient.transformStudioPhoto(sourceBytes,selected,cleanup,cutout,scale,mode,requestId,
+                            info->SwingUtilities.invokeLater(()->showImageProgress(requestId,info)));}
+                        finally{SwingUtilities.invokeLater(()->{if(java.util.Objects.equals(imageRequestId,requestId)){imageRequestId=null;cancelImage.setEnabled(false);progress.setIndeterminate(true);}});}}, bytes -> {
+            try { BufferedImage image = ImageIO.read(new ByteArrayInputStream(bytes)); if (image == null) throw new IllegalStateException("The server returned an invalid image.");
+                if (image.getWidth() != original.image.getWidth() * scale || image.getHeight() != original.image.getHeight() * scale)
+                    throw new IllegalStateException("The server did not return the requested scale. Update the store server before enhancing.");
+                outputBytes = bytes; result.image=image; result.revalidate(); result.repaint(); status.setText((cutout ? "Background removed • " : "") + scale + "× • " + image.getWidth() + " × " + image.getHeight()
+                        + String.format(java.util.Locale.ROOT, " • %.1f × %.1f inches at 300 PPI • Ready to save PNG.", image.getWidth()/300.0, image.getHeight()/300.0)); }
             catch (Exception ex) { showError(ex); }
         }); });
         copy.addActionListener(e -> {
@@ -258,7 +306,11 @@ public final class SmartStudio extends JFrame {
                 showError(new IllegalStateException("The clipboard is busy. Please try Copy result again."));
             }
         });
-        save.addActionListener(e -> saveImage()); logout.addActionListener(e -> signOut()); updateButtons(); return panel;
+        save.addActionListener(e -> saveImage()); logout.addActionListener(e -> signOut()); updateButtons();
+        badgeCards = new BadgeCardsPanel();
+        JTabbedPane sections = new JTabbedPane(); sections.addTab("Image Studio", panel); sections.addTab("Badge Cards", badgeCards);
+        JPanel workspace = DeckersSwing.panel(); workspace.setLayout(new BorderLayout(8,8)); workspace.add(updateBar,BorderLayout.NORTH); workspace.add(sections);
+        return workspace;
     }
 
     private void selectImage() {
@@ -293,24 +345,29 @@ public final class SmartStudio extends JFrame {
         sourceBytes=null;outputBytes=null;original.image=null;result.image=null;original.repaint();result.repaint();
         work("Reading image…",loader, source -> {
             sourceBytes=source.bytes();outputBytes=null;fileName=source.name().replaceFirst("\\.[^.]+$","");
-            original.image=source.image();result.image=null;original.repaint();result.repaint();
-            status.setText("Image ready. Click Remove background.");
+            original.image=source.image();result.image=null;original.revalidate();result.revalidate();original.repaint();result.repaint();
+            status.setText("Image ready. Choose background removal, enhancement, or both, then Process image.");
             SwingUtilities.invokeLater(imageReady);
         });
     }
 
     private void saveImage() {
-        JFileChooser picker = new JFileChooser(); picker.setSelectedFile(new java.io.File(fileName+"-transparent.png"));
+        JFileChooser picker = new JFileChooser(); picker.setSelectedFile(new java.io.File(fileName+"-processed.png"));
         if (picker.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
         Path selected=picker.getSelectedFile().toPath(); Path path=selected.toString().toLowerCase().endsWith(".png") ? selected : Path.of(selected+".png");
         if (Files.exists(path) && JOptionPane.showConfirmDialog(this,"Replace " + path.getFileName() + "?","Save PNG",JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
         work("Saving PNG…",() -> { Files.write(path,outputBytes); return path; }, saved -> status.setText("Saved " + saved.getFileName()));
     }
 
-    private void signOut() { work("Signing out…",() -> { LanApiClient.logout(); return true; }, ignored -> { signedIn=false; sourceBytes=null; outputBytes=null; original.image=null; result.image=null; original.repaint(); result.repaint(); cards.show(pages,"login"); status.setText("Signed out."); }); }
+    private void signOut() { work("Signing out…",() -> { LanApiClient.logout(); return true; }, ignored -> { signedIn=false; sourceBytes=null; outputBytes=null; original.image=null; result.image=null; badgeCards.resetFields(); original.repaint(); result.repaint(); cards.show(pages,"login"); status.setText("Signed out."); }); }
     private void applyBrand(JsonObject brand) {
         company.setText(brand.get("name").getAsString()); motto.setText(brand.get("motto").getAsString());
         boolean bestAvailable = brand.has("studioBestQualityAvailable") && brand.get("studioBestQualityAvailable").getAsBoolean();
+        enhancementAvailable = brand.has("studioEnhancementAvailable") && brand.get("studioEnhancementAvailable").getAsBoolean();
+        processingProgressAvailable=brand.has("studioProgressAvailable")&&brand.get("studioProgressAvailable").getAsBoolean();
+        enhancement.setSelectedIndex(0);
+        enhancement.setToolTipText(enhancementAvailable ? "2× or 4× enlargement using Real-ESRGAN on the store CPU."
+                : "Ask an administrator to install Image enhancement in SmartStock: Status > AI Models, then sign in again.");
         quality.setModel(new DefaultComboBoxModel<>(bestAvailable ? StudioQuality.values() : new StudioQuality[]{StudioQuality.FAST}));
         quality.setSelectedItem(bestAvailable ? StudioQuality.BEST : StudioQuality.FAST);
         quality.setToolTipText(bestAvailable ? "Best quality can take longer on the store server." : "Ask an administrator to install Best quality in SmartStock: Status > AI Models.");
@@ -323,31 +380,65 @@ public final class SmartStudio extends JFrame {
             protected void done() { busy=false;progress.setVisible(false);setEnabledTree(pages,true);try {done.accept(get());}catch(Exception ex){showError(ex.getCause()==null?ex:ex.getCause());}updateButtons();lastActivity=System.currentTimeMillis(); }
         }.execute();
     }
+    private void showImageProgress(String id,JsonObject info){
+        if(!busy||!java.util.Objects.equals(imageRequestId,id)||!"running".equals(info.get("state").getAsString()))return;
+        int total=info.get("total").getAsInt(),done=info.get("completed").getAsInt();
+        progress.setIndeterminate(total==0);if(total>0){progress.setMaximum(total);progress.setValue(done);}
+        String note=info.get("note").getAsString(),device=info.get("device").getAsString();
+        long seconds=info.get("remainingSeconds").getAsLong();
+        status.setText((note.isBlank()?"Enhancing":note)+(device.isBlank()?"":" • "+device)+(total==0?"":" • "+info.get("percent").getAsInt()+"% ("+done+"/"+total+" tiles)")+(seconds<0?"":" • about "+Math.max(1,(seconds+59)/60)+" min remaining"));
+    }
+    private void pasteImage() {
+        if(busy || !signedIn)return;
+        try {
+            var source=Toolkit.getDefaultToolkit().getSystemClipboard().getContents(null);
+            if(source==null || !StudioImageTransfer.supports(source))
+                throw new java.io.IOException("Copy the photo itself first: in WhatsApp Web, right-click the opened photo and choose Copy image, then click Paste image here.");
+            loadSource(StudioImageTransfer.capture(source));
+        } catch(Exception ex){showError(ex);}
+    }
+
     private void showError(Throwable ex) {
         if(checkOnly){ex.printStackTrace();dispose();System.exit(1);return;}
         if (ex instanceof LanApiClient.LanApiException api && (api.code().contains("SESSION") || api.code().equals("LOGIN_REQUIRED"))) {
             signedIn=false; sourceBytes=null; outputBytes=null; original.image=null; result.image=null; cards.show(pages,"login");
+            badgeCards.resetFields();
         }
         String message=ex.getMessage()==null?"The operation could not finish. Check your store connection.":ex.getMessage();
         status.setText(message.split("\\R",2)[0]);status.setForeground(DeckersPalette.CORAL);
         if(ex instanceof LanApiClient.LanApiException api && (api.code().equals("STUDIO_PAIRING_REQUIRED")||api.code().startsWith("DEVICE_")))cards.show(pages,"connect");
         JOptionPane.showMessageDialog(this,message,"SmartStudio",JOptionPane.ERROR_MESSAGE);
     }
-    private void updateButtons() { choose.setEnabled(!busy); remove.setEnabled(!busy&&sourceBytes!=null); save.setEnabled(!busy&&outputBytes!=null); copy.setEnabled(!busy&&outputBytes!=null); }
+    private void updateButtons() {
+        processingMode.setEnabled(!busy&&processingProgressAvailable);
+        cancelImage.setEnabled(busy&&imageRequestId!=null);
+        paste.setEnabled(!busy);
+        choose.setEnabled(!busy); enhancement.setEnabled(!busy&&enhancementAvailable);
+        quality.setEnabled(!busy&&removeBackground.isSelected()); cleanEdges.setEnabled(!busy&&removeBackground.isSelected());
+        remove.setEnabled(!busy&&sourceBytes!=null&&(removeBackground.isSelected()||enhancement.getSelectedIndex()>0));
+        save.setEnabled(!busy&&outputBytes!=null); copy.setEnabled(!busy&&outputBytes!=null);
+    }
     private static void setEnabledTree(Container parent,boolean enabled) { for(Component c:parent.getComponents()) { c.setEnabled(enabled); if(c instanceof Container child)setEnabledTree(child,enabled); } }
     private static JButton button(String text,Color accent) { JButton b=new JButton(text); DeckersSwing.styleUtilityButton(b,accent); return b; }
     private static JPanel form(String title,String description) { JPanel p=DeckersSwing.panel(); p.setLayout(new BoxLayout(p,BoxLayout.Y_AXIS)); p.setPreferredSize(new Dimension(490,440)); DeckersSwing.styleBand(p,DeckersPalette.ORANGE,new Insets(22,22,22,22)); JLabel heading=DeckersSwing.totalLabel(title,true); p.add(heading); p.add(Box.createVerticalStrut(12)); p.add(new JLabel(description)); p.add(Box.createVerticalStrut(18)); return p; }
     private static void field(JPanel panel,String label,JTextField field) { panel.add(DeckersSwing.metaLabel(label)); panel.add(Box.createVerticalStrut(6)); DeckersSwing.styleField(field); field.setMaximumSize(new Dimension(Integer.MAX_VALUE,36)); panel.add(field); panel.add(Box.createVerticalStrut(14)); }
     private static JPanel centered(JPanel form) { JPanel p=DeckersSwing.panel(); p.setLayout(new GridBagLayout()); p.add(form); return p; }
     private record LoginData(LanApiClient.LoginResult session,JsonObject brand) { }
-    private static final class Preview extends JPanel {
-        BufferedImage image; final String label; int backgroundMode;
+    private static final class Preview extends JPanel implements Scrollable {
+        BufferedImage image; final String label; int backgroundMode; double zoom;
         Preview(String label) { this.label=label; setBackground(DeckersPalette.surface()); setBorder(BorderFactory.createLineBorder(DeckersPalette.border())); }
         protected void paintComponent(Graphics g) { super.paintComponent(g); g.setColor(DeckersPalette.text()); g.setFont(new Font("SansSerif",Font.BOLD,16)); g.drawString(label,16,26);
             if(image==null) { g.setColor(DeckersPalette.muted()); g.setFont(new Font("SansSerif",Font.PLAIN,14)); g.drawString(getTransferHandler()!=null ? "Drop an image here or choose an image" : "Your image will appear here",16,62); return; }
-            for(int y=40;y<getHeight();y+=16)for(int x=0;x<getWidth();x+=16){g.setColor(backgroundMode==1 ? Color.WHITE : backgroundMode==2 ? Color.BLACK : ((x/16+y/16)%2==0)?Color.WHITE:new Color(232,232,232));g.fillRect(x,y,16,16);}
-            double scale=Math.min((getWidth()-24.0)/image.getWidth(),(getHeight()-64.0)/image.getHeight()); int w=(int)(image.getWidth()*scale),h=(int)(image.getHeight()*scale);
-            Graphics2D draw=(Graphics2D)g.create(); draw.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR); draw.drawImage(image,(getWidth()-w)/2,40+(getHeight()-40-h)/2,w,h,null); draw.dispose();
+            Rectangle clip = g.getClipBounds();
+            for(int y=Math.max(40,clip.y/16*16);y<Math.min(getHeight(),clip.y+clip.height);y+=16)for(int x=Math.max(0,clip.x/16*16);x<Math.min(getWidth(),clip.x+clip.width);x+=16){g.setColor(backgroundMode==1 ? Color.WHITE : backgroundMode==2 ? Color.BLACK : ((x/16+y/16)%2==0)?Color.WHITE:new Color(232,232,232));g.fillRect(x,y,16,16);}
+            double scale=zoom > 0 ? zoom : Math.min((getWidth()-24.0)/image.getWidth(),(getHeight()-64.0)/image.getHeight()); int w=(int)(image.getWidth()*scale),h=(int)(image.getHeight()*scale);
+            Graphics2D draw=(Graphics2D)g.create(); draw.setRenderingHint(RenderingHints.KEY_INTERPOLATION,RenderingHints.VALUE_INTERPOLATION_BILINEAR); draw.drawImage(image,zoom > 0 ? 12 : (getWidth()-w)/2,zoom > 0 ? 40 : 40+(getHeight()-40-h)/2,w,h,null); draw.dispose();
         }
+        public Dimension getPreferredSize() { return image != null && zoom > 0 ? new Dimension((int)(image.getWidth()*zoom)+24,(int)(image.getHeight()*zoom)+64) : new Dimension(360,300); }
+        public Dimension getPreferredScrollableViewportSize() { return new Dimension(360,300); }
+        public int getScrollableUnitIncrement(Rectangle visible, int orientation, int direction) { return 24; }
+        public int getScrollableBlockIncrement(Rectangle visible, int orientation, int direction) { return orientation == SwingConstants.HORIZONTAL ? visible.width : visible.height; }
+        public boolean getScrollableTracksViewportWidth() { return zoom == 0; }
+        public boolean getScrollableTracksViewportHeight() { return zoom == 0; }
     }
 }

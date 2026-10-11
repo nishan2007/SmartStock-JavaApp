@@ -8,6 +8,19 @@ const env=()=>({
   UPDATE_BUCKET:{get:async key=>key.startsWith('installers/latest/')?null:({size:3,customMetadata:{sha256:'a'.repeat(64)},body:'exe'})}
 });
 const request=(path='/',method='GET')=>new Request('https://downloads.deckers.gy'+path,{method});
+test('SmartStudio has a separate verified public download',async()=>{
+  const e=env(),a={kind:'studio',platform:'windows',version:'0.1.7',buildNumber:1007,size:3,sha256:'a'.repeat(64),filename:'SmartStudio-setup-0.1.7.exe'};
+  a.key=`smartstudio/windows/${a.version}/${a.sha256}/${a.filename}`;
+  e.STUDIO_INSTALLERS_JSON=JSON.stringify({windows:a});
+  const r=await portal.fetch(request('/download/smartstudio/windows'),e);
+  assert.equal(r.status,200);assert.equal(await r.text(),'exe');
+  assert.match(r.headers.get('Content-Disposition'),/SmartStudio-setup-0.1.7.exe/);
+  assert.match(await (await portal.fetch(request(),e)).text(),/download\/smartstudio\/windows/);
+  e.UPDATE_BUCKET.get=async key=>key.startsWith('installers/latest/')?null:{size:4,customMetadata:{sha256:a.sha256},body:'bad'};
+  assert.equal((await portal.fetch(request('/download/smartstudio/windows'),e)).status,503);
+  a.key='installers/private.exe';e.STUDIO_INSTALLERS_JSON=JSON.stringify({windows:a});
+  assert.throws(()=>configuration(e));
+});
 test('public downloads require no account or online store',async()=>{
   const original=globalThis.fetch;globalThis.fetch=()=>assert.fail('Must not authenticate with a store');
   try {

@@ -63,6 +63,7 @@ public class CustomOrderSlipFormatter {
         }
         appendRule(builder);
 
+        if(data.pricePending())appendField(builder,"PRICING","Price pending");
         builder.append("DETAILS").append('\n');
         if (slipSettings.showLineItems()) {
             int index = 1;
@@ -71,7 +72,7 @@ public class CustomOrderSlipFormatter {
                 if (!clean(line.variantName()).isBlank()) {
                     item += " / " + clean(line.variantName());
                 }
-                if (slipSettings.showPricing()) {
+                if (slipSettings.showPricing() && !data.pricePending()) {
                     item += " " + money(line.lineTotal());
                 }
                 appendWrapped(builder, item, RECEIPT_WIDTH);
@@ -89,8 +90,8 @@ public class CustomOrderSlipFormatter {
         }
         if (slipSettings.showPaymentSummary()) {
             appendField(builder, "PAYMENT", clean(data.paymentMethod()) + " / " + clean(data.paymentStatus()));
-            appendPair(builder, "AMT", money(data.amountPaid()), "BAL", money(data.balanceDue()));
-            appendField(builder, "TOTAL", money(data.totalAmount()));
+            appendPair(builder, data.pricePending()?"DEPOSIT":"AMT", money(data.amountPaid()), "BAL", data.pricePending()?"Pending":money(data.balanceDue()));
+            appendField(builder, "TOTAL", data.pricePending()?"Price pending":money(data.totalAmount()));
         }
         if (slipSettings.showPaymentReference() && !clean(data.paymentReference()).isBlank()) {
             appendField(builder, "PAY REF", data.paymentReference());

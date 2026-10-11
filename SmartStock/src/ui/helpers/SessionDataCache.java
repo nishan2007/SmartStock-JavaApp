@@ -17,10 +17,15 @@ public final class SessionDataCache {
     private static final int MAX_ENTRIES = 512;
     private static volatile String scope = "anonymous";
     private static volatile String endpoint = "unconfigured";
+    private static long generation;
+    public static synchronized long generation(){return generation;}
+    public static synchronized void putIfGeneration(long expected,String key,Object value){
+        if(expected==generation)put(key,value);
+    }
 
     private SessionDataCache() { }
 
-    public static void setScope(String newScope) {
+    public static synchronized void setScope(String newScope) {
         String normalized = newScope == null || newScope.isBlank() ? "anonymous" : newScope;
         if (!normalized.equals(scope)) {
             scope = normalized;
@@ -28,7 +33,7 @@ public final class SessionDataCache {
         }
     }
 
-    public static void setEndpoint(String newEndpoint) {
+    public static synchronized void setEndpoint(String newEndpoint) {
         String normalized = newEndpoint == null || newEndpoint.isBlank() ? "unconfigured" : newEndpoint;
         if (!normalized.equals(endpoint)) {
             endpoint = normalized;
@@ -53,16 +58,18 @@ public final class SessionDataCache {
         }
     }
 
-    public static void invalidate(String keyPrefix) {
+    public static synchronized void invalidate(String keyPrefix) {
         String prefix = scoped(keyPrefix);
         invalidateMatching(key -> key.startsWith(prefix));
     }
 
-    public static void invalidateMatching(Predicate<String> predicate) {
+    public static synchronized void invalidateMatching(Predicate<String> predicate) {
+        generation++;
         ENTRIES.keySet().removeIf(predicate);
     }
 
-    public static void clear() {
+    public static synchronized void clear() {
+        generation++;
         ENTRIES.clear();
     }
 

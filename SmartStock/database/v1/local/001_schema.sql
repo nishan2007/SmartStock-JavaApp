@@ -14758,3 +14758,43 @@ DO $$ BEGIN
   GRANT ALL ON public.catalog_studio_reviews TO service_role;
  END IF;
 END $$;
+
+-- Store-owned order pricing; existing orders retain finalized prices.
+ALTER TABLE public.custom_orders
+    ADD COLUMN IF NOT EXISTS pricing_state text NOT NULL DEFAULT 'FINAL',
+    ADD COLUMN IF NOT EXISTS pricing_defer_reason text,
+    ADD COLUMN IF NOT EXISTS pricing_defer_by_user_id integer,
+    ADD COLUMN IF NOT EXISTS pricing_defer_by_name text,
+    ADD COLUMN IF NOT EXISTS pricing_finalized_at timestamptz,
+    ADD COLUMN IF NOT EXISTS pricing_finalized_by_user_id integer,
+    ADD COLUMN IF NOT EXISTS pricing_finalized_by_name text,
+    ADD COLUMN IF NOT EXISTS pricing_apply_customer_discount boolean NOT NULL DEFAULT true;
+ALTER TABLE public.custom_orders DROP CONSTRAINT IF EXISTS custom_orders_pricing_state_chk;
+ALTER TABLE public.custom_orders ADD CONSTRAINT custom_orders_pricing_state_chk CHECK (pricing_state IN ('PENDING','FINAL'));
+ALTER TABLE public.custom_orders DROP CONSTRAINT IF EXISTS custom_orders_payment_status_chk;
+ALTER TABLE public.custom_orders ADD CONSTRAINT custom_orders_payment_status_chk CHECK (payment_status IN ('PAID','PARTIAL','UNPAID','PRICE_PENDING'));
+CREATE INDEX IF NOT EXISTS custom_orders_pending_pricing_idx ON public.custom_orders(location_id,created_at DESC) WHERE pricing_state='PENDING';
+-- Archive preserves active state, stock, variants and historical order references.
+ALTER TABLE public.custom_order_items ADD COLUMN IF NOT EXISTS is_archived boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS custom_order_items_visible_idx
+    ON public.custom_order_items(is_active, item_name) WHERE is_archived=false;
+CREATE TABLE IF NOT EXISTS public.custom_order_held_carts (
+ hold_id text PRIMARY KEY,
+ location_id integer NOT NULL REFERENCES public.locations(location_id),
+ user_id integer NOT NULL REFERENCES public.users(user_id),
+ device_id text NOT NULL,
+ hold_name text NOT NULL,
+ payload jsonb NOT NULL,
+ status text NOT NULL DEFAULT 'STAGING' CHECK(status IN ('STAGING','HELD','RESUMED')),
+ created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ resumed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS custom_order_held_carts_available_idx
+ ON public.custom_order_held_carts(location_id,created_at DESC) WHERE status='HELD';
+CREATE TABLE IF NOT EXISTS public.custom_order_held_files (
+ hold_id text NOT NULL REFERENCES public.custom_order_held_carts(hold_id) ON DELETE CASCADE,
+ file_id text NOT NULL,
+ chunk_no integer NOT NULL CHECK(chunk_no>=0),
+ content bytea NOT NULL CHECK(octet_length(content)<=524288),
+ PRIMARY KEY(hold_id,file_id,chunk_no)
+);

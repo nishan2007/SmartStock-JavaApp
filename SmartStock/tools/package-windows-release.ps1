@@ -118,7 +118,7 @@ try {
         --app-version $Version `
         --icon $WindowsIcon `
         --add-launcher "SmartStockServer=$ServerLauncherProperties" `
-        --add-modules "java.base,java.desktop,java.logging,java.management,java.naming,java.net.http,java.prefs,java.security.jgss,java.security.sasl,java.smartcardio,java.sql,java.transaction.xa,java.xml,jdk.crypto.ec,jdk.httpserver,jdk.unsupported"
+        --add-modules "java.base,java.desktop,java.logging,java.management,java.naming,java.net.http,java.prefs,java.security.jgss,java.security.sasl,java.smartcardio,java.sql,java.transaction.xa,java.xml,jdk.crypto.ec,jdk.httpserver,jdk.management,jdk.unsupported"
     if ($LASTEXITCODE -ne 0) { throw "jpackage failed." }
 
     $AppImage = Join-Path $Work "SmartStock"

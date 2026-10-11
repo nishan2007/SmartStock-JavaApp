@@ -11,6 +11,31 @@ import java.nio.charset.StandardCharsets;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PriceTagStockLayoutTest {
+    @Test void tsplBitmapUsesBlackZeroAndWhiteOneIncludingPadding() {
+        BufferedImage image=new BufferedImage(9,3,BufferedImage.TYPE_INT_RGB);
+        var graphics=image.createGraphics();try{graphics.setColor(Color.WHITE);graphics.fillRect(0,0,9,3);graphics.setColor(Color.BLACK);graphics.fillRect(0,1,9,1);graphics.fillRect(0,2,1,1);}finally{graphics.dispose();}
+        byte[] job=PriceTagPrintService.formatCt221bGapJob(List.of(image),stock(0));
+        byte[] header="BITMAP 0,0,2,3,0,".getBytes(StandardCharsets.US_ASCII);
+        int offset=-1;for(int i=0;i<=job.length-header.length;i++){boolean match=true;for(int j=0;j<header.length;j++)if(job[i+j]!=header[j]){match=false;break;}if(match){offset=i+header.length;break;}}
+        assertTrue(offset>=0);
+        assertArrayEquals(new byte[]{(byte)0xFF,(byte)0xFF,0,0x7F,0x7F,(byte)0xFF},java.util.Arrays.copyOfRange(job,offset,offset+6));
+    }
+    @Test void variantNameKeepsItsExplicitSecondLine() {
+        var image=new BufferedImage(600,100,BufferedImage.TYPE_INT_RGB);
+        var g=image.createGraphics();
+        try {
+            var fit=PriceTagPrintService.fitText(g,"Main Custom Item\nLarge Blue",new java.awt.Rectangle(0,0,600,100),java.awt.Font.BOLD,true);
+            assertEquals(List.of("Main Custom Item","Large Blue"),fit.lines());
+            assertTrue(fit.fontSize()>8);
+        } finally {g.dispose();}
+    }
+    @Test void brandSelectionSurvivesLayoutAndCanBeDisabled() {
+        String layout=PriceTagPrintService.withBrand(PriceTagPrintService.encodeLayout(PriceTagPrintService.defaultLayout()),true);
+        assertTrue(PriceTagPrintService.brandVisible(layout));
+        assertTrue(PriceTagPrintService.layoutRects(layout).containsKey("brand"));
+        assertFalse(PriceTagPrintService.brandVisible(PriceTagPrintService.withBrand(layout,false)));
+        assertFalse(PriceTagPrintService.brandVisible(""));
+    }
     @Test void portraitBarcodeIsCompleteAndDecodableAfterRotation() throws Exception {
         var settings=PriceTagPrintService.ct221bPortraitTemplate(10/25.4);
         var image=PriceTagPrintService.render(new PriceTagPrintService.PriceTagItem("Test", "", "", "061-0001", "061-0001", BigDecimal.valueOf(100)),settings);
@@ -140,6 +165,45 @@ class PriceTagStockLayoutTest {
         assertEquals(1, old.labelsAcross());
         assertEquals(0, old.columnGapInches());
         assertEquals(0, old.rowGapInches());
+    }
+
+    @Test void shirtsTemplateSurvivesLegacySettingsAndSaving() throws Exception {
+        var encoder = ServerCompanyCustomizationRepository.class.getDeclaredMethod("encodePriceTagTemplates", List.class);
+        encoder.setAccessible(true);
+        var defaults = ServerCompanyCustomizationRepository.decodePriceTagTemplatesForLan("", true, true, true, 2.25, 1.25);
+        String encoded = (String) encoder.invoke(null, defaults);
+        String oldFive = String.join(";", java.util.Arrays.copyOf(encoded.split(";"), 5));
+        var restored = ServerCompanyCustomizationRepository.decodePriceTagTemplatesForLan(oldFive, true, true, true, 2.25, 1.25);
+        assertEquals(6, restored.size());
+        var shirts = restored.get(5);
+        assertEquals("Shirts", shirts.name());
+        assertEquals(2, shirts.widthInches());
+        assertEquals(1, shirts.heightInches());
+        assertEquals("Cotton Shirt", PriceTagPrintService.nameForTemplate("Cotton Shirt\nXL / Blue", shirts.layoutData()));
+        assertEquals("Cotton Shirt\nXL / Blue", PriceTagPrintService.nameForTemplate("Cotton Shirt\nXL / Blue", ""));
+        assertTrue(shirts.showSize() && shirts.showPrice() && shirts.showBarcode() && shirts.showSku());
+        var boxes = PriceTagPrintService.layoutRects(shirts.layoutData());
+        assertTrue(boxes.get("size").height > boxes.get("name").height);
+        assertTrue(boxes.get("color").height > boxes.get("name").height);
+        for (var entry : boxes.entrySet()) {
+            if (!PriceTagPrintService.elementVisible(shirts, entry.getKey())) continue;
+            var box = entry.getValue();
+            assertTrue(box.x >= 50 && box.y >= 50, entry.getKey() + " must respect the left/top 0.1-inch margins");
+            assertTrue(box.x + box.width <= 950 && box.y + box.height <= 450,
+                    entry.getKey() + " must respect the right/bottom 0.1-inch margins");
+        }
+        assertEquals(shirts, ServerCompanyCustomizationRepository.decodePriceTagTemplatesForLan((String) encoder.invoke(null, restored), true, true, true, 2.25, 1.25).get(5));
+        String edited = PriceTagPrintService.withMainNameOnly(PriceTagPrintService.encodeLayout(boxes), true);
+        assertEquals("Cotton Shirt", PriceTagPrintService.nameForTemplate("Cotton Shirt\nXL / Blue", edited));
+        var image = PriceTagPrintService.render(new PriceTagPrintService.PriceTagItem("Cotton Shirt\nXL / Blue", "XL", "Blue", "", "SHIRT-XL-BL", "SHIRT-XL-BL", BigDecimal.TEN), shirts);
+        assertEquals(406, image.getWidth());
+        assertEquals(203, image.getHeight());
+        for (int y = 0; y < image.getHeight(); y++) {
+            for (int x = 0; x < image.getWidth(); x++) {
+                if (x < 20 || x >= image.getWidth() - 20 || y < 20 || y >= image.getHeight() - 20)
+                    assertEquals(Color.WHITE.getRGB(), image.getRGB(x, y), "Margin must remain blank");
+            }
+        }
     }
 
     private BufferedImage solid(Color color) {

@@ -560,6 +560,10 @@ public final class LanApiClient {
         return GSON.fromJson(post("/v1/sales/settings", new JsonObject(), true, true), SalesSettings.class);
     }
 
+    public static JsonObject customOrderHold(JsonObject request,String resumeKey)throws Exception {
+        return resumeKey==null?post("/v1/custom-orders/holds",request,true,true):post("/v1/custom-orders/holds",request,true,true,Map.of("Idempotency-Key",resumeKey));
+    }
+
     public static HeldCartCreated createHeldCart(HeldCartCreateRequest request, String idempotencyKey) throws Exception {
         requireIdempotencyKey(idempotencyKey, "Held-cart idempotency key is required.");
         return GSON.fromJson(post("/v1/held-carts/create", GSON.toJsonTree(request).getAsJsonObject(),
@@ -1059,6 +1063,11 @@ public final class LanApiClient {
     }
     private static JsonObject customOrderQuery(String action,JsonObject request)throws Exception{request.addProperty("action",action);return post("/v1/custom-orders/catalog",request,true,true);}
     public static String saveCustomOrder(CustomOrderDataService.OrderSaveRequest request,String key)throws Exception{JsonObject body=GSON.toJsonTree(request).getAsJsonObject();return post("/v1/custom-orders/create",body,true,true,Map.of("Idempotency-Key",key)).get("orderNumber").getAsString();}
+    public static List<LanOrdersDashboardService.DeliveredRow> loadDeliveredCustomOrders(boolean all)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("view","DELIVERED");body.addProperty("range",all?"ALL":"7_DAYS");
+        var rows=GSON.fromJson(post("/v1/custom-orders/dashboard",body,true,true).get("delivered"),LanOrdersDashboardService.DeliveredRow[].class);
+        return rows==null?List.of():List.of(rows);
+    }
     public static LanOrdersDashboardService.Dashboard loadCustomOrderDashboard()throws Exception{return GSON.fromJson(post("/v1/custom-orders/dashboard",new JsonObject(),true,true).get("dashboard"),LanOrdersDashboardService.Dashboard.class);}
     public static void assignCustomOrder(long orderId,Integer employeeId,String status,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("orderId",orderId);if(employeeId!=null)r.addProperty("employeeId",employeeId);r.addProperty("status",status);post("/v1/custom-orders/assign",r,true,true,Map.of("Idempotency-Key",key));}
     public static CustomOrderSlipData loadCustomOrderSlip(String number)throws Exception{JsonObject r=new JsonObject();r.addProperty("orderNumber",number);return GSON.fromJson(post("/v1/documents/custom-order-slip",r,true,true).get("slip"),CustomOrderSlipData.class);}
@@ -1447,6 +1456,40 @@ public final class LanApiClient {
         post("/v1/studio/models/install", body, true, true);
     }
 
+    public static void installStudioEnhancementModel() throws Exception {
+        JsonObject body = new JsonObject(); body.addProperty("family", "enhancement");
+        post("/v1/studio/models/install", body, true, true);
+    }
+
+    public static byte[] transformStudioPhoto(byte[] bytes, StudioQuality quality, boolean cleanEdges,
+                                             boolean removeBackground, int scale) throws Exception {
+        return transformStudioPhoto(bytes,quality,cleanEdges,removeBackground,scale,"AUTO",null,null);
+    }
+    public static JsonObject studioProgress(String id,boolean cancel)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("requestId",id);body.addProperty("cancel",cancel);
+        return post("/v1/studio/progress",body,true,true);
+    }
+    public static byte[] transformStudioPhoto(byte[] bytes,StudioQuality quality,boolean cleanEdges,
+                                             boolean removeBackground,int scale,String mode,String requestId,
+                                             java.util.function.Consumer<JsonObject> progress)throws Exception {
+        StudioBackgroundService.validate(bytes);
+        if (scale != 1) StudioImageEnhancer.validateScale(scale);
+        if (!removeBackground && scale == 1) throw new IllegalArgumentException("Choose background removal or enhancement.");
+        JsonObject body = new JsonObject();
+        body.addProperty("bytesBase64", java.util.Base64.getEncoder().encodeToString(bytes));
+        body.addProperty("quality", quality.name()); body.addProperty("cleanEdges", cleanEdges);
+        body.addProperty("removeBackground", removeBackground); body.addProperty("scale", scale);
+        body.addProperty("processingMode",mode);
+        java.util.concurrent.ScheduledExecutorService poller=null;
+        if(requestId!=null&&progress!=null){
+            body.addProperty("requestId",requestId);
+            poller=java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r->{var t=new Thread(r,"studio-progress");t.setDaemon(true);return t;});
+            poller.scheduleWithFixedDelay(()->{try{progress.accept(studioProgress(requestId,false));}catch(Exception ignored){}},1,1,java.util.concurrent.TimeUnit.SECONDS);
+        }
+        try{return java.util.Base64.getDecoder().decode(post("/v1/studio/remove-background", body, true, true).get("bytesBase64").getAsString());}
+        finally{if(poller!=null)poller.shutdownNow();}
+    }
+
     public static byte[] removeStudioBackground(byte[] bytes) throws Exception {
         return removeStudioBackground(bytes, StudioQuality.FAST, false);
     }
@@ -1481,7 +1524,7 @@ public final class LanApiClient {
         boolean imageUpload = "/v1/cloud/storage/upload".equals(path) || "/v1/products/studio-import".equals(path)
                 || "/v1/products/studio-source".equals(path) || "/v1/studio/remove-background".equals(path);
         HttpRequest.Builder builder = HttpRequest.newBuilder(baseUri().resolve(path))
-                .timeout("/v1/studio/remove-background".equals(path) ? Duration.ofMinutes(5)
+                .timeout("/v1/studio/remove-background".equals(path) ? Duration.ofMinutes(30)
                         : "/v1/studio/models/refresh".equals(path) ? Duration.ofSeconds(75) : imageUpload ? IMAGE_UPLOAD_TIMEOUT : TIMEOUT)
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")

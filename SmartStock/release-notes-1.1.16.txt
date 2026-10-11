@@ -1,0 +1,7 @@
+SmartStock 1.1.16
+
+- Show current custom orders by default; search includes delivered orders.
+- Correct order-list column headings, amounts, references and dates.
+- Fix overlapping order-details title and action buttons; wrap controls in smaller windows.
+- Automatically mark production Ready when order items are delivered, with production history.
+- Improve native Windows file drag-and-drop into order attachment dialogs and file pickers.

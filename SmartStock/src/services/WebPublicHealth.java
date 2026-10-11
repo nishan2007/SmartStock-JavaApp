@@ -68,8 +68,9 @@ final class WebPublicHealth {
         int code=0;try{var request=HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(5)).method("HEAD",HttpRequest.BodyPublishers.noBody()).build();
             code=HTTP.send(request,HttpResponse.BodyHandlers.discarding()).statusCode();
         }catch(InterruptedException ex){Thread.currentThread().interrupt();}catch(Exception ignored){}
-        return WebStatusService.service(id,name,"Public connectivity check",code==expected,url,false,
-            code==expected?"Reachable · HTTP "+code+" is the expected unauthenticated response. No login was attempted.":
+        boolean reachable=code==expected || (id.equals("downloads")&&code==200);
+        return WebStatusService.service(id,name,"Public connectivity check",reachable,url,false,
+            reachable?"Reachable · HTTP "+code+" is an expected public response. No login was attempted.":
                 code==0?"Could not connect. Check the internet connection and tunnel.":"Unexpected HTTP "+code+". Check the public connection and tunnel.");
     }
 }

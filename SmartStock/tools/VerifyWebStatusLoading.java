@@ -25,7 +25,7 @@ class VerifyWebStatusLoading {
         try{
             // Reproduce a caller creating the dialog well before it is opened.
             Thread.sleep(250);if(calls.get()!=0)throw new AssertionError("Requested data before the window opened");
-            SwingUtilities.invokeAndWait(()->{window.get().addNotify();window.get().dispatchEvent(new WindowEvent(window.get(),WindowEvent.WINDOW_OPENED));});
+            SwingUtilities.invokeAndWait(()->{window.get().setLocation(-2000,-2000);window.get().setVisible(true);});
             if(!requested.await(5,TimeUnit.SECONDS))throw new AssertionError("Initial load did not start");
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);AtomicBoolean ready=new AtomicBoolean();
             while(!ready.get()&&System.nanoTime()<deadline){

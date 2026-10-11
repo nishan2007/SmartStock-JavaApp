@@ -1,0 +1,5 @@
+SmartStock 1.1.17
+
+- Fix Web Status first load, visible loading/error feedback, and refresh recovery.
+- Sort Order Lookup and My Orders by clicking column headings, using numeric and chronological ordering.
+- Reopen SmartStock through the normal Windows desktop after updates, preventing inherited administrator permissions from blocking File Explorer drops.

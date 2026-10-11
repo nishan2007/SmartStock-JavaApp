@@ -78,6 +78,7 @@ public final class CloudRowMirrorService {
             Map.entry("employee_time_clock_adjustments", "EXISTS (SELECT 1 FROM employee_time_clock p WHERE p.clock_id=t.clock_id AND p.location_id=?)"),
             Map.entry("employee_wallet_credentials", "EXISTS (SELECT 1 FROM user_locations ul WHERE ul.user_id=t.user_id AND ul.location_id=?)"),
             Map.entry("held_cart_items", "EXISTS (SELECT 1 FROM held_carts p WHERE p.held_cart_id=t.held_cart_id AND p.location_id=?)"),
+            Map.entry("custom_order_held_files", "EXISTS (SELECT 1 FROM custom_order_held_carts p WHERE p.hold_id=t.hold_id AND p.location_id=?)"),
             Map.entry("invoice_audit_log", invoicePredicate()),
             Map.entry("invoice_delivery_lines", invoicePredicate()),
             Map.entry("invoice_lines", invoicePredicate()),
@@ -407,9 +408,10 @@ public final class CloudRowMirrorService {
 
         int uploaded = 0;
         int deleted = 0;
-        for (int offset = 0; offset < pending.size(); offset += BATCH_SIZE) {
+        int batchSize="custom_order_held_files".equals(table)?1:BATCH_SIZE;
+        for (int offset = 0; offset < pending.size(); offset += batchSize) {
             List<MirrorRow> batch = pending.subList(offset,
-                    Math.min(offset + BATCH_SIZE, pending.size()));
+                    Math.min(offset + batchSize, pending.size()));
             generation.ensureStarted();
             uploadBatch(local, locationId, generation.generationId, batch);
             generation.pendingRows.addAll(batch);

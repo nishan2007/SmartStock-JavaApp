@@ -24,6 +24,7 @@ public record CustomOrderSlipData(
         String orderNotes,
         List<Line> lines
 ) {
+    public boolean pricePending(){return "PRICE_PENDING".equals(paymentStatus);}
     public record Line(
             String itemName,
             String variantName,

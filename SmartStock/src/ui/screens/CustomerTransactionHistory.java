@@ -129,7 +129,7 @@ public class CustomerTransactionHistory extends JFrame {
                             formatRecord(row),formatTimestamp(row.createdAtEpochMillis()),row.storeName(),row.userName(),
                             row.deviceName(),row.cashDrawerName(),formatType(row.transactionType()),formatType(row.documentType()),
                             row.documentNumber(),row.paymentMethod(),row.paymentReference(),currencyFormat.format(defaultZero(row.amount())),
-                            formatStatus(row.paymentStatus()),formatStatus(row.documentStatus()),currencyFormat.format(defaultZero(row.chargeTotal())),
+                            formatStatus(row.paymentStatus()),formatStatus(row.documentStatus()),"PRICE_PENDING".equals(row.paymentStatus())?"Price pending":currencyFormat.format(defaultZero(row.chargeTotal())),
                             row.remote()?"Synced snapshot":"Live store data",row.note()
                     });
             }
