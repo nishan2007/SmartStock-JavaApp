@@ -56,6 +56,7 @@ public class CashDrawerManagementPanel extends JPanel {
     private final Map<Integer, JTextField> floatMixFields = new HashMap<>();
     private final JLabel floatMixTotalLabel = new JLabel("$0");
     private final JTextArea descriptionArea = new JTextArea(4, 24);
+    private final JCheckBox overseasCashBox = new JCheckBox("Handle separate overseas-order cash (no float)");
     private final JCheckBox activeBox = new JCheckBox("Active");
     private final JComboBox<DeviceOption> deviceBox = new JComboBox<>();
     private final JTextArea assignmentNotesArea = new JTextArea(3, 24);
@@ -89,6 +90,7 @@ public class CashDrawerManagementPanel extends JPanel {
         assignmentTable.getTableHeader().setReorderingAllowed(false);
 
         activeBox.setSelected(true);
+        overseasCashBox.setSelected(false);
         includeInactiveBox.setOpaque(false);
         startingCashField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
             @Override
@@ -205,6 +207,7 @@ public class CashDrawerManagementPanel extends JPanel {
         gbc.gridwidth = 1;
         gbc.insets = new Insets(0, 0, 12, 0);
         drawerEditor.add(activeBox, gbc);
+        gbc.gridy=6;overseasCashBox.setOpaque(false);drawerEditor.add(overseasCashBox,gbc);
 
         JPanel drawerButtons = new JPanel(new GridLayout(1, 3, 8, 0));
         drawerButtons.setOpaque(false);
@@ -212,7 +215,7 @@ public class CashDrawerManagementPanel extends JPanel {
         drawerButtons.add(clearButton);
         drawerButtons.add(saveButton);
         gbc.gridx = 0;
-        gbc.gridy = 6;
+        gbc.gridy = 7;
         gbc.gridwidth = 2;
         drawerEditor.add(drawerButtons, gbc);
 
@@ -524,6 +527,7 @@ public class CashDrawerManagementPanel extends JPanel {
                 setFloatMixFields(drawer.getFloatMix());
                 descriptionArea.setText(drawer.getDescription());
                 activeBox.setSelected(drawer.isActive());
+        overseasCashBox.setSelected(drawer.handlesOverseasCash());
                 break;
             }
         }
@@ -537,6 +541,7 @@ public class CashDrawerManagementPanel extends JPanel {
         setFloatMixFields(CashDrawerService.DEFAULT_FLOAT_MIX);
         descriptionArea.setText("");
         activeBox.setSelected(true);
+        overseasCashBox.setSelected(false);
     }
 
     private void saveDrawer() {
@@ -546,7 +551,7 @@ public class CashDrawerManagementPanel extends JPanel {
             return;
         }
         LanApiClient.CashDrawerSaveRequest request=new LanApiClient.CashDrawerSaveRequest(selectedDrawerId,store.id(),drawerNameField.getText(),
-                descriptionArea.getText(),parseMoney(startingCashField.getText()),parseFloatMix(),activeBox.isSelected());
+                descriptionArea.getText(),parseMoney(startingCashField.getText()),parseFloatMix(),activeBox.isSelected(),overseasCashBox.isSelected());
         String key=mutationKey("save|"+request);
         submitMutation("cash-drawers.save",()->LanApiClient.saveCashDrawer(request,key),id->{selectedDrawerId=id;clearMutationKey();SessionDataCache.invalidate("cash-drawer:");loadDrawersAndAssignments();JOptionPane.showMessageDialog(this,"Cash drawer saved.");},"Failed to save cash drawer");
     }

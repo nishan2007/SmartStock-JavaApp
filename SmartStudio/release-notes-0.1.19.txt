@@ -1,0 +1,9 @@
+SmartStudio 0.1.19
+
+Shared badge-template library through the authenticated store server, with a fast local cache and parallel downloads of changed templates.
+Cached offline badge editing with a visible offline status; offline saves are blocked and never queued automatically.
+Server revision checks protect against overwriting changes made on another computer. Import existing badge-template folders once into the shared library.
+OneDrive backups are handled by the updated store server with retry and checksum verification. Requires SmartStock server 1.1.34 or newer.
+New Labels workspace supports different sizes per template, Publisher page-size import, current-size display, and resizing with optional artwork scaling.
+Labels include sheet setup, preview, printing and PDF export. Native Publisher conversion requires local LibreOffice and layout review.
+Uses the SmartStock 1.1.34 client. AI model weights remain outside application packages.

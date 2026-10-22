@@ -33,7 +33,7 @@ public final class ServerRoleGuard {
 
     public static boolean blocks(String path) {
         if (!blocksMutations() || path == null || path.startsWith("/v1/security/servers/")) return false;
-        return RemoteAdminPolicy.isMutation(path) || RemoteAdminPolicy.isPhysicalOperation(path)
+        return path.startsWith("/v1/loyalty/") || RemoteAdminPolicy.isMutation(path) || RemoteAdminPolicy.isPhysicalOperation(path)
                 || path.contains("/workflow") || path.endsWith("/checkout") || path.endsWith("/refund")
                 || path.endsWith("/punch") || path.endsWith("/run") || path.endsWith("/resolve")
                 || path.endsWith("/deposit") || path.endsWith("/return") || path.endsWith("/receive");

@@ -287,7 +287,8 @@ public final class LanApiClient {
         String pin = SecureCredentialStore.readRegisterPairing(registerHome, DeviceCredentialService.LAN_API_FINGERPRINT_SECRET);
         String host = SecureCredentialStore.readRegisterPairing(registerHome, API_HOST_SECRET);
         String port = SecureCredentialStore.readRegisterPairing(registerHome, API_PORT_SECRET);
-        if (token == null || pin == null || host == null || port == null) return false;
+        if (token == null || pin == null || host == null) return false;
+        if (port == null) port = String.valueOf(LanApiServer.DEFAULT_PORT);
         configureEndpoint(host, Integer.parseInt(port));
         SecureCredentialStore.write(DeviceCredentialService.LAN_API_FINGERPRINT_SECRET, pin);
         resetTransport(false, false);
@@ -309,9 +310,15 @@ public final class LanApiClient {
 
     /** Physical-server bootstrap; the endpoint accepts only loopback traffic in SERVER mode. */
     public static boolean ensureLocalServerCredential() throws Exception {
+        return ensureLocalServerCredential(false);
+    }
+
+    /** Explicit physical-server recovery also refreshes the computer's hardware identity. */
+    public static boolean ensureLocalServerCredential(boolean refresh) throws Exception {
         if (DatabaseConfig.load().mode() != data.DatabaseMode.SERVER) return false;
-        if (isPaired()) return true;
+        if (!refresh && isPaired()) return true;
         SecureCredentialStore.write(API_HOST_SECRET, "127.0.0.1");
+        SecureCredentialStore.write(API_PORT_SECRET, String.valueOf(LanApiServer.DEFAULT_PORT));
         resetTransport(true, false);
         Probe probe=probeUntrusted(baseUri());
         SecureCredentialStore.write(DeviceCredentialService.LAN_API_FINGERPRINT_SECRET,
@@ -656,6 +663,10 @@ public final class LanApiClient {
         return rows==null?List.of():List.of(rows);
     }
 
+    public static JsonObject stockLedger(String action,JsonObject request,String key)throws Exception {
+        return key==null?post("/v1/stock-ledger/"+action,request,true,true):post("/v1/stock-ledger/"+action,request,true,true,Map.of("Idempotency-Key",key));
+    }
+
     public static ReceiveInventoryResult receiveInventory(ReceiveInventoryRequest request,String idempotencyKey)throws Exception{
         requireIdempotencyKey(idempotencyKey,"Inventory receiving idempotency key is required.");
         return GSON.fromJson(post("/v1/inventory/receive",GSON.toJsonTree(request).getAsJsonObject(),true,true,
@@ -883,6 +894,11 @@ public final class LanApiClient {
     public static MobileItemWebStatus renewMobileItemWebActivation()throws Exception{return GSON.fromJson(post("/v1/mobile-item-web/activation",new JsonObject(),true,true),MobileItemWebStatus.class);}
     public static MobileItemPhotoHandoff createMobileItemPhotoHandoff(String targetType,long targetId)throws Exception{JsonObject r=new JsonObject();r.addProperty("targetType",targetType);r.addProperty("targetId",targetId);return GSON.fromJson(post("/v1/mobile-item-web/photo-handoff",r,true,true),MobileItemPhotoHandoff.class);}
     public static MobileItemPhotoHandoffStatus mobileItemPhotoHandoffStatus(String handoffId)throws Exception{JsonObject r=new JsonObject();r.addProperty("handoffId",handoffId);return GSON.fromJson(post("/v1/mobile-item-web/photo-handoff/status",r,true,true),MobileItemPhotoHandoffStatus.class);}
+    public static JsonObject employeeWebAdmin(String action, JsonObject request)throws Exception {
+        JsonObject body=request==null?new JsonObject():request.deepCopy();
+        body.addProperty("action",action);
+        return post("/v1/employee-web/admin",body,true,true);
+    }
     public static SchedulerWebStatus schedulerWebStatus()throws Exception{return GSON.fromJson(post("/v1/scheduler-web/status",new JsonObject(),true,true),SchedulerWebStatus.class);}
     public static SchedulerWebStatus startSchedulerWeb()throws Exception{return GSON.fromJson(post("/v1/scheduler-web/start",new JsonObject(),true,true),SchedulerWebStatus.class);}
     public static SchedulerWebStatus stopSchedulerWeb()throws Exception{return GSON.fromJson(post("/v1/scheduler-web/stop",new JsonObject(),true,true),SchedulerWebStatus.class);}
@@ -926,6 +942,15 @@ public final class LanApiClient {
         requireIdempotencyKey(key,"Customer account idempotency key is required.");
         return GSON.fromJson(post("/v1/customer-accounts/save",GSON.toJsonTree(request).getAsJsonObject(),true,true,
                 Map.of("Idempotency-Key",key)),SavedCustomerAccount.class);
+    }
+    public static CustomerAccountMergeService.Preview previewCustomerAccountMerges()throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("action","PREVIEW");
+        return GSON.fromJson(post("/v1/customer-accounts/merge",request,true,true),CustomerAccountMergeService.Preview.class);
+    }
+    public static CustomerAccountMergeService.Result mergeCustomerAccounts(String fingerprint,String key)throws Exception {
+        requireIdempotencyKey(key,"Customer merge idempotency key is required.");
+        JsonObject request=new JsonObject();request.addProperty("action","MERGE");request.addProperty("fingerprint",fingerprint);
+        return GSON.fromJson(post("/v1/customer-accounts/merge",request,true,true,Map.of("Idempotency-Key",key)),CustomerAccountMergeService.Result.class);
     }
     public static CustomerAccountAdjustmentResult adjustCustomerAccount(CustomerAccountAdjustmentRequest request,String key)throws Exception{
         requireIdempotencyKey(key,"Customer account adjustment idempotency key is required.");
@@ -974,6 +999,9 @@ public final class LanApiClient {
         return GSON.fromJson(post("/v1/cash/drawer/close",r,true,true,Map.of("Idempotency-Key",key)),CashDrawerCloseResult.class);}
     public static CashDrawerCloseResult closeCashDrawer(long sessionId,BigDecimal count,String notes,Map<String,Integer>denominations,Map<String,Integer>floats,BigDecimal floatTotal,BigDecimal cashInHand,String key)throws Exception{
         JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);r.add("denominationCounts",GSON.toJsonTree(denominations));r.add("floatCounts",GSON.toJsonTree(floats));r.addProperty("floatTotal",floatTotal);r.addProperty("cashInHand",cashInHand);r.addProperty("complete",true);
+        return GSON.fromJson(post("/v1/cash/drawer/close",r,true,true,Map.of("Idempotency-Key",key)),CashDrawerCloseResult.class);}
+    public static CashDrawerCloseResult closeCashDrawer(long sessionId,BigDecimal count,String notes,Map<String,Integer>denominations,Map<String,Integer>floats,BigDecimal floatTotal,BigDecimal cashInHand,BigDecimal overseasCounted,String overseasReason,String key)throws Exception{
+        JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);r.add("denominationCounts",GSON.toJsonTree(denominations));r.add("floatCounts",GSON.toJsonTree(floats));r.addProperty("floatTotal",floatTotal);r.addProperty("cashInHand",cashInHand);r.addProperty("complete",true);r.addProperty("overseasCounted",overseasCounted);r.addProperty("overseasReason",overseasReason);
         return GSON.fromJson(post("/v1/cash/drawer/close",r,true,true,Map.of("Idempotency-Key",key)),CashDrawerCloseResult.class);}
     public static List<CashDrawerSession> loadRecentCashDrawers()throws Exception{JsonObject d=post("/v1/cash/drawer/recent",new JsonObject(),true,true);
         CashDrawerSession[] rows=GSON.fromJson(d.getAsJsonArray("sessions"),CashDrawerSession[].class);return rows==null?List.of():List.of(rows);}
@@ -1092,6 +1120,13 @@ public final class LanApiClient {
         request.addProperty("employeeId",employeeId); request.add("entry",GSON.toJsonTree(entry));
         return post("/v1/time-clock/manual/create",request,true,true,Map.of("Idempotency-Key",key)).get("clockId").getAsLong();
     }
+    public static void setDailyHalfDay(int employeeId, java.time.LocalDate workDate, boolean halfDay, boolean manager, String key) throws Exception {
+        JsonObject r=new JsonObject();r.addProperty("employeeId",employeeId);r.addProperty("workDate",workDate.toString());
+        r.addProperty("halfDay",halfDay);r.addProperty("manager",manager);
+        post("/v1/time-clock/half-day",r,true,true,Map.of("Idempotency-Key",key));
+        ui.helpers.SessionDataCache.invalidate("payroll:");ui.helpers.SessionDataCache.invalidate("time-clock");
+    }
+
     public static void correctTimeClockSession(long clockId,TimeClockAutoCloseService.Correction correction,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("clockId",clockId);r.add("correction",GSON.toJsonTree(correction));post("/v1/time-clock/correct",r,true,true,Map.of("Idempotency-Key",key));}
     public static managers.TimeClockManager.TimeClockDashboard loadTimeClockDashboard()throws Exception{return GSON.fromJson(post("/v1/time-clock/dashboard",new JsonObject(),true,true).get("dashboard"),managers.TimeClockManager.TimeClockDashboard.class);}
     public static TimeClockPunchState loadTimeClockPunchState()throws Exception{return GSON.fromJson(post("/v1/time-clock/punch-state",new JsonObject(),true,true),TimeClockPunchState.class);}
@@ -1117,12 +1152,19 @@ public final class LanApiClient {
     public static List<EmployeeRegistrationService.Registration> employeeRegistrations(boolean rejected)throws Exception {
         return List.of(GSON.fromJson(employeeRegistrationAction("LIST",null,null,null,rejected).get("registrations"),EmployeeRegistrationService.Registration[].class));
     }
+    public static JsonObject publicationRequest(String action,JsonObject body)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/publications",r,true,true);}
     public static JsonObject quotationRead(String action,JsonObject body)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/quotations/read",r,true,true);}
     public static JsonObject quotationMutation(String action,JsonObject body,String key)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/quotations/update",r,true,true,Map.of("Idempotency-Key",key));}
     public static String loadQuotationDocument(String type,long id)throws Exception{return loadQuotationDocument(type,id,false);}
     public static String loadQuotationDocument(String type,long id,boolean compact)throws Exception{JsonObject r=new JsonObject();r.addProperty("compact",compact);r.addProperty("type",type);r.addProperty("documentId",id);return post("/v1/documents/quotation-invoice",r,true,true).get("text").getAsString();}
     public static LanCustomOrderCatalogAdminService.State loadCustomCatalogAdmin()throws Exception{return GSON.fromJson(post("/v1/custom-orders/admin/state",new JsonObject(),true,true).get("state"),LanCustomOrderCatalogAdminService.State.class);}
     public static long updateCustomCatalogAdmin(String action,JsonObject body,String key)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/custom-orders/admin/update",r,true,true,Map.of("Idempotency-Key",key)).get("recordId").getAsLong();}
+    public static JsonObject customOrderCustomerPhone(String phone)throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("phone",phone);return customOrderQuery("CUSTOMER_PHONE",request);
+    }
+    public static JsonObject overseasOrders(JsonObject request)throws Exception {
+        return post("/v1/overseas-orders/workflow",request,true,true);
+    }
     public static JsonObject customOrderWorkflowRead(String action,Long orderId,String search)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);if(orderId!=null)r.addProperty("orderId",orderId);if(search!=null)r.addProperty("search",search);return post("/v1/custom-orders/workflow/read",r,true,true);}
     public static JsonObject customOrderWorkflowMutation(JsonObject request,String key)throws Exception{return post("/v1/custom-orders/workflow/update",request,true,true,Map.of("Idempotency-Key",key));}
     public static JsonObject customOrderMediaRead(JsonObject request)throws Exception{return post("/v1/custom-orders/media/read",request,true,true);}
@@ -1272,6 +1314,13 @@ public final class LanApiClient {
         return GSON.fromJson(data, RefundResult.class);
     }
 
+    public static JsonObject loyaltyRead(JsonObject request)throws Exception {return post("/v1/loyalty/read",request,true,true);}
+    public static JsonObject loyaltyUpdate(JsonObject request,String key)throws Exception {requireIdempotencyKey(key,"Loyalty idempotency key is required.");return post("/v1/loyalty/update",request,true,true,Map.of("Idempotency-Key",key));}
+    public static LoyaltyPolicy.Settings loadLoyaltySettings()throws Exception {JsonObject r=new JsonObject();r.addProperty("action","SETTINGS");return GSON.fromJson(loyaltyRead(r).get("settings"),LoyaltyPolicy.Settings.class);}
+    public static LoyaltyPolicy.Settings saveLoyaltySettings(LoyaltyPolicy.Settings settings,String key)throws Exception {JsonObject r=new JsonObject();r.addProperty("action","SETTINGS");r.add("settings",GSON.toJsonTree(settings));return GSON.fromJson(loyaltyUpdate(r,key).get("settings"),LoyaltyPolicy.Settings.class);}
+    public static JsonObject loyaltyBalance(int customer)throws Exception {JsonObject r=new JsonObject();r.addProperty("action","BALANCE");r.addProperty("customerId",customer);return loyaltyRead(r);}
+    public static JsonObject loyaltySalePreview(CheckoutRequest checkout)throws Exception {JsonObject r=new JsonObject();r.addProperty("action","SALE_PREVIEW");r.add("checkout",GSON.toJsonTree(checkout));return loyaltyRead(r);}
+
     public static ReceiptData loadSaleReceipt(int saleId, BigDecimal cashCollected,
                                               BigDecimal changeDue) throws Exception {
         JsonObject request = new JsonObject(); request.addProperty("saleId", saleId);
@@ -1288,7 +1337,7 @@ public final class LanApiClient {
                 payload.customerName(), payload.accountNumber(), payload.paymentMethod(), payload.paymentStatus(),
                 payload.deviceId(), payload.subtotalAmount(), payload.discountPercent(), payload.discountAmount(),
                 payload.vatAmount(), payload.vatRatePercent(), payload.vatMode(), payload.totalAmount(),
-                payload.amountPaid(), payload.returnedAmount(), cashCollected, changeDue, items,payload.representativeName());
+                payload.amountPaid(), payload.returnedAmount(), cashCollected, changeDue, items,payload.representativeName(),payload.accountBalance()).withLoyaltySummary(payload.loyaltySummary());
     }
 
     public static void logout() {
@@ -1440,6 +1489,11 @@ public final class LanApiClient {
         return post("/v1/storefront/quote-file",body,true,true);
     }
 
+    public static JsonObject studioTemplates(JsonObject request)throws Exception{return post("/v1/studio/templates",request,true,true);}
+    public static JsonObject studioFonts(JsonObject request)throws Exception{return post("/v1/studio/fonts",request,true,true);}
+    public static JsonObject studioPhoneCapture(JsonObject request)throws Exception{return post("/v1/studio/phone-capture",request,true,true);}
+    public static JsonObject studioPhotoQueue(JsonObject request)throws Exception{return post("/v1/studio/photo-queue",request,true,true);}
+
     public static JsonObject studioBranding() throws Exception {
         return post("/v1/studio/branding", new JsonObject(), true, RemoteAdminPolicy.isRemoteAdminClient());
     }
@@ -1512,6 +1566,15 @@ public final class LanApiClient {
         return java.util.Base64.getDecoder().decode(post("/v1/studio/remove-background", body, true, true).get("bytesBase64").getAsString());
     }
 
+    static Duration postTimeout(String path, boolean imageUpload) {
+        if ("/v1/studio/remove-background".equals(path)) return Duration.ofMinutes(30);
+        if ("/v1/studio/models/refresh".equals(path)) return Duration.ofSeconds(75);
+        // Reconciliation includes reference discovery plus a 30-second transfer batch.
+        // A single cloud transfer can also take up to its own 90-second deadline.
+        if ("/v1/images/reconcile".equals(path)) return Duration.ofMinutes(5);
+        return imageUpload ? IMAGE_UPLOAD_TIMEOUT : TIMEOUT;
+    }
+
     private static JsonObject post(String path, JsonObject body, boolean deviceAuth, boolean employeeAuth) throws Exception {
         return post(path, body, deviceAuth, employeeAuth, Map.of());
     }
@@ -1524,8 +1587,7 @@ public final class LanApiClient {
         boolean imageUpload = "/v1/cloud/storage/upload".equals(path) || "/v1/products/studio-import".equals(path)
                 || "/v1/products/studio-source".equals(path) || "/v1/studio/remove-background".equals(path);
         HttpRequest.Builder builder = HttpRequest.newBuilder(baseUri().resolve(path))
-                .timeout("/v1/studio/remove-background".equals(path) ? Duration.ofMinutes(30)
-                        : "/v1/studio/models/refresh".equals(path) ? Duration.ofSeconds(75) : imageUpload ? IMAGE_UPLOAD_TIMEOUT : TIMEOUT)
+                .timeout(postTimeout(path, imageUpload))
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(GSON.toJson(body), StandardCharsets.UTF_8));
@@ -2007,7 +2069,9 @@ public final class LanApiClient {
     public record ReceivingHistoryRow(long movementId,String receiveId,long createdAtEpochMillis,String productName,
                                       String sku,String storeName,int changeQuantity,String receivedBy,String note) { }
     public record ReceiveInventoryRequest(String overrideApprovalToken,String overrideReason,List<ReceiveInventoryLine>lines) { }
-    public record ReceiveInventoryLine(String itemType,int itemId,int countedStock,int quantity) { }
+    public record ReceiveInventoryLine(String itemType,int itemId,int countedStock,int quantity,String lossReason,String lossNotes,Integer expectedSystemStock) {
+        public ReceiveInventoryLine(String type,int id,int counted,int qty){this(type,id,counted,qty,null,null,null);}
+    }
     public record ReceiveInventoryResult(String receiveId,int lineCount) { }
     public record TransferLocation(int locationId,String name) { }
     public record TransferProduct(int productId,String sku,String name,int availableQuantity) { }
@@ -2085,13 +2149,14 @@ public final class LanApiClient {
                                         boolean whatsappOptIn,String whatsappConsentPhone,boolean requireChargeAuthorization,
                                         boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,
                                         boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,
-                                        boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent) { }
+                                        boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent,boolean customOrderDepositExempt) { }
     public record CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,
                                              String phone,String email,BigDecimal creditLimit,boolean business,
                                              boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,
                                              boolean requireChargeAuthorization,boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,
                                              boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,
-                                             boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent) {
+                                             boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent,Boolean customOrderDepositExempt) {
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,boolean requireChargeAuthorization,boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,requireChargeAuthorization,salesDiscountEnabled,salesDiscountPercent,invoiceDiscountEnabled,invoiceDiscountPercent,customOrderDiscountEnabled,customOrderDiscountPercent,null);}
         public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,boolean requireChargeAuthorization){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,requireChargeAuthorization,false,BigDecimal.ZERO,false,BigDecimal.ZERO,false,BigDecimal.ZERO);}
         public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,false);}
         public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,false,false);}
@@ -2129,8 +2194,18 @@ public final class LanApiClient {
                                                List<AccountPaymentAllocation> allocations) { }
     public record AccountPaymentAllocation(String targetLabel,BigDecimal appliedAmount,BigDecimal chargeTotal,
                                            BigDecimal chargePaid,String paymentStatus,long chargeDateEpochMillis) { }
-    public record ChangeBasketState(String storeName,BigDecimal targetAmount) { }
-    public record CashDrawerRegisterState(Long drawerId,String drawerName,CashDrawerSession session,BigDecimal expectedCash,Map<Integer,Integer>floatMix,CashDrawerHandover pendingHandover) { }
+    public record ChangeBasketState(String storeName,BigDecimal targetAmount,ChangeBasketUpdate latestUpdate) { }
+    public record ChangeBasketUpdate(long updateId,String updatedAt,String updatedByName,String deviceName,
+                                     BigDecimal targetAmount,BigDecimal countedAmount,BigDecimal variance,
+                                     Map<Integer,Integer> denominationCounts,String notes) { }
+    public record ChangeBasketHistory(List<ChangeBasketUpdate> updates,boolean hasMore) { }
+    public static ChangeBasketHistory loadChangeBasketHistory(int offset)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("offset",offset);
+        return GSON.fromJson(post("/v1/cash/change-basket/history",body,true,true),ChangeBasketHistory.class);
+    }
+    public record CashDrawerRegisterState(Long drawerId,String drawerName,CashDrawerSession session,BigDecimal expectedCash,Map<Integer,Integer>floatMix,CashDrawerHandover pendingHandover,OverseasCashService.DrawerCash overseasCash) {
+ public CashDrawerRegisterState(Long id,String name,CashDrawerSession session,BigDecimal expected,Map<Integer,Integer>mix,CashDrawerHandover handover){this(id,name,session,expected,mix,handover,null);}
+ }
     public record CashDrawerCloseResult(CashDrawerSession session,List<String>handlers,BigDecimal returnedAmount) { }
     public record CashDrawerReprint(CashDrawerSession session,List<String> handlers,BigDecimal returnedAmount,
                                     BigDecimal floatCash,BigDecimal cashInHand,Map<String,Integer> denominationCounts,
@@ -2150,7 +2225,9 @@ public final class LanApiClient {
     public record CashDrawerAdminState(List<CashDrawerService.StoreOption>stores,List<CashDrawerService.DeviceOption>devices,
                                        List<CashDrawer>drawers,List<CashDrawerAssignment>assignments,BigDecimal changeBasketTarget) { }
     public record CashDrawerSaveRequest(Long drawerId,int locationId,String drawerName,String description,BigDecimal startingCashAmount,
-                                        Map<Integer,Integer>floatMix,boolean active) { }
+                                        Map<Integer,Integer>floatMix,boolean active,boolean handlesOverseasCash) {
+ public CashDrawerSaveRequest(Long id,int location,String name,String description,BigDecimal starting,Map<Integer,Integer>mix,boolean active){this(id,location,name,description,starting,mix,active,false);}
+ }
     public record DeviceAdminUpdate(String action,String deviceId,boolean approved,
                                     boolean persistentLoginAllowed,boolean autoLogoutEnabled,
                                     int autoLogoutMinutes,boolean allowSales,boolean allowOrders,
@@ -2201,7 +2278,8 @@ public final class LanApiClient {
     public record CheckoutRequest(String paymentMethod, String paymentReference, Integer customerId,
                                   BigDecimal saleDiscountPercent, BigDecimal cashCollected,
                                   String saleDiscountApprovalToken, String saleDiscountOverrideReason,
-                                  List<CheckoutLine> lines,ChargeAuthorization authorization,boolean applyCustomerDiscount) {
+                                  List<CheckoutLine> lines,ChargeAuthorization authorization,boolean applyCustomerDiscount,long loyaltyPoints) {
+        public CheckoutRequest(String paymentMethod,String paymentReference,Integer customerId,BigDecimal saleDiscountPercent,BigDecimal cashCollected,String saleDiscountApprovalToken,String saleDiscountOverrideReason,List<CheckoutLine> lines,ChargeAuthorization authorization,boolean applyCustomerDiscount){this(paymentMethod,paymentReference,customerId,saleDiscountPercent,cashCollected,saleDiscountApprovalToken,saleDiscountOverrideReason,lines,authorization,applyCustomerDiscount,0);}
         public CheckoutRequest(String paymentMethod,String paymentReference,Integer customerId,BigDecimal saleDiscountPercent,
                                BigDecimal cashCollected,String saleDiscountApprovalToken,String saleDiscountOverrideReason,List<CheckoutLine>lines){
             this(paymentMethod,paymentReference,customerId,saleDiscountPercent,cashCollected,saleDiscountApprovalToken,saleDiscountOverrideReason,lines,null,true);
@@ -2248,7 +2326,7 @@ public final class LanApiClient {
                                   String paymentStatus,String deviceId,BigDecimal subtotalAmount,BigDecimal discountPercent,
                                   BigDecimal discountAmount,BigDecimal vatAmount,BigDecimal vatRatePercent,String vatMode,
                                   BigDecimal totalAmount,BigDecimal amountPaid,BigDecimal returnedAmount,
-                                  List<ReceiptItemPayload> items,String representativeName) { }
+                                  List<ReceiptItemPayload> items,String representativeName,BigDecimal accountBalance,String loyaltySummary) { }
     private record ReceiptItemPayload(String name,String sku,int quantity,BigDecimal originalUnitPrice,
                                       BigDecimal finalUnitPrice,BigDecimal discountPercent,BigDecimal lineTotal) { }
 

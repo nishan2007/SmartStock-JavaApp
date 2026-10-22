@@ -1,0 +1,6 @@
+SmartStudio 0.1.50
+
+- Adds a Banners workspace with custom feet, inches, centimeters and millimeters, including large-format sizes.
+- Reuses design tools, layers, undo/redo and portable templates, with a separate local banner library.
+- Scaled canvas with zoom, pan and fit; actual-size vector PDF export avoids huge full-page bitmaps.
+- Large PDFs preserve physical dimensions with UserUnit. Confirm large-format RIP support. Photos retain source detail; gradients use bounded object rasters.

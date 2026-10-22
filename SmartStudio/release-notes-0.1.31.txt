@@ -1,0 +1,1 @@
+Adds clickable page previews on the left of multi-page card and label editors. Resize the divider, adjust thumbnail size and scroll long templates. Background rendering and a bounded thumbnail cache keep page navigation responsive. Includes undo/redo and Letter default fixes.

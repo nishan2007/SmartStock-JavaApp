@@ -1,0 +1,9 @@
+SmartStudio 0.1.16
+
+Canvas-first workspace with a larger centered template and no permanent template gallery.
+Choose a workspace at sign-in and change templates when needed. Badge selection includes design previews.
+Open Details, Properties, Insert, Layers, Data, and Print setup panels only when needed.
+Compact template/output menus, Account menu, badge Save/Discard/Cancel, and direct object property editing.
+Image Studio offers Original, Result, and Compare views with processing options in a collapsible panel.
+Existing template formats, badge undo/redo, Excel merge, exports, and physical print dimensions are preserved.
+Uses the SmartStock 1.1.31 client. AI model weights remain outside application packages.

@@ -1,0 +1,3 @@
+Adds publication format 2 for SmartStudio's persistent linked Riso sub-pages, storing bounded object memberships and explicit exclusions alongside the original editable pages. The shared template server validates, saves and backs up the complete format-2 archive without flattening or duplicating artwork. Format-1 templates remain supported. Update the server before sharing linked templates from SmartStudio 0.1.43; older editing clients must be updated because they reject the new format to prevent link loss. No database schema migration is required.
+
+Extends the optional publication raster-effect hook to individual page previews, keeping ordinary rendering unchanged when no effect is requested.

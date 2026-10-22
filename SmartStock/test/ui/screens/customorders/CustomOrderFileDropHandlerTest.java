@@ -11,6 +11,30 @@ import static org.junit.jupiter.api.Assertions.*;
 class CustomOrderFileDropHandlerTest {
     @TempDir Path directory;
 
+    @Test void browserClipboardImageBecomesReadablePngAttachment() throws Exception {
+        var image = new java.awt.image.BufferedImage(3, 2, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        image.setRGB(1, 1, 0xff123456);
+        Transferable clipboard = new Transferable() {
+            public DataFlavor[] getTransferDataFlavors() { return new DataFlavor[]{DataFlavor.imageFlavor}; }
+            public boolean isDataFlavorSupported(DataFlavor flavor) { return DataFlavor.imageFlavor.equals(flavor); }
+            public Object getTransferData(DataFlavor flavor) throws UnsupportedFlavorException {
+                if (!isDataFlavorSupported(flavor)) throw new UnsupportedFlavorException(flavor);
+                return image;
+            }
+        };
+        var model = new DefaultListModel<Path>();
+        var handler = new CustomOrderFileDropHandler(model, text -> fail(text));
+        assertTrue(handler.importData(new TransferHandler.TransferSupport(new JList<>(), clipboard)));
+        assertEquals(1, model.size());
+        Path path = model.get(0);
+        try {
+            assertTrue(path.toString().endsWith(".png"));
+            var restored = javax.imageio.ImageIO.read(path.toFile());
+            assertEquals(3, restored.getWidth());
+            assertEquals(0xff123456, restored.getRGB(1, 1));
+        } finally { Files.deleteIfExists(path); }
+    }
+
     @Test void explorerDropAddsFilesOnceAndRejectsFoldersAtomically() throws Exception {
         Path image=Files.writeString(directory.resolve("image.png"),"image");
         var model=new DefaultListModel<Path>();

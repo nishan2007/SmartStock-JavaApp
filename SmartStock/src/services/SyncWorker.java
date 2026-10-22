@@ -38,6 +38,7 @@ public final class SyncWorker {
             return;
         }
         started = true;
+        LoyaltyWorker.start();
         int interval = Math.max(15, config.syncIntervalSeconds());
         EXECUTOR.scheduleWithFixedDelay(SyncWorker::runOnceSafely, 2, interval, TimeUnit.SECONDS);
     }
@@ -147,6 +148,7 @@ public final class SyncWorker {
                         CloudSyncApi.exchange(local, config.locationId());
                 CrossStoreTransferSyncService.applyInbox(local,config.locationId());
                 CrossStoreReferenceSyncService.applyInbox(local,config.locationId());
+                int productsApplied = CrossStoreProductSyncService.applyInbox(local,config.locationId());
                 ignored.heartbeat();
                 ServerImageAssetService.SyncResult imageSync =
                         ServerImageAssetService.synchronize(local);
@@ -193,6 +195,8 @@ public final class SyncWorker {
                         : "; materialized rows=" + mirroredRows;
                 String deltaMessage = downloadedEvents == 0 ? ""
                         : "; cloud deltas downloaded=" + downloadedEvents;
+                String productMessage = productsApplied == 0 ? "" : "; product notifications applied=" + productsApplied;
+                String inboxMessage = inboxHealth.failedRows() == 0 ? "" : "; incoming events failed=" + inboxHealth.failedRows();
                 String crossStoreMessage = crossStore.storesRefreshed() == 0 ? ""
                         : "; cross-store inventory rows=" + crossStore.rowsRefreshed();
                 if (crossStore.storesFailed() > 0) {
@@ -208,7 +212,7 @@ public final class SyncWorker {
                         : "Cloud reachable; automatically closed " + automaticClosures
                         + " stale time clock record"
                         + (automaticClosures == 1 ? "" : "s"))
-                        + imageMessage + mirrorMessage + deltaMessage + crossStoreMessage + crossStoreSalesMessage + crossStoreRefundMessage + ".";
+                        + imageMessage + mirrorMessage + deltaMessage + productMessage + inboxMessage + crossStoreMessage + crossStoreSalesMessage + crossStoreRefundMessage + ".";
                 latestStatus = new SyncStatus(true, message, Instant.now(), pushed,
                         countPending(local), countFailed(local), countConflicts(local), null,
                         SyncLockService.LockInfo.idle(), SyncServiceStatusService.current(local));

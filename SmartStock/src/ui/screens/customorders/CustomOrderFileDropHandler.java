@@ -19,6 +19,30 @@ final class CustomOrderFileDropHandler extends TransferHandler {
 
     void setStatus(Consumer<String> status) { this.status = status; }
 
+    void paste(javax.swing.JComponent target) {
+        try {
+            var contents = java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().getContents(null);
+            if (contents == null || !canImport(new TransferSupport(target, contents))) {
+                error.accept("Copy a photo using Copy image in WhatsApp Web, or copy files, then paste here.");
+                return;
+            }
+            importData(new TransferSupport(target, contents));
+        } catch (IllegalStateException ex) {
+            error.accept("The clipboard is busy. Try Paste again.");
+        }
+    }
+
+    static void installPaste(javax.swing.JComponent target, CustomOrderFileDropHandler handler) {
+        int mask = java.awt.GraphicsEnvironment.isHeadless() ? java.awt.event.InputEvent.CTRL_DOWN_MASK
+                : java.awt.Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
+        var key = javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_V, mask);
+        target.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(key, "paste-order-files");
+        target.getInputMap(javax.swing.JComponent.WHEN_FOCUSED).put(key, "paste-order-files");
+        target.getActionMap().put("paste-order-files", new javax.swing.AbstractAction() {
+            @Override public void actionPerformed(java.awt.event.ActionEvent event) { handler.paste(target); }
+        });
+    }
+
     CustomOrderFileDropHandler(DefaultListModel<Path> files, Consumer<String> error) {
         this.files = files;
         this.error = error;
@@ -112,7 +136,8 @@ final class CustomOrderFileDropHandler extends TransferHandler {
     }
 
     @Override public boolean canImport(TransferSupport support) {
-        if (!support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) return false;
+        if (!support.isDataFlavorSupported(DataFlavor.javaFileListFlavor)
+                && !support.isDataFlavorSupported(DataFlavor.imageFlavor)) return false;
         if (support.isDrop() && (support.getSourceDropActions() & COPY) != 0) support.setDropAction(COPY);
         return true;
     }
@@ -120,9 +145,27 @@ final class CustomOrderFileDropHandler extends TransferHandler {
     @Override public boolean importData(TransferSupport support) {
         if (!canImport(support)) return false;
         try {
-            return addFiles(readFiles(support.getTransferable()));
+            var transfer = support.getTransferable();
+            if (transfer.isDataFlavorSupported(DataFlavor.javaFileListFlavor))
+                return addFiles(readFiles(transfer));
+            var image = new javax.swing.ImageIcon((java.awt.Image) transfer.getTransferData(DataFlavor.imageFlavor));
+            int width = image.getIconWidth(), height = image.getIconHeight();
+            if (width <= 0 || height <= 0 || (long) width * height > 40_000_000L)
+                throw new IllegalArgumentException("Invalid image dimensions.");
+            var copy = new java.awt.image.BufferedImage(width, height, java.awt.image.BufferedImage.TYPE_INT_ARGB);
+            var graphics = copy.createGraphics();
+            try { graphics.drawImage(image.getImage(), 0, 0, null); } finally { graphics.dispose(); }
+            Path path = Files.createTempFile("custom-order-photo-", ".png");
+            path.toFile().deleteOnExit();
+            try {
+                if (!javax.imageio.ImageIO.write(copy, "png", path.toFile()))
+                    throw new java.io.IOException("Could not save clipboard photo.");
+                boolean added = addFiles(List.of(path));
+                if (!added) Files.deleteIfExists(path);
+                return added;
+            } catch (Exception ex) { Files.deleteIfExists(path); throw ex; }
         } catch (Exception ex) {
-            error.accept("The dropped files could not be added. Use Add Files to select them.");
+            error.accept("The photo or files could not be added. Copy again or use Add Files.");
             return false;
         }
     }

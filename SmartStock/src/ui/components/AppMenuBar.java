@@ -84,6 +84,10 @@ public class AppMenuBar {
 
         JMenu pointOfSaleMenu = new JMenu("Point of Sale");
         JMenu operationsMenu = new JMenu("Operations");
+        JMenuItem publishingItem = new JMenuItem("Publishing Workspace…");
+        publishingItem.setEnabled(PermissionManager.hasPermission("VIEW_INVENTORY") || PermissionManager.hasPermission("CREATE_CUSTOM_ORDER") || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS"));
+        publishingItem.addActionListener(e -> ui.screens.PublishingWorkspace.open(parent));
+        operationsMenu.add(publishingItem);
         JMenu ordersMenu = new JMenu("Orders");
         JMenu inventoryMenu = new JMenu("Inventory");
         JMenu employeeMenu = new JMenu("Employee");
@@ -682,6 +686,9 @@ public class AppMenuBar {
         ordersMenu.add(ordersManagerDashboardItem);
         ordersMenu.add(invoicesItem);
         ordersMenu.add(customOrdersItem);
+        JMenuItem overseasOrdersItem = new JMenuItem("Overseas Orders");
+        overseasOrdersItem.addActionListener(e -> { if (!WindowHelper.focusIfAlreadyOpen(ui.screens.OverseasOrders.class)) new ui.screens.OverseasOrders().setVisible(true); });
+        ordersMenu.add(overseasOrdersItem);
         ordersMenu.add(ordersItem);
 
         inventoryMenu.add(enterInventoryItem);
@@ -718,6 +725,10 @@ public class AppMenuBar {
         JMenuItem mobileItemWebItem = new JMenuItem("Mobile Item Web App…");
         JMenuItem storefrontStatusItem = new JMenuItem("Website Status…");
         JMenuItem schedulerWebItem = new JMenuItem("Scheduler Web App…");
+        JMenuItem employeeWebItem = new JMenuItem("Employee Web App…");
+        employeeWebItem.setVisible(DatabaseConfig.load().mode() == DatabaseMode.SERVER
+                && PermissionManager.hasPermission("DEVICE_MANAGEMENT"));
+        employeeWebItem.addActionListener(e -> new ui.screens.EmployeeWebDialog(parent).setVisible(true));
         JMenuItem checkUpdatesItem = new JMenuItem("Check for Updates");
         JMenuItem refreshInventoryItem = new JMenuItem("Refresh Inventory List");
         JMenuItem closeItem = new JMenuItem("Close");
@@ -828,6 +839,7 @@ public class AppMenuBar {
         statusMenu.add(remoteQueueItem);
         statusMenu.add(mobileItemWebItem);
         statusMenu.add(schedulerWebItem);
+        statusMenu.add(employeeWebItem);
         storefrontStatusItem.setVisible(PermissionManager.hasPermission("VIEW_SALES"));
         storefrontStatusItem.addActionListener(e -> new ui.screens.StorefrontStatusDialog(parent).setVisible(true));
         statusMenu.add(storefrontStatusItem);

@@ -1,0 +1,5 @@
+SmartStock 1.1.55
+
+- Custom items in quotations now load the selected variant's saved price and clear stale prices when switching items. Resulting invoices keep the quotation price.
+- Custom Orders now offers Called and Called - No Answer in Delivery / Calls. Staff can record contact attempts with notes, staff name and time while leaving items available for delivery.
+- Includes the local database upgrade for custom-order call statuses. Update the store server before registers.

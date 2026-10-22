@@ -35,6 +35,7 @@ class StudioEnhancementControlsTest {
                 removal.doClick(); assertTrue(((JComboBox<?>) field(studio, "quality")).isEnabled());
                 scale.setSelectedIndex(2); assertTrue(process.isEnabled());
                 CardLayout cards = (CardLayout) field(studio, "cards"); cards.show((JPanel) field(studio, "pages"), "studio");
+                click(studio.getContentPane(),"Image Studio");
                 for (int width : new int[]{1100, 820}) {
                     studio.setSize(width, 760); studio.addNotify(); studio.validate();
                     assertFits(removal); assertFits(scale); assertFits((Component) field(studio, "cleanEdges"));
@@ -55,4 +56,5 @@ class StudioEnhancementControlsTest {
                 && component.getY() + component.getHeight() <= component.getParent().getHeight(),
                 "Image Studio control is clipped: " + component);
     }
+    private static void click(Container parent,String name){for(Component child:parent.getComponents()){if(child instanceof JButton b&&b.getText().equals(name)){b.doClick();return;}if(child instanceof Container nested)click(nested,name);}}
 }

@@ -131,7 +131,7 @@ public final class TimeClockManager {
                                LocalDateTime shiftLunchEnd, LocalDateTime shiftBreakStart,
                                LocalDateTime shiftBreakEnd, LocalDateTime shiftClockOut,
                                boolean autoClockOut, String autoClockOutReviewStatus,
-                               boolean autoBreakEnd, String autoBreakEndReviewStatus) { }
+                               boolean autoBreakEnd, String autoBreakEndReviewStatus, boolean halfDay) { }
 
     public static class TimeClockException extends Exception {
         public TimeClockException(String message) { super(message); }

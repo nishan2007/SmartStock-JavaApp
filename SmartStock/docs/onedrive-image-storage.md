@@ -1,6 +1,8 @@
-# OneDrive product image storage
+# OneDrive image storage
 
-SmartStock keeps product and custom-item images in the store server's local image mirror. OneDrive is a deferred cloud copy used by other store servers and for recovery; registers continue to fetch images from their paired server over the authenticated LAN API.
+SmartStock keeps product, custom-item, employee and customer photos, company logos, and badge logos in the store server's local image mirror. OneDrive is a deferred cloud copy used by other store servers and for recovery; registers continue to fetch images from their paired server over the authenticated LAN API. Employee and customer photos retain their authenticated access requirements. Project and quote artwork also use OneDrive through their existing private-artwork workflows.
+
+When updating a server that already has OneDrive active, reconciliation also copies and verifies the newly supported photo/logo categories. Leave OneDrive active; another Begin OneDrive Copy is not required. A missing source file cannot be migrated: recover the original file before considering that asset verified. Existing Supabase copies remain available during recovery.
 
 ## Microsoft 365 preparation
 

@@ -19,6 +19,15 @@ public final class ManagerApprovalService {
     public static ApprovalResult requestApproval(Component parent, String requiredPermission,
                                                   String actionLabel, String reasonPrompt,
                                                   String resourceLabel, String resourceIdentity) {
+        return requestApprovalDialog(parent,requiredPermission,actionLabel,reasonPrompt,resourceLabel,resourceIdentity,null);
+    }
+
+    public static ApprovalResult requestApprovalWithReason(Component parent,String permission,String action,String reason) {
+        return requestApprovalDialog(parent,permission,action,null,null,null,reason);
+    }
+
+    private static ApprovalResult requestApprovalDialog(Component parent,String requiredPermission,String actionLabel,
+            String reasonPrompt,String resourceLabel,String resourceIdentity,String fixedReason) {
         JTextField loginField = new JTextField();
         JPasswordField passwordField = new JPasswordField();
         JLabel passwordLabel = new JLabel("Manager Password:");
@@ -36,7 +45,7 @@ public final class ManagerApprovalService {
 
         gbc.gridx = 0;
         gbc.gridy = 0;
-        panel.add(new JLabel("Manager Username / Email:"), gbc);
+        panel.add(new JLabel("Manager Username / Email / Wallet Badge:"), gbc);
         gbc.gridy = 1;
         panel.add(loginField, gbc);
         gbc.gridy = 2;
@@ -50,15 +59,19 @@ public final class ManagerApprovalService {
             panel.add(new JLabel(resourceLabel), gbc);
             gbc.gridy = 6;
         }
-        panel.add(new JLabel(reasonPrompt), gbc);
-        gbc.gridy++;
-        panel.add(new JScrollPane(reasonArea), gbc);
+        if(fixedReason==null){
+            panel.add(new JLabel(reasonPrompt), gbc);
+            gbc.gridy++;
+            panel.add(new JScrollPane(reasonArea), gbc);
+        }
 
         NfcBadgePromptController nfc = new NfcBadgePromptController(
                 loginField, passwordField, passwordLabel, nfcStatusLabel);
+        installWalletScanPrompt(loginField, passwordField, passwordLabel, nfcStatusLabel, nfc);
         int result;
         try {
             nfc.start();
+            SwingUtilities.invokeLater(loginField::requestFocusInWindow);
             result = JOptionPane.showConfirmDialog(
                     parent,
                     panel,
@@ -74,14 +87,17 @@ public final class ManagerApprovalService {
         }
 
         String loginIdentifier = nfc.identifier();
+        String walletCredential = AppleWalletBadgeService.normalizeScannedCredential(loginIdentifier);
+        boolean walletBadge = !walletCredential.isEmpty();
+        if (walletBadge) loginIdentifier = walletCredential;
         char[] password = passwordField.getPassword();
-        String reason = reasonArea.getText() == null ? "" : reasonArea.getText().trim();
+        String reason = fixedReason!=null ? fixedReason : reasonArea.getText() == null ? "" : reasonArea.getText().trim();
         if (loginIdentifier.isBlank()) {
             throw new IllegalStateException("Manager login is required.");
         }
         boolean badgeIdentifier = BadgeCredentialService.looksLikeGeneratedBadge(
                 BadgeCredentialService.normalizeBadge(loginIdentifier));
-        if (password.length == 0) {
+        if (password.length == 0 && !walletBadge) {
             if (!badgeIdentifier) {
                 throw new IllegalStateException("Manager password is required.");
             }
@@ -104,6 +120,32 @@ public final class ManagerApprovalService {
                 : RefundApprovalIdentity.withReason(resourceIdentity, reason);
         return verifyAwayFromEdt(parent, loginIdentifier, password, requiredPermission,
                 actionLabel, approvalResource, reason);
+    }
+
+    static void installWalletScanPrompt(JTextField identifier, JPasswordField secret,
+                                       JLabel secretLabel, JLabel status,
+                                       NfcBadgePromptController nfc) {
+        identifier.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            private boolean walletMode;
+            private void changed() {
+                if (nfc.badgeCaptured()) return;
+                boolean wallet = !AppleWalletBadgeService.normalizeScannedCredential(identifier.getText()).isEmpty();
+                if (wallet != walletMode) secret.setText("");
+                walletMode = wallet;
+                secretLabel.setText(wallet ? "Manager Employee PIN (if required):" : "Manager Password:");
+                status.setText(wallet
+                        ? "Wallet badge scanned. Enter the employee PIN if required and the override reason."
+                        : "Scan a manager Wallet QR badge here, tap an NFC badge, or enter credentials.");
+            }
+            @Override public void insertUpdate(javax.swing.event.DocumentEvent event) { changed(); }
+            @Override public void removeUpdate(javax.swing.event.DocumentEvent event) { changed(); }
+            @Override public void changedUpdate(javax.swing.event.DocumentEvent event) { changed(); }
+        });
+        identifier.addActionListener(event -> {
+            if (!AppleWalletBadgeService.normalizeScannedCredential(identifier.getText()).isEmpty()) {
+                secret.requestFocusInWindow();
+            }
+        });
     }
 
     private static ApprovalResult verifyAwayFromEdt(Component parent, String loginIdentifier,

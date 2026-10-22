@@ -1,0 +1,7 @@
+SmartStock 1.1.24 (Windows build 101024)
+
+Adds the Publishing Workspace for editable multipage designs, templates, shared store projects, mail merge, and exact-size sheet printing. Set item dimensions, sheet margins, gaps and bleed, then preview a grid or maximize-copy arrangement with optional rotation. Includes PDF and image output, portable projects, and best-effort Publisher import through an optional local LibreOffice installation. Open it from Operations, custom-order media, or price-tag printing. Publishing edits preserve existing approved order proofs.
+
+Includes the pending image-processing session cleanup correction.
+
+Update the store server first, then registers. Publisher conversion, physical printing, duplex alignment and barcode scanning require validation with your own files and printers. macOS packaging remains separate.

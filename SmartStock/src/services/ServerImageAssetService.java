@@ -37,7 +37,7 @@ import java.util.UUID;
 
 /**
  * Server-owned image manifest and local mirror. Database rows contain metadata
- * only; image bytes live in the server mirror and Supabase Storage.
+ * only; image bytes live in the server mirror and the configured cloud provider.
  */
 public final class ServerImageAssetService {
     private static final Path LEGACY_IMAGE_ROOT =
@@ -52,6 +52,7 @@ public final class ServerImageAssetService {
             .connectTimeout(Duration.ofSeconds(15)).build();
     private static final OneDriveImageCloudProvider ONEDRIVE = new OneDriveImageCloudProvider();
     private static final List<ReferenceSource> SOURCES = List.of(
+            new ReferenceSource("overseas_order_images", "image_id", "asset_reference", "OVERSEAS_ORDER"),
             new ReferenceSource("products", "product_id", "image_url", "PRODUCT"),
             new ReferenceSource("custom_order_items", "custom_item_id", "image_url", "CUSTOM_ITEM"),
             new ReferenceSource("custom_order_item_variants", "custom_variant_id", "image_url", "CUSTOM_VARIANT"),
@@ -258,16 +259,21 @@ public final class ServerImageAssetService {
                 WHERE lifecycle_status <> 'DELETED'
                   AND (cloud_status IN ('PENDING','FAILED','MISSING') OR local_status <> 'PRESENT'
                        OR sha256='' OR byte_size=0
-                       OR (? <> 'DISABLED' AND category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT')
+                       OR (? <> 'DISABLED' AND category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT','CUSTOMER_PHOTO','EMPLOYEE_PHOTO','COMPANY_LOGO','BADGE_LOGO','IMAGE')
                            AND (migration_status NOT IN ('VERIFIED','RESOLVED')
-                                OR remote_path !~ '-product-image-[0-9]{13}\\.[a-z0-9]+$')))
-                ORDER BY created_at
+                                OR (category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT')
+                                    AND remote_path !~ '-product-image-[0-9]{13}(-[a-z0-9]{8})?\\.[a-z0-9]+$'))))
+                ORDER BY CASE WHEN local_status='PRESENT' THEN 0 ELSE 1 END,created_at
                 """)) {
             ps.setString(1,currentPhase.name());
             try(ResultSet rs = ps.executeQuery()) {
             List<UUID> ids = new ArrayList<>();
             while (rs.next()) ids.add(rs.getObject(1, UUID.class));
+            // Leave time for recovery snapshots and the next operational sync.
+            // Each transfer also has its own deadline; remaining images retry later.
+            long imageDeadline = System.nanoTime() + java.time.Duration.ofSeconds(30).toNanos();
             for (UUID id : ids) {
+                if (System.nanoTime() >= imageDeadline) break;
                 AssetRow row = find(local, id);
                 if (row == null) continue;
                 try {
@@ -299,7 +305,7 @@ public final class ServerImageAssetService {
                 } catch (Exception ex) {
                     try (PreparedStatement update = local.prepareStatement("""
                             UPDATE image_assets SET cloud_status=CASE WHEN cloud_status='PRESENT' THEN cloud_status ELSE 'FAILED' END,
-                                migration_status=CASE WHEN category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT')
+                                migration_status=CASE WHEN category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT','CUSTOMER_PHOTO','EMPLOYEE_PHOTO','COMPANY_LOGO','BADGE_LOGO','IMAGE')
                                     AND migration_status<>'RESOLVED' THEN 'FAILED' ELSE migration_status END,
                                 last_error=? WHERE asset_id=?
                             """)) {
@@ -318,7 +324,7 @@ public final class ServerImageAssetService {
         try(PreparedStatement ps=conn.prepareStatement("""
                 UPDATE image_assets SET migration_status='PENDING'
                 WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT')
-                  AND remote_path !~ '-product-image-[0-9]{13}\\.[a-z0-9]+$'
+                  AND remote_path !~ '-product-image-[0-9]{13}(-[a-z0-9]{8})?\\.[a-z0-9]+$'
                   AND migration_status='VERIFIED'
                 """)){ps.executeUpdate();}
     }
@@ -835,13 +841,15 @@ public final class ServerImageAssetService {
         if (response.statusCode() != 404) requireSuccess(response.statusCode(), response.body(), "delete");
     }
 
-    private static boolean isOneDriveCategory(String category){
+    static boolean isOneDriveCategory(String category){
         return "PRODUCT".equalsIgnoreCase(category)||"CUSTOM_ITEM".equalsIgnoreCase(category)
-                ||"CUSTOM_VARIANT".equalsIgnoreCase(category)||"CUSTOMER_PHOTO".equalsIgnoreCase(category);
+                ||"CUSTOM_VARIANT".equalsIgnoreCase(category)||"CUSTOMER_PHOTO".equalsIgnoreCase(category)
+                ||"EMPLOYEE_PHOTO".equalsIgnoreCase(category)||"COMPANY_LOGO".equalsIgnoreCase(category)
+                ||"BADGE_LOGO".equalsIgnoreCase(category)||"IMAGE".equalsIgnoreCase(category);
     }
 
     private static boolean isPrivateCreativeCategory(String category){
-        return "PROJECT".equalsIgnoreCase(category)||"QUOTE_ARTWORK".equalsIgnoreCase(category);
+        return "OVERSEAS_ORDER".equalsIgnoreCase(category)||"PROJECT".equalsIgnoreCase(category)||"QUOTE_ARTWORK".equalsIgnoreCase(category);
     }
 
     private static boolean needsCloudWork(AssetRow row,OneDrivePhase phase){
@@ -949,23 +957,44 @@ public final class ServerImageAssetService {
         if(!ONEDRIVE.configured())throw new SQLException("OneDrive image storage is not configured on this server.");
         probeOneDrive(conn);boolean auto=conn.getAutoCommit();conn.setAutoCommit(false);try{
             setPhase(conn,OneDrivePhase.MIGRATING);
-            try(PreparedStatement ps=conn.prepareStatement("UPDATE image_assets SET migration_status='PENDING' WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT') AND lifecycle_status<>'DELETED' AND migration_status NOT IN ('VERIFIED','RESOLVED')")){ps.executeUpdate();}
+            try(PreparedStatement ps=conn.prepareStatement("UPDATE image_assets SET migration_status='PENDING' WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT','CUSTOMER_PHOTO','EMPLOYEE_PHOTO','COMPANY_LOGO','BADGE_LOGO','IMAGE') AND lifecycle_status<>'DELETED' AND migration_status NOT IN ('VERIFIED','RESOLVED')")){ps.executeUpdate();}
             conn.commit();
         }catch(Exception ex){conn.rollback();throw ex;}finally{conn.setAutoCommit(auto);}
     }
 
     public static void activateOneDrive(Connection conn)throws Exception{
-        ImageCloudProvider.ProbeResult probe=probeOneDrive(conn);if(!probe.ready())throw new SQLException(probe.message());
-        int pending=migrationPending(conn);if(pending>0)throw new SQLException(pending+" active product/custom images are not verified in OneDrive.");
+        ImageCloudProvider.ProbeResult probe;
+        try{
+            probe=probeOneDrive(conn);
+        }catch(Exception ex){
+            throw new OneDriveActivationException("ONEDRIVE_NOT_READY",
+                    "OneDrive activation could not verify the server's OneDrive connection. Check the server's OneDrive setup and server log, then try again.",ex);
+        }
+        if(!probe.ready())throw new OneDriveActivationException("ONEDRIVE_NOT_READY",
+                "OneDrive is not ready. Check the server's OneDrive setup, then try again.",null);
+        int pending=migrationPending(conn);
+        if(pending>0)throw new OneDriveActivationException("ONEDRIVE_MIGRATION_PENDING",
+                pending+" images still need verification in OneDrive. Use Begin OneDrive Copy if copying has not started, then repeat Reconcile Now until the OneDrive pending count reaches 0. Check the Error column for failed images.",null);
         boolean auto=conn.getAutoCommit();conn.setAutoCommit(false);try{
-            try(PreparedStatement ps=conn.prepareStatement("UPDATE image_assets SET cloud_provider='ONEDRIVE' WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT') AND lifecycle_status<>'DELETED'")){ps.executeUpdate();}
+            try(PreparedStatement ps=conn.prepareStatement("UPDATE image_assets SET cloud_provider='ONEDRIVE' WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT','CUSTOMER_PHOTO','EMPLOYEE_PHOTO','COMPANY_LOGO','BADGE_LOGO','IMAGE') AND lifecycle_status<>'DELETED'")){ps.executeUpdate();}
             setPhase(conn,OneDrivePhase.ACTIVE);conn.commit();
         }catch(Exception ex){conn.rollback();throw ex;}finally{conn.setAutoCommit(auto);}
     }
 
+    public static final class OneDriveActivationException extends SQLException {
+        private final String code;
+
+        OneDriveActivationException(String code,String message,Throwable cause){
+            super(message,cause);
+            this.code=code;
+        }
+
+        public String code(){return code;}
+    }
+
     public static void rollbackToSupabase(Connection conn)throws SQLException{
         boolean auto=conn.getAutoCommit();conn.setAutoCommit(false);try{
-            try(PreparedStatement ps=conn.prepareStatement("UPDATE image_assets SET cloud_provider='SUPABASE',cloud_status='PENDING' WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT') AND lifecycle_status<>'DELETED'")){ps.executeUpdate();}
+            try(PreparedStatement ps=conn.prepareStatement("UPDATE image_assets SET cloud_provider='SUPABASE',cloud_status='PENDING' WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT','CUSTOMER_PHOTO','EMPLOYEE_PHOTO','COMPANY_LOGO','BADGE_LOGO','IMAGE') AND lifecycle_status<>'DELETED'")){ps.executeUpdate();}
             setPhase(conn,OneDrivePhase.DISABLED);conn.commit();
         }catch(SQLException ex){conn.rollback();throw ex;}finally{conn.setAutoCommit(auto);}
     }
@@ -1097,7 +1126,7 @@ public final class ServerImageAssetService {
     private static String syncState(Connection conn,String key)throws SQLException{try(PreparedStatement ps=conn.prepareStatement("SELECT state_value FROM image_sync_state WHERE state_key=?")){ps.setString(1,key);try(ResultSet rs=ps.executeQuery()){return rs.next()?rs.getString(1):"";}}}
 
     private static int migrationPending(Connection conn)throws SQLException{
-        try(PreparedStatement ps=conn.prepareStatement("SELECT COUNT(*) FROM image_assets WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT') AND lifecycle_status<>'DELETED' AND migration_status NOT IN ('VERIFIED','RESOLVED')");ResultSet rs=ps.executeQuery()){rs.next();return rs.getInt(1);}
+        try(PreparedStatement ps=conn.prepareStatement("SELECT COUNT(*) FROM image_assets WHERE category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT','CUSTOMER_PHOTO','EMPLOYEE_PHOTO','COMPANY_LOGO','BADGE_LOGO','IMAGE') AND lifecycle_status<>'DELETED' AND migration_status NOT IN ('VERIFIED','RESOLVED')");ResultSet rs=ps.executeQuery()){rs.next();return rs.getInt(1);}
     }
 
     private static URI storageUri(String route, String bucket, String path) {

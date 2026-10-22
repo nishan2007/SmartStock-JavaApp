@@ -1,0 +1,5 @@
+SmartStock shared print engine 1.1.73
+
+Adds persisted sheet position order, custom position permutations, and cut-and-stack record placement for SmartStudio bill-book printing. Duplex fronts and backs retain matching records.
+
+Built as the SmartStudio 0.1.65 client dependency. This task does not publish a SmartStock server/register update.

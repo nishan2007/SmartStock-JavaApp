@@ -1,0 +1,8 @@
+SmartStudio 0.1.18
+
+Insert image files or paste copied images into Badge Cards and Business Cards as new selected layers.
+Frame each personal photo before applying it: drag to position, zoom, fit whole photo, fill, rotate, or reset without changing the photo-box size.
+Optional photo background (off by default; white when enabled) and outline, each with its own color selector.
+Photo appearance is saved per field; personal photos and framing remain session-only and excluded from saved templates.
+SmartStudio no longer applies the register inactivity logout policy. Fully removing server session timeouts also requires the matching store-server update.
+Uses the SmartStock 1.1.32 client. AI model weights remain outside application packages.

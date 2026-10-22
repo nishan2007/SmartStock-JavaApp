@@ -26,8 +26,9 @@ public final class ImageStoragePanel extends JPanel {
         @Override public boolean isCellEditable(int row, int column) { return false; }
     };
     private final JTable table = new JTable(model);
-    private final JLabel summary = new JLabel("Loading image storage...");
+    private final JTextArea summary = new JTextArea("Loading image storage...", 3, 0);
     private final JLabel preview = new JLabel("Select an image", SwingConstants.CENTER);
+    private final JTextArea selectedError = new JTextArea(6, 24);
     private final JButton keepButton = new JButton("Keep");
     private final JButton selectUnusedButton = new JButton("Select All Unused");
     private final JButton purgeButton = new JButton("Permanently Delete Selected");
@@ -41,6 +42,12 @@ public final class ImageStoragePanel extends JPanel {
         JLabel title = new JLabel("Image Storage");
         title.setFont(title.getFont().deriveFont(Font.BOLD, 20f));
         heading.add(title, BorderLayout.NORTH);
+        summary.setEditable(false);
+        summary.setOpaque(false);
+        summary.setLineWrap(true);
+        summary.setWrapStyleWord(true);
+        summary.setFont(new JLabel().getFont());
+        summary.setToolTipText("Missing-local and migration counts include unused images retained in storage.");
         heading.add(summary, BorderLayout.CENTER);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         JButton refresh = new JButton("Refresh");
@@ -54,7 +61,8 @@ public final class ImageStoragePanel extends JPanel {
         actions.add(reconcile);
         actions.add(certificateButton);actions.add(setupOneDrive);actions.add(beginMigration);actions.add(activateOneDrive);actions.add(rollback);
         actions.add(keepButton);
-        heading.add(actions, BorderLayout.EAST);
+        heading.add(new JScrollPane(actions, JScrollPane.VERTICAL_SCROLLBAR_NEVER,
+                JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED), BorderLayout.SOUTH);
         add(heading, BorderLayout.NORTH);
 
         table.setAutoCreateRowSorter(true);
@@ -66,7 +74,14 @@ public final class ImageStoragePanel extends JPanel {
         });
         preview.setPreferredSize(new Dimension(220, 220));
         preview.setBorder(BorderFactory.createLineBorder(new Color(210, 214, 220)));
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, new JScrollPane(table), preview);
+        selectedError.setEditable(false);
+        selectedError.setLineWrap(true);
+        selectedError.setWrapStyleWord(true);
+        selectedError.setFont(summary.getFont());
+        JPanel imageDetails = new JPanel(new BorderLayout(8, 8));
+        imageDetails.add(preview, BorderLayout.CENTER);
+        imageDetails.add(new JScrollPane(selectedError), BorderLayout.SOUTH);
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, new JScrollPane(table), imageDetails);
         split.setResizeWeight(.78);
         add(split, BorderLayout.CENTER);
         JPanel cleanup = new JPanel(new BorderLayout(8, 0));
@@ -84,7 +99,7 @@ public final class ImageStoragePanel extends JPanel {
         }, this::load));
         beginMigration.addActionListener(event->runAction("Starting verified OneDrive copy...",()->{LanApiClient.beginOneDriveImageMigration();return null;},this::load));
         activateOneDrive.addActionListener(event->runAction("Activating OneDrive...",()->{LanApiClient.activateOneDriveImages();return null;},this::load));
-        rollback.addActionListener(event->runAction("Rolling product images back to Supabase...",()->{LanApiClient.rollbackOneDriveImages();return null;},this::load));
+        rollback.addActionListener(event->runAction("Rolling images back to Supabase...",()->{LanApiClient.rollbackOneDriveImages();return null;},this::load));
         setupOneDrive.addActionListener(event->setupOneDrive());
         certificateButton.addActionListener(event->generateOrExportCertificate());
         setupOneDrive.setEnabled(data.DatabaseConfig.load().mode()==data.DatabaseMode.SERVER);
@@ -143,6 +158,11 @@ public final class ImageStoragePanel extends JPanel {
         updateButtons();
         if (busy) return;
         String id = selectedId();
+        int selectedRow = table.getSelectedRow();
+        String error = selectedRow < 0 ? "" : String.valueOf(model.getValueAt(
+                table.convertRowIndexToModel(selectedRow), 11));
+        selectedError.setText(error.isBlank() ? "No error recorded for this image." : error);
+        selectedError.setCaretPosition(0);
         if (id == null) {
             preview.setIcon(null);
             preview.setText("Select an image");
@@ -340,9 +360,23 @@ public final class ImageStoragePanel extends JPanel {
     }
 
     private void showError(Exception ex) {
-        Throwable cause = ex.getCause() == null ? ex : ex.getCause();
+        Throwable cause = ex;
+        while (cause instanceof java.util.concurrent.ExecutionException && cause.getCause() != null) {
+            cause = cause.getCause();
+        }
         summary.setText("Image storage operation failed.");
-        JOptionPane.showMessageDialog(this, cause.getMessage(), "Image Storage", JOptionPane.ERROR_MESSAGE);
+        String message = cause.getMessage();
+        if (message == null || message.isBlank()) message = cause.getClass().getSimpleName();
+        if (cause instanceof LanApiClient.LanApiException api && api.code() != null) {
+            message += "\n\nError code: " + api.code();
+        }
+        JTextArea details = new JTextArea(message, 10, 64);
+        details.setEditable(false);
+        details.setLineWrap(true);
+        details.setWrapStyleWord(true);
+        details.setFont(summary.getFont());
+        details.setCaretPosition(0);
+        JOptionPane.showMessageDialog(this, new JScrollPane(details), "Image Storage", JOptionPane.ERROR_MESSAGE);
     }
 
     private static String formatDate(long epoch) {

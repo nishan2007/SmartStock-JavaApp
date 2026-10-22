@@ -1,0 +1,8 @@
+SmartStudio 0.1.55 (Windows build 1055)
+
+- Requests zero printer margins first, then 0.2 inches, then the largest printable area supported by the selected printer.
+- Applies shared margin handling before and after printer selection across badges, passport photos, business cards, labels, banners and Risograph templates. Template-internal spacing is preserved.
+- Includes completed cumulative photo brightness, contrast, saturation and warmth controls, framing, background and template changes from prior chats.
+- Uses the current SmartStock 1.1.62 client libraries. AI model weights remain outside application packages.
+
+Borderless output depends on printer and paper support. Physical printing and installed upgrade/rollback require separate acceptance.

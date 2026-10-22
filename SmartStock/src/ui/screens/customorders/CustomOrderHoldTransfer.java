@@ -28,7 +28,7 @@ final class CustomOrderHoldTransfer {
             total+=size;if(total>536870912)throw new IOException("A held cart may contain up to 512 MB of attachments.");
             attachments.add(new CustomOrderHeldDraft.Attachment(entry.getKey(),path.getFileName().toString(),size,hash(path)));
         }
-        var safeLines=draft.lines().stream().map(line->new CustomOrderHeldDraft.Line(withoutApprovals(line.request()),line.item(),line.variant(),line.files())).toList();
+        var safeLines=draft.lines().stream().map(line->new CustomOrderHeldDraft.Line(withoutApprovals(line.request()),line.item(),line.variant(),line.files(),line.setId(),line.personalization())).toList();
         var complete=new CustomOrderHeldDraft(draft.customer(),draft.pricePending(),draft.dueEnabled(),draft.dueDate(),draft.notes(),draft.paymentMethod(),draft.paymentReference(),draft.deposit(),draft.depositOverrideReason(),safeLines,attachments);
         if(JSON.toJson(complete).getBytes(java.nio.charset.StandardCharsets.UTF_8).length>1_500_000)throw new IOException("This cart contains too much design detail to hold. Split it into smaller carts.");
         return new Prepared(id,name,complete,Map.copyOf(paths));

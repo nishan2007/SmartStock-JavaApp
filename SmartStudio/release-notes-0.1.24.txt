@@ -1,0 +1,4 @@
+Recognises the Monotype Corsiva Regular font naming variant without changing
+the source font name. Corrects Publisher boolean property merging so disabled
+WordArt outlines stay disabled. Rounds outline joins to prevent lettering spikes.
+Missing source fonts remain visible in template diagnostics.

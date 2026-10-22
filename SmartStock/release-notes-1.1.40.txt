@@ -1,0 +1,3 @@
+Adds persistent text underline, strikethrough and outline rendering for SmartStudio templates, including fitted text and WordArt. Allows and validates the new reusable badge style fields on the authenticated template endpoint.
+
+Allows approved SmartStudio device credentials to use employee badge-status and first-time badge PIN setup routes. Existing device, store assignment, active badge and account-password checks remain enforced. Fixes the 'This credential is only for SmartStudio' error during NFC badge sign-in.

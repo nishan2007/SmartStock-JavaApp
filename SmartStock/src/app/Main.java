@@ -25,6 +25,7 @@ public class Main {
     private static final Path STARTUP_LOG = Path.of(System.getProperty("user.home"), ".smartstock", "app-startup.log");
 
     public static void main(String[] args) {
+        services.LanHttpsTransport.preserveDefaultProvider();
         installStartupDiagnostics();
         logStartup("Starting SmartStock " + System.getProperty("java.version", "unknown-java")
                 + " on " + System.getProperty("os.name", "unknown-os")

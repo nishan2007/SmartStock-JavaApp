@@ -1,0 +1,7 @@
+SmartStock 1.1.32
+
+Shirt designer automatically loads all active material presets, including vinyl, transfer paper, embroidery and future materials.
+Customers can add repeated text lines and logos, set preview dimensions, and mix artwork colors on front, chest and back.
+Quotes and imported custom orders retain each preset and its fixed-price or per-line charge.
+Includes the current storefront shirt previews and existing application improvements.
+Application packages retain inference runtimes and licences and exclude AI model weights.

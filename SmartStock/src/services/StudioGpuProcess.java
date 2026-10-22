@@ -14,7 +14,10 @@ final class StudioGpuProcess implements StudioImageEnhancer.GpuBackend {
     private DataInputStream input;
     private DataOutputStream output;
     private final ExecutorService reader=Executors.newSingleThreadExecutor(r->{var t=new Thread(r,"studio-gpu-io");t.setDaemon(true);return t;});
-    StudioGpuProcess(Path model,BooleanSupplier cancelled)throws Exception {
+    private final boolean removal;
+    StudioGpuProcess(Path model,BooleanSupplier cancelled)throws Exception {this(model,cancelled,false);}
+    StudioGpuProcess(Path model,BooleanSupplier cancelled,boolean removal)throws Exception {
+        this.removal=removal;
         directory=Files.createTempDirectory("smartstock-gpu-");
         try {
             Properties hashes=new Properties();try(var in=StudioGpuProcess.class.getResourceAsStream("/studio-directml/sha256.properties")){
@@ -36,7 +39,7 @@ final class StudioGpuProcess implements StudioImageEnhancer.GpuBackend {
             ProcessBuilder builder=new ProcessBuilder(java.toString(),"-Xmx256m",
                 "-Donnxruntime.native.onnxruntime.path="+directory.resolve("onnxruntime.dll"),
                 "-cp",System.getProperty("java.class.path"),StudioGpuWorker.class.getName(),model.toAbsolutePath().toString(),
-                directory.resolve("DirectML.dll").toString(),directory.resolve("onnxruntime.dll").toString());
+                directory.resolve("DirectML.dll").toString(),directory.resolve("onnxruntime.dll").toString(),removal?"REMOVAL":"ENHANCEMENT");
             Map<String,String> inherited=new HashMap<>(builder.environment());builder.environment().clear();
             for(String key:List.of("SystemRoot","WINDIR","SystemDrive","TEMP","TMP")){
                 for(var entry:inherited.entrySet())if(entry.getKey().equalsIgnoreCase(key))builder.environment().put(entry.getKey(),entry.getValue());
@@ -56,7 +59,7 @@ final class StudioGpuProcess implements StudioImageEnhancer.GpuBackend {
     public FloatBuffer run(float[] rgb,int w,int h,BooleanSupplier cancelled)throws Exception {
         return await(()->{
             output.writeInt(w);output.writeInt(h);for(float v:rgb)output.writeFloat(v);output.flush();
-            int count=input.readInt();if(count!=w*h*48)throw new IOException("GPU output size mismatch");
+            int count=input.readInt();if(count!=w*h*(removal?1:48))throw new IOException("GPU output size mismatch");
             float[] values=new float[count];for(int i=0;i<count;i++)values[i]=input.readFloat();
             return FloatBuffer.wrap(values);
         },cancelled,180);

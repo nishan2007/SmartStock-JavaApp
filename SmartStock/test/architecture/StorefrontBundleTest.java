@@ -52,7 +52,7 @@ class StorefrontBundleTest {
         for(var entry:hashes.entrySet()){
             Path file=directory.resolve(entry.getKey()).normalize();assertTrue(file.startsWith(directory));
             byte[] bytes=Files.readAllBytes(file);
-            if(normalize&&!entry.getKey().matches("(?i).*\\.(png|jpe?g|webp|gif|ico|woff2?|ttf|otf|mp4|webm|pdf)"))
+            if(normalize&&!entry.getKey().matches("(?i).*\\.(png|jpe?g|webp|gif|ico|woff2?|ttf|otf|mp4|webm|pdf|glb)"))
                 bytes=new String(bytes,StandardCharsets.UTF_8).replace("\r\n","\n").getBytes(StandardCharsets.UTF_8);
             assertEquals(entry.getValue().getAsString(),HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)),"Stale storefront file "+file+". Run pnpm build in website.");
         }

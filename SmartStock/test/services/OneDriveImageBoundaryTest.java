@@ -8,6 +8,24 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.*;
 
 class OneDriveImageBoundaryTest {
+    @Test void migrationAcceptsTheProductImageNamesGeneratedByTheApplication()throws Exception{
+        String source=Files.readString(Path.of("src/services/ServerImageAssetService.java"));
+        var checks=java.util.regex.Pattern.compile("remote_path !~ '([^']+)'").matcher(source);
+        int checked=0;
+        while(checks.find()){
+            var pattern=java.util.regex.Pattern.compile(checks.group(1).translateEscapes());
+            for(String token:java.util.List.of("1791125251381", "1791125251381-4dc9d3ad",
+                    StorageObjectNameBuilder.newProductImageToken())){
+                String name=StorageObjectNameBuilder.productImageFilename("photo.jpg",token,
+                        "Shirt","Hanes","T-shirt","Medium","Yellow");
+                assertTrue(pattern.matcher("custom-variants/"+name).find(),name);
+            }
+            assertFalse(pattern.matcher("products/old-photo.jpg").find());
+            checked++;
+        }
+        assertEquals(2,checked,"Selection and migration reset must accept the same names");
+    }
+
     @Test void microsoftCredentialsRemainServerOnly()throws Exception{
         String client=Files.readString(Path.of("src/services/LanApiClient.java"));
         String cache=Files.readString(Path.of("src/utils/ImageCacheManager.java"));
@@ -29,10 +47,19 @@ class OneDriveImageBoundaryTest {
         String referenceSync=Files.readString(Path.of("src/services/ReferenceDataSyncService.java"));
         assertTrue(referenceSync.contains("image_cloud_configuration"));
         assertFalse(referenceSync.contains("onedrive-image-private-key-pem"));
-        assertTrue(imageService.contains("? <> 'DISABLED' AND category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT')"));
+        assertTrue(imageService.contains("? <> 'DISABLED' AND category IN ('PRODUCT','CUSTOM_ITEM','CUSTOM_VARIANT','CUSTOMER_PHOTO','EMPLOYEE_PHOTO','COMPANY_LOGO','BADGE_LOGO','IMAGE')"));
         String server=Files.readString(Path.of("src/services/LanApiServer.java"));
         assertTrue(server.contains("isLoopbackAddress()"));
         assertTrue(server.contains("SERVER_LOCAL_REQUIRED"));
+    }
+
+    @Test void includesEveryManagedPhotoAndLogoInOneDriveMigration(){
+        for(String category:java.util.List.of("PRODUCT","CUSTOM_ITEM","CUSTOM_VARIANT",
+                "CUSTOMER_PHOTO","EMPLOYEE_PHOTO","COMPANY_LOGO","BADGE_LOGO","IMAGE")){
+            assertTrue(ServerImageAssetService.isOneDriveCategory(category),category);
+        }
+        assertFalse(ServerImageAssetService.isOneDriveCategory(null));
+        assertFalse(ServerImageAssetService.isOneDriveCategory("EMPLOYEE_DOCUMENT"));
     }
 
     @Test void sharedIdentifierSchemaDoesNotRequireSupabaseRolesLocally()throws Exception{

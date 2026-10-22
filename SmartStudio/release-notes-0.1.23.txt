@@ -1,0 +1,4 @@
+Corrects Publisher import stacking order, duplicate WordArt placeholder artwork,
+document palette references and paragraph separators. Restores the filled
+cylinder panel used by Asian Spices labels. Reports missing source fonts in the
+template picker. Exact font matching requires the original fonts on the computer.

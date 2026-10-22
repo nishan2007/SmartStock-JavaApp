@@ -1,0 +1,1 @@
+Adds the Passport Pictures workspace with Guyana (four 35 × 45 mm photos) and US (two 2 × 2 inch photos) templates on 4 × 6 inch photo paper. Includes photo loading, crop/zoom/position controls, full-sheet preview, and actual-size printing with paper and printable-margin validation. Physical printer output requires verification with the selected photo paper and driver.

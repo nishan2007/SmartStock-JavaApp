@@ -28,6 +28,7 @@ class StudioAccelerationTest {
             var out=enhancer.enhance(image,2,StudioImageEnhancer.Mode.GPU,(d,c,t,n)->{if(d.equals("CPU")&&n.contains("unavailable"))fallback[0]=true;});
             assertEquals(64,out.getWidth());assertEquals(0,out.getRGB(0,0));
             if(System.getProperty("os.name").startsWith("Windows"))assertTrue(fallback[0]);
+            enhancer.close();enhancer.close(); // Memory retry and try-with-resources may both release the session.
         }
         try(var enhancer=new StudioImageEnhancer(java.nio.file.Path.of(model))){
             assertThrows(java.util.concurrent.CancellationException.class,()->enhancer.enhance(image,2,StudioImageEnhancer.Mode.AUTO,new StudioImageEnhancer.Progress(){

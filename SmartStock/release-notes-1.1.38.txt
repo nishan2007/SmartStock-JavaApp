@@ -1,0 +1,1 @@
+Adds named store folders, creation-store history, changeable template ownership and sharing across multiple stores for all SmartStudio categories. The server enforces staff store access on reads, saves, uploads and association changes. Existing archives retain stable storage and backup history. Requires SmartStudio 0.1.27 for store browsing and sharing controls.

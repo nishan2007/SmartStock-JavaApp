@@ -1,0 +1,5 @@
+SmartStock 1.1.49
+
+Fixes Device Management retaining an old computer name after the computer is renamed. Names that previously followed the hostname now follow the reported computer name during enrollment and metadata reporting. Administrator-assigned friendly names remain unchanged.
+
+Windows application update only. No installer or AI model changes. Update the store server first, then registers. Publication does not install updates or restart running applications.

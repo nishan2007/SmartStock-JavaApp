@@ -35,10 +35,22 @@ public class PriceTagPrinting extends JFrame {
         JPanel search = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0)); search.add(new JLabel("Template:")); templateBox.setRenderer(new DefaultListCellRenderer(){public Component getListCellRendererComponent(JList<?> l,Object v,int i,boolean s,boolean f){return super.getListCellRendererComponent(l,v instanceof CompanyCustomizationManager.PriceTagTemplateSettings t ? t.name()+" — "+t.widthInches()+" × "+t.heightInches()+" in" : v,i,s,f);}}); search.add(templateBox); search.add(new JLabel("Find an item:")); search.add(searchField); JButton find = new JButton("Search"); JButton add = new JButton("Add to tag cart"); search.add(find); search.add(add); header.add(search, BorderLayout.SOUTH); add(header, BorderLayout.NORTH);
         resultsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION); cartTable.setRowHeight(28); resultsTable.setRowHeight(28); cartTable.getColumnModel().getColumn(6).setCellEditor(new DefaultCellEditor(new JTextField()));
         JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, titled("Search results", new JScrollPane(resultsTable)), titled("Tag cart — set the number of stickers to print", new JScrollPane(cartTable))); split.setResizeWeight(.5); split.setBorder(BorderFactory.createEmptyBorder(0,14,0,14)); add(split, BorderLayout.CENTER);
-        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 10)); JButton remove = new JButton("Remove selected"); JButton preview = new JButton("Preview selected"); JButton receiptPrint = new JButton("Quick print on receipt printer"); JButton print = new JButton("Print tags"); JButton defaultPrinter = new JButton("Default tag printer…"); defaultPrinter.addActionListener(e -> chooseDefaultTagPrinter()); actions.add(remove); actions.add(preview); actions.add(receiptPrint); actions.add(print); JPanel footer=new JPanel(new BorderLayout()); JPanel printerSettings = new JPanel(new FlowLayout(FlowLayout.LEFT, 14, 4)); printerSettings.add(defaultPrinter); footer.add(printerSettings, BorderLayout.NORTH);footer.add(loadingState,BorderLayout.CENTER);footer.add(actions,BorderLayout.SOUTH);add(footer, BorderLayout.SOUTH);
+        JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 10)); JButton remove = new JButton("Remove selected"); JButton preview = new JButton("Preview selected"); JButton receiptPrint = new JButton("Quick print on receipt printer"); JButton print = new JButton("Print tags"); JButton defaultPrinter = new JButton("Default tag printer…"); defaultPrinter.addActionListener(e -> chooseDefaultTagPrinter()); JButton publishing = new JButton("Publishing workspace…"); publishing.addActionListener(e -> openPublisher()); actions.add(publishing); actions.add(remove); actions.add(preview); actions.add(receiptPrint); actions.add(print); JPanel footer=new JPanel(new BorderLayout()); JPanel printerSettings = new JPanel(new FlowLayout(FlowLayout.LEFT, 14, 4)); printerSettings.add(defaultPrinter); footer.add(printerSettings, BorderLayout.NORTH);footer.add(loadingState,BorderLayout.CENTER);footer.add(actions,BorderLayout.SOUTH);add(footer, BorderLayout.SOUTH);
         find.addActionListener(e -> search()); searchField.addActionListener(e -> search());UiDebouncer.bind(searchField,300,this::search); add.addActionListener(e -> addSelected()); remove.addActionListener(e -> {int row=cartTable.getSelectedRow();if(row>=0)cart.removeRow(row);}); preview.addActionListener(e -> previewSelected()); receiptPrint.addActionListener(e -> printTagsOnReceiptPrinter()); print.addActionListener(e -> printTags());
         WindowHelper.configurePosWindow(this); loadTemplates();search();
     }
+    private void openPublisher() {
+        if(cartTable.isEditing())cartTable.getCellEditor().stopCellEditing();
+        List<java.util.Map<String,String>> rows=new ArrayList<>();
+        for(int r=0;r<cart.getRowCount();r++) rows.add(new java.util.LinkedHashMap<>(java.util.Map.of(
+            "name",String.valueOf(cart.getValueAt(r,0)),"size",String.valueOf(cart.getValueAt(r,1)),
+            "color",String.valueOf(cart.getValueAt(r,2)),"description",String.valueOf(cart.getValueAt(r,3)),
+            "code",String.valueOf(cart.getValueAt(r,4)),"price",String.valueOf(cart.getValueAt(r,5)),
+            "quantity",String.valueOf(number(cart.getValueAt(r,6))),"brand",String.valueOf(cart.getValueAt(r,7)))));
+        var template=selectedTemplate();
+        PublishingWorkspace.openPriceTags(this,rows,template==null?63.5:template.widthInches()*25.4,template==null?38.1:template.heightInches()*25.4);
+    }
+
     private void chooseDefaultTagPrinter() {
         try {
             List<String> names = managers.HardwareSettingsManager.getAvailablePrinterNames();

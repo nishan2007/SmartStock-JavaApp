@@ -1,0 +1,6 @@
+SmartStock 1.1.31
+
+Includes the current publishing workspace, shirt designer and storefront quote review.
+Custom orders support size sets, rounded totals and updated receipt output.
+Includes storefront and mobile workflow improvements, studio acceleration and Windows LAN maintenance.
+Application packages retain inference runtimes and licences and exclude AI model weights.

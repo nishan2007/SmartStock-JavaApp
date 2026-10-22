@@ -18,6 +18,8 @@ import java.util.List;
 
 class CustomOrdersNewOrderTabPanel extends JPanel {
     final DefaultListModel<String> quantitySummaryModel=new DefaultListModel<>();
+    final JList<String> quantitySummaryList=new JList<>(quantitySummaryModel);
+    private final JToggleButton cartExpansionButton=new JToggleButton("Show cart lines and shirt sets ▸");
     private final Color BG = DeckersPalette.background();
     private final Color PANEL = DeckersPalette.surface();
     private final Color PANEL_ALT = DeckersPalette.tableStripe();
@@ -39,6 +41,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     final JTextField itemLookupField;
     private CustomOrderItemSearch itemSearch;
     final JComboBox<CustomItemOption> orderItemBox;
+    final JButton inventoryItemButton = new JButton("Add from Inventory...");
     final JButton customerItemButton = new JButton("Customer Item");
     final JButton editCustomerItemButton = new JButton("Edit Details");
     final JLabel customerItemSummary = new JLabel(" ");
@@ -50,12 +53,15 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     final JTextField printChargeField;
     final JTextField printLineCountField;
     final JTextField printDescriptionField;
+    final JTextField printColorField = new JTextField();
+    final JCheckBox individualPrintTextBox = new JCheckBox("Different names / text per shirt (optional)");
     final JLabel printAddonSummaryLabel;
     final List<JComponent> printAddOnComponents = new ArrayList<>();
     final List<JComponent> printLineComponents = new ArrayList<>();
     DefaultTableModel printAddonModel;
     JTable printAddonTable;
     final JTextField lineQuantityField;
+    final CustomOrderSizeSetEditor sizeSetEditor = new CustomOrderSizeSetEditor();
     final JTextField lineDiscountPercentField;
     final JTextField lineDiscountReasonField;
     final JTextField priceOverrideReasonField;
@@ -152,7 +158,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         orderTotalLabel = summaryTile("Order Total", "$0", ACCENT);
         minimumDepositLabel = summaryTile("Minimum Deposit", "$0", AMBER);
 
-        orderLineModel = new DefaultTableModel(new Object[]{"Item ID", "Variant ID", "Item", "Size / Variant", "Pricing", "Total", "Details", "Notes", "Width", "Length", "Dimension Unit", "Area", "Area Unit", "Area Price", "Print Material ID", "Print Material", "Print Preset ID", "Print Size", "Print Charge", "Base Price", "Print Lines", "Print Add Ons", "Print Add On Data", "Original Total", "Discount %", "Discount Amount", "Discount Reason", "Min Deposit %", "Original Base Price", "Override Price", "Override Reason", "Files"}, 0) {
+        orderLineModel = new DefaultTableModel(new Object[]{"Item ID", "Variant ID", "Item", "Size / Variant", "Pricing", "Total", "Details", "Notes", "Width", "Length", "Dimension Unit", "Area", "Area Unit", "Area Price", "Print Material ID", "Print Material", "Print Preset ID", "Print Size", "Print Charge", "Base Price", "Print Lines", "Print Add Ons", "Print Add On Data", "Original Total", "Discount %", "Discount Amount", "Discount Reason", "Min Deposit %", "Original Base Price", "Override Price", "Override Reason", "Files", "Size", "Colour", "Shirt #"}, 0) {
             @Override public boolean isCellEditable(int row, int column) { return false; }
         };
         orderLineTable = new JTable(orderLineModel);
@@ -168,6 +174,12 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         for (int hiddenColumn = 24; hiddenColumn <= 30; hiddenColumn++) {
             hideColumn(orderLineTable, hiddenColumn);
         }
+        orderLineTable.moveColumn(orderLineTable.getColumnModel().getColumnIndex("Size"), 4);
+        orderLineTable.moveColumn(orderLineTable.getColumnModel().getColumnIndex("Colour"), 5);
+        orderLineTable.moveColumn(orderLineTable.getColumnModel().getColumnIndex("Shirt #"), 6);
+        orderLineTable.getColumn("Shirt #").setPreferredWidth(65);
+        orderLineTable.getColumn("Size").setPreferredWidth(100);
+        orderLineTable.getColumn("Colour").setPreferredWidth(110);
         orderLineTable.getColumn("Item").setPreferredWidth(220);
         orderLineTable.getColumn("Size / Variant").setPreferredWidth(160);
         orderLineTable.getColumn("Pricing").setPreferredWidth(90);
@@ -230,6 +242,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         styleButton(addPlacementButton, ACCENT_DARK);
         styleButton(printSheetButton, PANEL_ALT);
         styleButton(addLineButton, TEAL);
+        styleButton(sizeSetEditor.button, PANEL_ALT);
         styleButton(discountButton, AMBER);
         styleButton(removeLineButton, DANGER);
 
@@ -256,6 +269,9 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         manual.setVisible(managers.PermissionManager.hasPermission("MANUAL_CUSTOM_ORDER_ENTRY"));
         manual.addActionListener(e -> handler.manualEntry(false));
         customerActions.add(manual);
+        styleButton(inventoryItemButton, ACCENT_DARK);
+        customerActions.add(inventoryItemButton);
+        inventoryItemButton.addActionListener(e -> handler.inventoryItem());
         customerActions.add(customerItemButton);
         customerActions.add(editCustomerItemButton);
         editCustomerItemButton.setVisible(false);
@@ -269,6 +285,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         pricePendingBox.setToolTipText("Requires permission or a manager override when saving. Optional deposits are accepted.");
         pricePendingBox.addActionListener(e -> handler.pendingPricingChanged());
         addField(topFields, topGbc, 3, "Pricing:", pricePendingBox);
+        addField(topFields, topGbc, 4, "Sizes:", sizeSetEditor);
 
         addField(leftColumn, leftGbc, 0, "Price / Rate:", buildPriceRatePanel());
         addField(leftColumn, leftGbc, 1, "Price Reason:", priceOverrideReasonField);
@@ -306,7 +323,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         styleButton(editFilesButton, PANEL_ALT);
         editFilesButton.addActionListener(e -> handler.editLineFiles());
         lineButtons.add(discountButton);
-        JLabel quantityNote = new JLabel("Identical items are shown as a quantity group.");
+        JLabel quantityNote = new JLabel("Show cart lines to see every shirt and its print text.");
         quantityNote.setForeground(MUTED);
         lineButtons.add(quantityNote);
         rightGbc.gridx = 1;
@@ -364,10 +381,10 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
                 TEXT
         ));
         JPanel cartContents=new JPanel(new BorderLayout(4,4));
-        JList<String> quantitySummary=new JList<>(quantitySummaryModel);
+        JList<String> quantitySummary=quantitySummaryList;
         JScrollPane summaryScroll=new JScrollPane(quantitySummary);
         summaryScroll.setPreferredSize(new Dimension(0,150));
-        JToggleButton expandCart=new JToggleButton("Show individual cart lines ▸");
+        JToggleButton expandCart=cartExpansionButton;
         JPanel cartViews=new JPanel(new CardLayout());
         cartViews.add(summaryScroll,"groups");cartViews.add(cartScroll,"lines");
         cartContents.add(expandCart,BorderLayout.NORTH);cartContents.add(cartViews,BorderLayout.CENTER);
@@ -380,7 +397,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         cartActions.setVisible(false);
         expandCart.addActionListener(e->{
             ((CardLayout)cartViews.getLayout()).show(cartViews,expandCart.isSelected()?"lines":"groups");
-            expandCart.setText(expandCart.isSelected()?"Hide individual cart lines ▾":"Show individual cart lines ▸");
+            expandCart.setText(expandCart.isSelected()?"Hide cart lines and shirt sets ▾":"Show cart lines and shirt sets ▸");
             cartActions.setVisible(expandCart.isSelected());
         });
         cartPanel.add(cartActions, BorderLayout.SOUTH);
@@ -626,13 +643,20 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         updateStepButtons();
     }
 
+    String printAddonDescription() {
+        String description = printDescriptionField.getText().trim();
+        String colour = printColorField.getText().trim();
+        return colour.isEmpty() ? description
+            : (description.isEmpty() ? "" : description + " | ") + "Colour: " + colour;
+    }
+
     private void openPrintAddonSheet(Handler handler) {
         Window owner = SwingUtilities.getWindowAncestor(this);
         JDialog dialog = owner instanceof Frame frame
                 ? new JDialog(frame, "Print Add-ons", true)
                 : new JDialog((Frame) null, "Print Add-ons", true);
         dialog.setLayout(new BorderLayout(10, 10));
-        dialog.setSize(620, 430);
+        dialog.setSize(720, 560);
         dialog.setLocationRelativeTo(this);
 
         JPanel form = new JPanel(new GridBagLayout());
@@ -649,7 +673,11 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         addTrackedField(printLineComponents, form, gbc, 3, "Print Lines:", printLineCountField);
         printAddOnComponents.addAll(printLineComponents);
         addTrackedField(printAddOnComponents, form, gbc, 4, "Description:", printDescriptionField);
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        printColorField.setToolTipText("Print colour, for example White, Gold, or Red and Blue.");
+        addTrackedField(printAddOnComponents, form, gbc, 5, "Colour:", printColorField);
+        individualPrintTextBox.setOpaque(false);individualPrintTextBox.setForeground(TEXT);
+        addTrackedField(printAddOnComponents, form, gbc, 6, "Individual text:", individualPrintTextBox);
+        JPanel buttons = new JPanel(new GridLayout(0, 2, 8, 4));
         buttons.setOpaque(false);
         JButton manual = new JButton("Manual Add-on...");
         styleButton(manual, TEAL);
@@ -658,12 +686,17 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         buttons.add(manual);
         buttons.add(addPrintAddonButton);
         buttons.add(removePrintAddonButton);
+        JButton shirtText = new JButton("Names / per-shirt text…");
+        styleButton(shirtText, PANEL_ALT);
+        shirtText.setToolTipText("Optional: select an add-on, then enter a name or different text for each shirt.");
+        shirtText.addActionListener(e -> handler.editPrintAddonText());
+        buttons.add(shirtText);
         JPanel addOnsPanel = buildPrintAddonsPanel(buttons);
-        JLabel addOnsLabel = addField(form, gbc, 5, "Add-ons:", addOnsPanel);
+        JLabel addOnsLabel = addField(form, gbc, 7, "Add-ons:", addOnsPanel);
         printAddOnComponents.add(addOnsLabel);
         printAddOnComponents.add(addOnsPanel);
         gbc.gridx = 1;
-        gbc.gridy = 5;
+        gbc.gridy = 7;
         gbc.weightx = 1;
         gbc.weighty = 1;
         gbc.fill = GridBagConstraints.BOTH;
@@ -750,7 +783,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
 
     private JPanel buildPrintAddonsPanel(JPanel buttons) {
         if (printAddonModel == null) {
-            printAddonModel = new DefaultTableModel(new Object[]{"Material ID", "Material", "Preset ID", "Size", "Pricing", "Description", "Lines", "Price"}, 0) {
+            printAddonModel = new DefaultTableModel(new Object[]{"Material ID", "Material", "Preset ID", "Size", "Pricing", "Description", "Lines", "Price", "Shirt text data", "Per-shirt text"}, 0) {
                 @Override public boolean isCellEditable(int row, int column) { return false; }
             };
             printAddonTable = new JTable(printAddonModel);
@@ -761,6 +794,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
             hideColumn(printAddonTable, 0);
             hideColumn(printAddonTable, 2);
             hideColumn(printAddonTable, 4);
+            hideColumn(printAddonTable, 8);
             printAddonTable.getColumn("Material").setPreferredWidth(125);
             printAddonTable.getColumn("Size").setPreferredWidth(105);
             printAddonTable.getColumn("Description").setPreferredWidth(185);
@@ -808,6 +842,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         styleInput(printChargeField);
         styleInput(printLineCountField);
         styleInput(printDescriptionField);
+        styleInput(printColorField);
         styleInput(lineQuantityField);
         styleInput(lineDiscountPercentField);
         styleInput(lineDiscountReasonField);
@@ -954,6 +989,8 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         };
     }
 
+    void showCartLines(){if(!cartExpansionButton.isSelected())cartExpansionButton.doClick();}
+
     void setEditingLine(boolean editing) {
         addLineButton.setText(editing ? "Update Line" : "Add Line");
         cancelLineEditButton.setVisible(editing);
@@ -961,11 +998,13 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         lineQuantityField.setText("1");
     }
     interface Handler {
+        default void editPrintAddonText() {}
         default void holdCart() {}
         default void resumeCart() {}
         default void pendingPricingChanged() {}
         default void editOrderLine() { }
         default void cancelLineEdit() { }
+        default void inventoryItem() { }
         default void customerItem() { }
         default void manualEntry(boolean addon) { }
         void orderItemChanged();

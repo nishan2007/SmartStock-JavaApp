@@ -144,7 +144,7 @@ public final class ServerBalanceSheetService {
                         payment_method, payment_reference, status, source_type, source_id,
                         created_by_user_id, created_by_name
                     )
-                    VALUES (?, ?, 'Payroll', ?, ?, ?, 'PAYROLL', ?, 'PAID', 'PAYROLL', ?, ?, ?)
+                    VALUES (?, ?, 'Salary', ?, ?, ?, 'PAYROLL', ?, 'PAID', 'PAYROLL', ?, ?, ?)
                     ON CONFLICT (source_type, source_id) WHERE source_type IS NOT NULL AND source_id IS NOT NULL
                     DO UPDATE SET
                         location_id = EXCLUDED.location_id,
@@ -171,6 +171,7 @@ public final class ServerBalanceSheetService {
     }
 
     public static void addManualExpense(ExpenseEntry entry) throws SQLException {
+        if(entry==null || entry.category().isBlank())throw new SQLException("Expense category is required.");
         try (Connection conn = DB.getConnection()) {
             ensureSchema(conn);
             String sql = """
@@ -534,7 +535,7 @@ public final class ServerBalanceSheetService {
                     .subtract(totalExpenses).subtract(totalPayables);
             return new BalanceSheet(null, null, null, null, null, null,
                     income, receivables, expenses, payables, drawerCash, deviceSales, deviceOrders, devicePayments, accountPayments, bankTransactions, pendingCheques, drawerChecks, cashInHand,
-                    balanceBf, totalIncome, totalReceivables, totalExpenses, totalPayables, balanceCf);
+                    balanceBf, totalIncome, totalReceivables, totalExpenses, totalPayables, balanceCf,OverseasCashService.report(conn,locationId,from,to,storeZoneId));
         }
     }
 
@@ -588,6 +589,9 @@ public final class ServerBalanceSheetService {
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
                         long submissionId = rs.getLong("balance_sheet_submission_id");
+                        try(var snapshot=conn.prepareStatement("UPDATE balance_sheet_submissions SET overseas_cash_snapshot=?::jsonb WHERE balance_sheet_submission_id=?")) {
+                            snapshot.setString(1,GSON.toJson(sheet.overseasCash()));snapshot.setLong(2,submissionId);snapshot.executeUpdate();
+                        }
                         linkDrawerSessions(conn, submissionId, from, to, storeZoneId,
                                 ServerRequestIdentity.locationId(), cashDrawerSessionIds);
                         SyncOutboxService.recordEvent(conn, "BALANCE_SHEET_SUBMITTED", Map.of(
@@ -643,6 +647,7 @@ public final class ServerBalanceSheetService {
     /* Connection-bound mutations keep the accounting write, sync event and API
        idempotency row in one transaction. */
     public static void addManualExpense(Connection conn,ExpenseEntry entry)throws SQLException{
+        if(entry==null || entry.category().isBlank())throw new SQLException("Expense category is required.");
         ensureSchema(conn);try(PreparedStatement ps=conn.prepareStatement("""
                 INSERT INTO expenses (location_id,expense_date,category,payee,description,amount,payment_method,payment_reference,status,created_by_user_id,created_by_name)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING expense_id
@@ -791,15 +796,21 @@ public final class ServerBalanceSheetService {
         ensureSchema(conn);Integer locationId=ServerRequestIdentity.locationId();syncPaidPayrollExpenses(conn,zone,locationId);
         List<SheetLine>income=loadIncome(conn,from,to,zone,locationId,sessionIds),receivables=loadReceivables(conn,locationId),expenses=loadExpenses(conn,from,to,zone,locationId,sessionIds,"PAID"),payables=loadExpenses(conn,from,to,zone,locationId,sessionIds,"UNPAID"),drawerCash=includeOtherCashInDrawerCash(loadDrawerCash(conn,from,to,zone,locationId,sessionIds),income),deviceSales=loadDeviceSales(conn,from,to,zone,locationId,sessionIds),deviceOrders=loadDeviceOrders(conn,from,to,zone,locationId,sessionIds),devicePayments=loadDevicePayments(conn,from,to,zone,locationId,sessionIds),accountPayments=loadAccountPayments(conn,from,to,zone,locationId,sessionIds),drawerChecks=loadDrawerMatchChecks(conn,from,to,zone,locationId,sessionIds);
         List<BankTransactionLine>bank=loadBankTransactions(conn,from,to,locationId);List<ChequeDepositOption>cheques=loadPendingChequeDeposits(conn,locationId);BigDecimal cash=total(drawerCash),totalIncome=total(income),totalReceivables=total(receivables),totalExpenses=total(expenses),totalPayables=total(payables),bf=loadPreviousBalanceCf(conn,from,locationId);if(bf==null)bf=BigDecimal.ZERO;BigDecimal cf=bf.add(totalIncome).add(total(accountPayments)).subtract(totalExpenses).subtract(totalPayables);
-        return new BalanceSheet(null,null,null,null,null,null,income,receivables,expenses,payables,drawerCash,deviceSales,deviceOrders,devicePayments,accountPayments,bank,cheques,drawerChecks,cash,bf,totalIncome,totalReceivables,totalExpenses,totalPayables,cf);
+        return new BalanceSheet(null,null,null,null,null,null,income,receivables,expenses,payables,drawerCash,deviceSales,deviceOrders,devicePayments,accountPayments,bank,cheques,drawerChecks,cash,bf,totalIncome,totalReceivables,totalExpenses,totalPayables,cf,OverseasCashService.report(conn,locationId,from,to,zone));
     }
 
     public static long submitBalanceSheet(Connection conn,LocalDate from,LocalDate to,String zone,String notes,List<Long>sessionIds)throws SQLException{
-        BalanceSheet sheet=loadBalanceSheet(conn,from,to,zone,sessionIds);try(PreparedStatement ps=conn.prepareStatement("""
+        return submitBalanceSheet(conn,from,to,zone,notes,sessionIds,null);
+    }
+    public static long submitBalanceSheet(Connection conn,LocalDate from,LocalDate to,String zone,String notes,List<Long>sessionIds,com.google.gson.JsonObject cashCheck)throws SQLException{
+        if(cashCheck!=null){if(ServerRequestIdentity.locationId()==null)throw new SQLException("Select a store before verifying overseas cash.");OverseasCashService.lockFund(conn,ServerRequestIdentity.locationId());}
+        BalanceSheet sheet=loadBalanceSheet(conn,from,to,zone,sessionIds);
+        var verifiedFund=cashCheck==null?sheet.overseasCash():OverseasCashService.verify(sheet.overseasCash(),cashCheck,ServerRequestIdentity.userName(),java.time.Instant.now().toString());
+        try(PreparedStatement ps=conn.prepareStatement("""
                 INSERT INTO balance_sheet_submissions (location_id,location_name,period_start,period_end,store_timezone,balance_bf,cash_in_hand,total_income,total_receivables,total_expenses,total_payables,balance_cf,income_lines,receivable_lines,expense_lines,payable_lines,drawer_cash_lines,device_sales_lines,device_order_lines,device_payment_lines,account_payment_lines,bank_transaction_lines,pending_cheque_lines,drawer_check_lines,submitted_by_user_id,submitted_by_name,notes)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING balance_sheet_submission_id
                 """)){setNullableInteger(ps,1,ServerRequestIdentity.locationId());ps.setString(2,ServerRequestIdentity.locationName());ps.setDate(3,Date.valueOf(from));ps.setDate(4,Date.valueOf(to));ps.setString(5,zone);ps.setBigDecimal(6,sheet.balanceBf());ps.setBigDecimal(7,sheet.cashInHand());ps.setBigDecimal(8,sheet.totalIncome());ps.setBigDecimal(9,sheet.totalReceivables());ps.setBigDecimal(10,sheet.totalExpenses());ps.setBigDecimal(11,sheet.totalPayables());ps.setBigDecimal(12,sheet.balanceCf());ps.setString(13,encodeLines(sheet.income()));ps.setString(14,encodeLines(sheet.receivables()));ps.setString(15,encodeLines(sheet.expenses()));ps.setString(16,encodeLines(sheet.payables()));ps.setString(17,encodeLines(sheet.drawerCash()));ps.setString(18,encodeLines(sheet.deviceSales()));ps.setString(19,encodeLines(sheet.deviceOrders()));ps.setString(20,encodeLines(sheet.devicePayments()));ps.setString(21,encodeLines(sheet.accountPayments()));ps.setString(22,encodeBankTransactions(sheet.bankTransactions()));ps.setString(23,encodeCheques(sheet.pendingCheques()));ps.setString(24,encodeLines(sheet.drawerChecks()));setNullableInteger(ps,25,ServerRequestIdentity.userId());ps.setString(26,ServerRequestIdentity.userName());ps.setString(27,blankToNull(notes));
-            try(ResultSet rs=ps.executeQuery()){if(rs.next()){long id=rs.getLong(1);linkDrawerSessions(conn,id,from,to,zone,ServerRequestIdentity.locationId(),sessionIds);SyncOutboxService.recordEvent(conn,"BALANCE_SHEET_SUBMITTED",Map.of("balance_sheet_submission_id",id,"location_id",ServerRequestIdentity.locationId()==null?"":ServerRequestIdentity.locationId(),"period_start",from,"period_end",to,"cash_in_hand",sheet.cashInHand(),"balance_cf",sheet.balanceCf(),"submitted_by_user_id",ServerRequestIdentity.userId()==null?"":ServerRequestIdentity.userId()));return id;}}}
+            try(ResultSet rs=ps.executeQuery()){if(rs.next()){long id=rs.getLong(1);try(var snapshot=conn.prepareStatement("UPDATE balance_sheet_submissions SET overseas_cash_snapshot=?::jsonb WHERE balance_sheet_submission_id=?")){snapshot.setString(1,GSON.toJson(verifiedFund));snapshot.setLong(2,id);snapshot.executeUpdate();}linkDrawerSessions(conn,id,from,to,zone,ServerRequestIdentity.locationId(),sessionIds);SyncOutboxService.recordEvent(conn,"BALANCE_SHEET_SUBMITTED",Map.of("balance_sheet_submission_id",id,"location_id",ServerRequestIdentity.locationId()==null?"":ServerRequestIdentity.locationId(),"period_start",from,"period_end",to,"cash_in_hand",sheet.cashInHand(),"balance_cf",sheet.balanceCf(),"submitted_by_user_id",ServerRequestIdentity.userId()==null?"":ServerRequestIdentity.userId()));return id;}}}
         throw new SQLException("Balance sheet submission did not return an id.");
     }
 
@@ -899,7 +910,7 @@ public final class ServerBalanceSheetService {
                 decodeLines(rs.getString("drawer_check_lines")), defaultZero(rs.getBigDecimal("cash_in_hand")),
                 defaultZero(rs.getBigDecimal("balance_bf")), defaultZero(rs.getBigDecimal("total_income")),
                 defaultZero(rs.getBigDecimal("total_receivables")), defaultZero(rs.getBigDecimal("total_expenses")),
-                defaultZero(rs.getBigDecimal("total_payables")), defaultZero(rs.getBigDecimal("balance_cf")));
+                defaultZero(rs.getBigDecimal("total_payables")), defaultZero(rs.getBigDecimal("balance_cf")),GSON.fromJson(rs.getString("overseas_cash_snapshot"),OverseasCashService.FundReport.class));
     }
 
     private static LockedSubmission findSubmission(Connection conn, long id, boolean lock) throws SQLException {
@@ -1050,7 +1061,7 @@ public final class ServerBalanceSheetService {
                 payables, drawerCash, beforeSheet.deviceSales(), beforeSheet.deviceOrders(), beforeSheet.devicePayments(),
                 beforeSheet.accountPayments(), beforeSheet.bankTransactions(), beforeSheet.pendingCheques(), beforeSheet.drawerChecks(),
                 total(drawerCash), beforeSheet.balanceBf(), totalIncome, beforeSheet.totalReceivables(), totalExpenses,
-                totalPayables, cf);
+                totalPayables, cf,beforeSheet.overseasCash());
         AuditSnapshot before = new AuditSnapshot(beforeSheet, beforeExpenses, beforeIncome);
         AuditSnapshot after = new AuditSnapshot(afterSheet, afterExpenses, afterIncome);
         String changeSummary=describeChanges(before,after);
@@ -1088,6 +1099,7 @@ public final class ServerBalanceSheetService {
                 UPDATE expenses e
                 SET location_id = COALESCE(pp.location_id, e.location_id, ?),
                     expense_date = (pp.paid_at AT TIME ZONE ?)::date,
+                    category = 'Salary',
                     payee = pp.employee_name,
                     description = 'Payroll payment for ' || COALESCE(NULLIF(TRIM(pp.employee_name), ''), 'employee'),
                     amount = COALESCE(pp.total_pay, 0),
@@ -1115,7 +1127,7 @@ public final class ServerBalanceSheetService {
                 )
                 SELECT COALESCE(pp.location_id, ?),
                        (pp.paid_at AT TIME ZONE ?)::date,
-                       'Payroll',
+                       'Salary',
                        pp.employee_name,
                        'Payroll payment for ' || COALESCE(NULLIF(TRIM(pp.employee_name), ''), 'employee'),
                        COALESCE(pp.total_pay, 0),
@@ -1386,7 +1398,7 @@ public final class ServerBalanceSheetService {
                 SELECT COALESCE(NULLIF(TRIM(payment_method), ''), 'UNKNOWN') AS label,
                        SUM(COALESCE(payment_amount, 0)) AS amount
                 FROM custom_order_payments
-                WHERE (? IS NULL OR EXISTS (
+                WHERE NOT overseas_cash_separate AND (? IS NULL OR EXISTS (
                     SELECT 1 FROM custom_orders co
                     WHERE co.custom_order_id = custom_order_payments.custom_order_id
                       AND co.location_id = ?
@@ -1424,7 +1436,7 @@ public final class ServerBalanceSheetService {
                                END AS adjustment
                         FROM customer_account_transactions cat
                         JOIN custom_orders co ON co.custom_order_id = cat.custom_order_id
-                        WHERE (cat.transaction_type IN ('CUSTOM_ORDER_BALANCE', 'CUSTOM_ORDER_PAYMENT')
+                        WHERE co.order_type='CUSTOM' AND (cat.transaction_type IN ('CUSTOM_ORDER_BALANCE', 'CUSTOM_ORDER_PAYMENT')
                                OR (cat.transaction_type = 'CUSTOM_ORDER_REFUND' AND COALESCE(cat.amount, 0) > 0))
                           AND (? IS NULL OR co.location_id = ?)
                           AND (cat.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
@@ -1671,7 +1683,7 @@ public final class ServerBalanceSheetService {
                            SUM(COALESCE(p.payment_amount, 0)) AS amount
                     FROM custom_order_payments p
                     JOIN custom_orders co ON co.custom_order_id = p.custom_order_id
-                    WHERE COALESCE(p.payment_action, 'PAYMENT') IN ('REFUND', 'REVERSAL')
+                    WHERE NOT p.overseas_cash_separate AND COALESCE(p.payment_action, 'PAYMENT') IN ('REFUND', 'REVERSAL')
                       AND (? IS NULL OR co.location_id = ?)
                       AND (p.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
                     """ + cashDrawerFilterSql(cashDrawerSessionIds, "p.cash_drawer_session_id", "p.payment_method") + """
@@ -1939,7 +1951,7 @@ public final class ServerBalanceSheetService {
                        END) AS amount
                 FROM custom_order_payments p
                 LEFT JOIN devices d ON d.device_id::text = p.device_id
-                WHERE (? IS NULL OR EXISTS (
+                WHERE NOT p.overseas_cash_separate AND (? IS NULL OR EXISTS (
                     SELECT 1 FROM custom_orders co
                     WHERE co.custom_order_id = p.custom_order_id
                       AND co.location_id = ?
@@ -2105,7 +2117,7 @@ public final class ServerBalanceSheetService {
                        END AS amount
                 FROM custom_order_payments p
                 JOIN custom_orders co ON co.custom_order_id=p.custom_order_id
-                WHERE (? IS NULL OR co.location_id = ?)
+                WHERE NOT p.overseas_cash_separate AND (? IS NULL OR co.location_id = ?)
                   AND UPPER(COALESCE(p.payment_method, '')) = 'CASH'
                   AND (p.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
                 """ + notInSessionFilterSql(cashDrawerSessionIds, "p.cash_drawer_session_id") + """
@@ -2516,6 +2528,7 @@ public final class ServerBalanceSheetService {
 
     public record ExpenseEntry(LocalDate expenseDate, String category, String payee, String description,
                                BigDecimal amount, String paymentMethod, String paymentReference, String status) {
+        public ExpenseEntry { category = ExpenseCategories.normalize(category); }
     }
 
     public record OtherIncomeEntry(LocalDate incomeDate, String sourceName, String description,
@@ -2632,6 +2645,32 @@ public final class ServerBalanceSheetService {
                                BigDecimal totalReceivables,
                                BigDecimal totalExpenses,
                                BigDecimal totalPayables,
-                               BigDecimal balanceCf) {
+                               BigDecimal balanceCf, OverseasCashService.FundReport overseasCash) {
+        public BalanceSheet(Long submissionId,
+                               LocalDate periodStart,
+                               LocalDate periodEnd,
+                               java.time.LocalDateTime submittedAt,
+                               String submittedByName,
+                               String notes,
+                               List<SheetLine> income,
+                               List<SheetLine> receivables,
+                               List<SheetLine> expenses,
+                               List<SheetLine> payables,
+                               List<SheetLine> drawerCash,
+                               List<SheetLine> deviceSales,
+                               List<SheetLine> deviceOrders,
+                               List<SheetLine> devicePayments,
+                               List<SheetLine> accountPayments,
+                               List<BankTransactionLine> bankTransactions,
+                               List<ChequeDepositOption> pendingCheques,
+                               List<SheetLine> drawerChecks,
+                               BigDecimal cashInHand,
+                               BigDecimal balanceBf,
+                               BigDecimal totalIncome,
+                               BigDecimal totalReceivables,
+                               BigDecimal totalExpenses,
+                               BigDecimal totalPayables,
+                               BigDecimal balanceCf){this(submissionId,periodStart,periodEnd,submittedAt,submittedByName,notes,income,receivables,expenses,payables,drawerCash,deviceSales,deviceOrders,devicePayments,accountPayments,bankTransactions,pendingCheques,drawerChecks,cashInHand,balanceBf,totalIncome,totalReceivables,totalExpenses,totalPayables,balanceCf,null);}
+
     }
 }

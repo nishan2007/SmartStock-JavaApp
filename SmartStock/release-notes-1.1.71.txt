@@ -1,0 +1,8 @@
+SmartStock 1.1.71
+- Cumulative update containing the completed shared-workspace changes through 21 October 2026.
+- Add configurable customer loyalty earning and redemption, product exclusions, account history, exact refund allocations, receipts and custom-order support. Loyalty starts disabled; configure and verify it before enabling.
+- Add cash expense and inventory loss ledgers and reports.
+- Include sublimation product organization and the latest custom-order size, shirt designer, overseas-order, photo-record, template and receipt workflows.
+- Add shared administrator-managed font storage for SmartStudio clients, verified client downloads and offline font retention.
+- Update the store server before registers and SmartStudio 0.1.63. Publishing does not install or restart live applications.
+- Application packages exclude AI model weights; models remain in persistent store profiles.

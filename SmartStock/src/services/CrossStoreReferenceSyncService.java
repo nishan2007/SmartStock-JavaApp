@@ -21,7 +21,12 @@ import java.util.UUID;
 final class CrossStoreReferenceSyncService {
     static final String EVENT = "REFERENCE_ROW_CHANGED";
     private static final List<TableSnapshot> TABLES = List.of(
+            new TableSnapshot("custom_order_print_materials", "material_name", "material_name", "updated_at"),
+            new TableSnapshot("custom_order_design_placements", "placement_name", "placement_name", "updated_at"),
+            new TableSnapshot("custom_order_print_size_presets", "print_material_id,preset_name", "print_material_id::text||':'||preset_name", "updated_at",
+                    "to_jsonb(t) || jsonb_build_object('material_name',(SELECT material_name FROM custom_order_print_materials m WHERE m.print_material_id=t.print_material_id))"),
             new TableSnapshot("locations", "location_id", "location_id::text", "updated_at"),
+            new TableSnapshot("customer_account_merges", "source_customer_id", "source_customer_id::text", "updated_at"),
             new TableSnapshot("users", "user_id", "user_id::text", "updated_at", """
                     to_jsonb(t)
                       - ARRAY['password_hash','password_cache_invalidated_at','employee_pin_salt',
@@ -39,6 +44,7 @@ final class CrossStoreReferenceSyncService {
             new TableSnapshot("employee_schedule_holidays", "holiday_date", "holiday_date::text", "updated_at"),
             new TableSnapshot("employee_schedule_assignments", "location_id,user_id,work_date",
                     "location_id::text||':'||user_id::text||':'||work_date::text", "updated_at"),
+            new TableSnapshot("employee_daily_pay_days", "user_id,work_date", "user_id::text||':'||work_date::text", "updated_at"),
             new TableSnapshot("employee_time_clock", "clock_uuid", "clock_uuid::text", "updated_at"),
             new TableSnapshot("employee_time_clock_adjustments", "adjustment_id", "adjustment_id::text", "created_at",
                     "to_jsonb(t) - 'clock_id' || jsonb_build_object('clock_uuid',"
@@ -104,7 +110,7 @@ final class CrossStoreReferenceSyncService {
                 }
             }
         }
-        return announced;
+        return announced + TimeClockCorrectionSyncService.announce(connection, locationId);
     }
 
     static int applyInbox(Connection connection) throws SQLException {
@@ -155,7 +161,7 @@ final class CrossStoreReferenceSyncService {
 
     private static String payrollOwnerScope(String table) {
         return switch (table) {
-            case "employee_time_clock", "payroll_payments", "employee_payroll_bonuses" -> "WHERE t.location_id=? ";
+            case "employee_daily_pay_days", "employee_time_clock", "payroll_payments", "employee_payroll_bonuses" -> "WHERE t.location_id=? ";
             case "employee_time_clock_adjustments" -> "WHERE EXISTS (SELECT 1 FROM employee_time_clock tc WHERE tc.clock_id=t.clock_id AND tc.location_id=?) ";
             default -> "";
         };
@@ -164,6 +170,12 @@ final class CrossStoreReferenceSyncService {
     static void applyPayload(Connection c, JsonObject payload, int localLocationId,
                              Integer originLocationId) throws SQLException {
         String table = required(payload,"table_name");
+        if ("employee_time_clock_adjustments".equals(table)
+                && "CORRECT_OWNER".equals(required(payload,"operation"))) {
+            TimeClockCorrectionSyncService.apply(c, payload.getAsJsonObject("row_data"),
+                    localLocationId, originLocationId);
+            return;
+        }
         if (!payrollOwnerScope(table).isEmpty() && "UPSERT".equals(required(payload,"operation"))) {
             JsonObject row = payload.getAsJsonObject("row_data");
             Integer owner = null;
@@ -175,6 +187,14 @@ final class CrossStoreReferenceSyncService {
                     try (ResultSet rs=ps.executeQuery()) { if(rs.next()) owner=(Integer)rs.getObject(1); }
                 }
                 if (owner != null && owner == localLocationId) return;
+            }
+            if ("employee_daily_pay_days".equals(table)) {
+                try (PreparedStatement ps=c.prepareStatement("SELECT location_id FROM employee_daily_pay_days WHERE user_id=? AND work_date=?")) {
+                    ps.setInt(1,integer(row,"user_id"));ps.setDate(2,date(row,"work_date"));
+                    try(ResultSet rs=ps.executeQuery()){if(rs.next())owner=(Integer)rs.getObject(1);}
+                }
+                if(owner!=null && owner==localLocationId)return;
+                if(owner!=null && !owner.equals(originLocationId))return;
             }
             if (owner == null && row.has("location_id") && !row.get("location_id").isJsonNull())
                 owner = row.get("location_id").getAsInt();
@@ -257,6 +277,8 @@ final class CrossStoreReferenceSyncService {
                 if(rs.next()&&!rs.getTimestamp(1).before(updated))return;
             }}
         switch(table){
+            case "custom_order_print_materials", "custom_order_print_size_presets", "custom_order_design_placements" -> PrintReferenceSync.apply(c,table,row);
+            case "customer_account_merges"->CustomerAccountMergeService.applyMapping(c,row);
             case "locations"->upsertLocation(c,row);
             case "users"->upsertUser(c,row);
             case "user_locations"->upsertUserLocation(c,row);
@@ -265,6 +287,7 @@ final class CrossStoreReferenceSyncService {
             case "employee_schedule_shifts"->upsertShift(c,row);
             case "employee_schedule_holidays"->upsertHoliday(c,row);
             case "employee_schedule_assignments"->upsertAssignment(c,row);
+            case "employee_daily_pay_days"->upsertDailyPayDay(c,row);
             case "employee_time_clock"->upsertTimeClock(c,row);
             case "employee_time_clock_adjustments"->insertTimeClockAdjustment(c,row);
             case "employee_payroll_bonuses"->insertPayrollBonus(c,row);
@@ -484,6 +507,16 @@ final class CrossStoreReferenceSyncService {
             ps.setTimestamp(i++,timestamp(r,"created_at"));ps.setTimestamp(i,timestamp(r,"updated_at"));ps.executeUpdate();}
     }
 
+    private static void upsertDailyPayDay(Connection c,JsonObject r)throws SQLException {
+        try(PreparedStatement p=c.prepareStatement("""
+            WITH incoming AS (SELECT (jsonb_populate_record(NULL::employee_daily_pay_days,?::jsonb)).*)
+            INSERT INTO employee_daily_pay_days SELECT * FROM incoming
+            ON CONFLICT(user_id,work_date) DO UPDATE SET half_day=EXCLUDED.half_day,
+                location_id=EXCLUDED.location_id,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at
+            WHERE employee_daily_pay_days.updated_at<EXCLUDED.updated_at
+            """)) {p.setString(1,r.toString());p.executeUpdate();}
+    }
+
     private static void upsertTimeClock(Connection c,JsonObject r)throws SQLException{
         String columns="clock_uuid,user_id,user_name,location_id,location_name,work_date,clock_in,lunch_start,lunch_end,break_start,break_end,clock_out,total_hours_worked,total_earned,created_at,updated_at,auto_break_end,auto_break_end_detected_at,auto_break_end_review_status,multiple_session_override_required,multiple_session_override_reason,multiple_session_override_by_user_id,multiple_session_override_by_name,auto_close_enabled_snapshot,auto_close_rule_snapshot,auto_close_detection_at,auto_close_max_work_hours,scheduled_shift_id_snapshot,scheduled_shift_name_snapshot,scheduled_shift_end_at_snapshot,auto_clock_out,auto_clock_out_detected_at,auto_clock_out_review_status,auto_clock_out_reviewed_at,auto_clock_out_reviewed_by_user_id,auto_clock_out_reviewed_by_name,auto_clock_out_review_reason";
         String sql="WITH incoming AS (SELECT (jsonb_populate_record(NULL::employee_time_clock,?::jsonb)).*) INSERT INTO employee_time_clock("+columns+") SELECT "+columns+" FROM incoming ON CONFLICT(clock_uuid) DO UPDATE SET user_id=EXCLUDED.user_id,user_name=EXCLUDED.user_name,location_id=EXCLUDED.location_id,location_name=EXCLUDED.location_name,work_date=EXCLUDED.work_date,clock_in=EXCLUDED.clock_in,lunch_start=EXCLUDED.lunch_start,lunch_end=EXCLUDED.lunch_end,break_start=EXCLUDED.break_start,break_end=EXCLUDED.break_end,clock_out=EXCLUDED.clock_out,total_hours_worked=EXCLUDED.total_hours_worked,total_earned=EXCLUDED.total_earned,updated_at=EXCLUDED.updated_at,auto_break_end=EXCLUDED.auto_break_end,auto_break_end_detected_at=EXCLUDED.auto_break_end_detected_at,auto_break_end_review_status=EXCLUDED.auto_break_end_review_status,multiple_session_override_required=EXCLUDED.multiple_session_override_required,multiple_session_override_reason=EXCLUDED.multiple_session_override_reason,multiple_session_override_by_user_id=EXCLUDED.multiple_session_override_by_user_id,multiple_session_override_by_name=EXCLUDED.multiple_session_override_by_name,auto_close_enabled_snapshot=EXCLUDED.auto_close_enabled_snapshot,auto_close_rule_snapshot=EXCLUDED.auto_close_rule_snapshot,auto_close_detection_at=EXCLUDED.auto_close_detection_at,auto_close_max_work_hours=EXCLUDED.auto_close_max_work_hours,scheduled_shift_id_snapshot=EXCLUDED.scheduled_shift_id_snapshot,scheduled_shift_name_snapshot=EXCLUDED.scheduled_shift_name_snapshot,scheduled_shift_end_at_snapshot=EXCLUDED.scheduled_shift_end_at_snapshot,auto_clock_out=EXCLUDED.auto_clock_out,auto_clock_out_detected_at=EXCLUDED.auto_clock_out_detected_at,auto_clock_out_review_status=EXCLUDED.auto_clock_out_review_status,auto_clock_out_reviewed_at=EXCLUDED.auto_clock_out_reviewed_at,auto_clock_out_reviewed_by_user_id=EXCLUDED.auto_clock_out_reviewed_by_user_id,auto_clock_out_reviewed_by_name=EXCLUDED.auto_clock_out_reviewed_by_name,auto_clock_out_review_reason=EXCLUDED.auto_clock_out_review_reason WHERE employee_time_clock.updated_at<EXCLUDED.updated_at";
@@ -542,6 +575,10 @@ final class CrossStoreReferenceSyncService {
 
     private static JsonObject keyForRow(String table,JsonObject row)throws SQLException{
         JsonObject key=new JsonObject();switch(table){
+            case "custom_order_print_materials" -> key.addProperty("material_name",required(row,"material_name"));
+            case "custom_order_design_placements" -> key.addProperty("placement_name",required(row,"placement_name"));
+            case "custom_order_print_size_presets" -> {key.addProperty("material_name",required(row,"material_name"));key.addProperty("preset_name",required(row,"preset_name"));}
+            case "customer_account_merges"->key.addProperty("source_customer_id",integer(row,"source_customer_id"));
             case "locations"->key.addProperty("location_id",integer(row,"location_id"));
             case "users"->key.addProperty("user_id",integer(row,"user_id"));
             case "user_locations"->{key.addProperty("user_id",integer(row,"user_id"));key.addProperty("location_id",integer(row,"location_id"));}
@@ -550,6 +587,7 @@ final class CrossStoreReferenceSyncService {
             case "employee_schedule_shifts"->key.addProperty("shift_id",required(row,"shift_id"));
             case "employee_schedule_holidays"->key.addProperty("holiday_date",required(row,"holiday_date"));
             case "employee_schedule_assignments"->{key.addProperty("location_id",integer(row,"location_id"));key.addProperty("user_id",integer(row,"user_id"));key.addProperty("work_date",required(row,"work_date"));}
+            case "employee_daily_pay_days"->{key.addProperty("user_id",integer(row,"user_id"));key.addProperty("work_date",required(row,"work_date"));}
             case "employee_time_clock"->key.addProperty("clock_uuid",required(row,"clock_uuid"));
             case "employee_time_clock_adjustments"->key.addProperty("adjustment_id",required(row,"adjustment_id"));
             case "employee_payroll_bonuses","payroll_payments"->key.addProperty("sync_uuid",required(row,"sync_uuid"));

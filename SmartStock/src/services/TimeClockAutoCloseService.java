@@ -438,6 +438,11 @@ public final class TimeClockAutoCloseService {
         correct(conn, clockId, zoneForClock(conn, clockId), correction, actorUserId, actorName, false);
     }
 
+    static void correctSyncedSession(Connection conn, long clockId, Correction correction,
+                                     Integer actorUserId, String actorName, UUID adjustmentId) throws SQLException {
+        correct(conn, clockId, zoneForClock(conn, clockId), correction, actorUserId, actorName, false, adjustmentId);
+    }
+
     public static void correct(Connection conn, long clockId, ZoneId zone, Correction correction,
                                Integer actorUserId, String actorName) throws SQLException {
         correct(conn, clockId, zone, correction, actorUserId, actorName, true);
@@ -445,6 +450,12 @@ public final class TimeClockAutoCloseService {
 
     private static void correct(Connection conn, long clockId, ZoneId zone, Correction correction,
                                 Integer actorUserId, String actorName, boolean requirePendingReview) throws SQLException {
+        correct(conn, clockId, zone, correction, actorUserId, actorName, requirePendingReview, UUID.randomUUID());
+    }
+
+    private static void correct(Connection conn, long clockId, ZoneId zone, Correction correction,
+                                Integer actorUserId, String actorName, boolean requirePendingReview,
+                                UUID adjustmentId) throws SQLException {
         validateCorrection(correction);
         ensureSchema(conn);
                 ManualTimeClockService.lockEmployee(conn, userIdForClock(conn, clockId));
@@ -505,7 +516,7 @@ public final class TimeClockAutoCloseService {
                             : "The time-clock record was not found.");
                 }
                 insertAdjustment(conn, clockId, userId, "CORRECT", before, after,
-                        correction.reason().trim(), actorUserId, actorName);
+                        correction.reason().trim(), actorUserId, actorName, adjustmentId);
     }
 
     private static ZoneId zoneForClock(Connection conn, long clockId) throws SQLException {
@@ -619,6 +630,12 @@ public final class TimeClockAutoCloseService {
     private static void insertAdjustment(Connection conn, long clockId, int userId, String action,
                                          PunchValues before, PunchValues after, String reason,
                                          Integer actorUserId, String actorName) throws SQLException {
+        insertAdjustment(conn, clockId, userId, action, before, after, reason, actorUserId, actorName, UUID.randomUUID());
+    }
+
+    private static void insertAdjustment(Connection conn, long clockId, int userId, String action,
+                                         PunchValues before, PunchValues after, String reason,
+                                         Integer actorUserId, String actorName, UUID adjustmentId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
                 INSERT INTO employee_time_clock_adjustments (
                     adjustment_id, clock_id, user_id, action_type,
@@ -627,7 +644,7 @@ public final class TimeClockAutoCloseService {
                     reason, actor_user_id, actor_name
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)) {
-            ps.setObject(1, UUID.randomUUID()); ps.setLong(2, clockId); ps.setInt(3, userId); ps.setString(4, action);
+            ps.setObject(1, adjustmentId); ps.setLong(2, clockId); ps.setInt(3, userId); ps.setString(4, action);
             bindValues(ps, 5, before); bindValues(ps, 12, after);
             ps.setString(19, reason);
             setNullableInteger(ps, 20, actorUserId);
@@ -659,7 +676,7 @@ public final class TimeClockAutoCloseService {
                     """)) {
                 ps.setInt(1, userId); ps.setDate(2, Date.valueOf(workDate)); ps.setLong(3, excludedClockId);
                 try (ResultSet rs = ps.executeQuery()) {
-                    return rs.next() ? null : normalizeMoney(rate);
+                    return rs.next() ? null : DailyPayDayService.dailyPay(rate, DailyPayDayService.isHalfDay(conn,userId,workDate));
                 }
             }
         }

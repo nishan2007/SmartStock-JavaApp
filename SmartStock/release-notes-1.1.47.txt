@@ -1,0 +1,9 @@
+SmartStock 1.1.47
+
+Fixes cross-store standard product synchronization when stores independently create products, brands or item types with the same numeric ID. Shared catalog identities preserve existing local products, stock and sales history, map imported references, and prevent duplicates on repeat imports and return syncs. Upgrade both store servers. Genuine SKU or barcode conflicts still require review.
+
+Cross-store return restocking now requires a verified source-to-local product mapping before changing stock.
+
+Includes the shared-workspace fixes for OneDrive image reconciliation timeouts and image transfer, authenticated LAN HTTPS transport, and status resource reporting. Older installed Windows runtimes can read available memory through Windows when the optional Java management module is absent.
+
+Includes the current shared-workspace SmartStock changes. This is an application update ZIP only; it does not install PostgreSQL, replace the Java runtime, or update installed applications automatically. AI model files remain separate from the update. SmartStudio's standalone application keeps its separate release channel.

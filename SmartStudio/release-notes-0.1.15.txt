@@ -1,0 +1,7 @@
+SmartStudio 0.1.15
+
+Includes Business Cards with multi-page templates, Excel/table mail merge, numbering, sheet previews and PDF export.
+Badge template artwork is cached for faster scrolling.
+Template zoom controls and Ctrl + mouse wheel zoom, with Fit and navigation scrollbars.
+Undo and Redo for template edits: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z; each drag is one undo step.
+Uses the SmartStock 1.1.31 client. AI model weights remain outside application packages.

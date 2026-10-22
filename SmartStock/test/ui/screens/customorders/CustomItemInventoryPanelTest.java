@@ -9,6 +9,75 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CustomItemInventoryPanelTest {
+    @Test void variantIdentifiersRevealOnlyMatchingChildAndKeepParentContext()throws Exception{
+        SwingUtilities.invokeAndWait(()->{
+            var state=LanJson.create().fromJson("""
+                {"items":[{"itemId":1,"name":"Cotton shirt","active":true,"hasVariants":true,"extraBarcodes":["PARENT-ALT"],"variants":[
+                  {"variantId":11,"itemId":1,"name":"Blue","sku":"BLUE-S-0042","barcode":"12345678","extraBarcodes":["ALT-777"],"active":true},
+                  {"variantId":12,"itemId":1,"name":"Red","sku":"RED-L-0043","barcode":"87654321","active":true}
+                ]}],"materials":[],"presets":[],"placements":[]}
+                """,State.class);
+            var panel=new CustomItemInventoryPanel(null,()->{},(a,b)->{},id->{});panel.setState(state);
+            for(String query:java.util.List.of("BLUE-S-0042","blues0042","1234-5678","ALT777","cotton BLUE-S-0042")){
+                panel.search.setText(query);assertEquals(2,panel.table.getRowCount(),query);
+                assertEquals("    Blue",panel.table.getModel().getValueAt(1,0),query);
+            }
+            panel.search.setText("PARENT-ALT");assertEquals(3,panel.table.getRowCount());
+            panel.search.setText("unknown-code");assertEquals(0,panel.table.getRowCount());
+        });
+    }
+
+    @Test void categoryDropdownReplacesPreviousCategoryAndDisablesShirtControls()throws Exception{
+        SwingUtilities.invokeAndWait(()->{
+            var state=LanJson.create().fromJson("""
+                {"items":[{"itemId":1,"name":"Item","active":true,"isShirt":true,"variants":[]}],"materials":[],"presets":[],"placements":[]}
+                """,State.class);
+            var panel=new CustomItemInventoryPanel(null,()->{},(a,b)->{},id->{});panel.setState(state);
+            var model=panel.table.getModel();assertEquals("Category",model.getColumnName(15));assertEquals(22,model.getColumnCount());
+            assertTrue(model.isCellEditable(0,18));model.setValueAt(services.CustomItemCategory.LASER,0,15);
+            assertFalse(panel.staged("I:1").get("isShirt").getAsBoolean());assertTrue(panel.staged("I:1").get("isLaser").getAsBoolean());assertFalse(model.isCellEditable(0,18));
+            model.setValueAt(services.CustomItemCategory.BUSINESS_CARDS,0,15);
+            assertFalse(panel.staged("I:1").get("isLaser").getAsBoolean());assertTrue(panel.staged("I:1").get("isBusinessCards").getAsBoolean());
+            model.setValueAt(services.CustomItemCategory.NONE,0,15);assertFalse(panel.staged("I:1").get("isBusinessCards").getAsBoolean());
+        });
+    }
+
+    @Test void shirtDropdownsStageParentSettingsAndDisablePoloNeckline()throws Exception{
+        SwingUtilities.invokeAndWait(()->{
+            var state=LanJson.create().fromJson("{\"items\":[{\"itemId\":1,\"name\":\"Shirt\",\"active\":true,\"isShirt\":true,\"variants\":[]}],\"materials\":[],\"presets\":[],\"placements\":[]}",State.class);
+            var panel=new CustomItemInventoryPanel(null,()->{},(a,b)->{},id->{});panel.setState(state);
+            var model=panel.table.getModel();assertTrue(model.isCellEditable(0,18));assertTrue(panel.table.getColumnModel().getColumn(panel.table.convertColumnIndexToView(19)).getCellEditor() instanceof DefaultCellEditor);
+            model.setValueAt(true,0,18);model.setValueAt("Dry-fit",0,19);model.setValueAt("Polo",0,20);
+            var config=panel.staged("I:1").getAsJsonObject("shirtDesignerConfig");assertTrue(config.get("websiteEnabled").getAsBoolean());assertEquals("DRY_FIT",config.get("fabric").getAsString());assertEquals("COLLARED",config.get("shirtType").getAsString());assertFalse(model.isCellEditable(0,21));assertEquals("",model.getValueAt(0,21));
+            model.setValueAt("T-shirt",0,20);assertTrue(model.isCellEditable(0,21));model.setValueAt("V-neck",0,21);assertEquals("V",panel.staged("I:1").getAsJsonObject("shirtDesignerConfig").get("neckline").getAsString());
+        });
+    }
+    @Test void searchMatchesVisibleValuesAndCombinedParentVariantTerms()throws Exception{
+        SwingUtilities.invokeAndWait(()->{
+            var state=LanJson.create().fromJson("""
+                {"items":[{"itemId":1,"name":"Cotton Shirt","active":true,"hasVariants":true,"variants":[{"variantId":11,"itemId":1,"name":"Small","color":"Blue","active":true},{"variantId":12,"itemId":1,"name":"Large","color":"Red","active":true}]},{"itemId":2,"name":"Mug","active":true,"variants":[]}],"materials":[],"presets":[],"placements":[]}
+                """,State.class);
+            var panel=new CustomItemInventoryPanel(null,()->{},(a,b)->{},id->{});panel.setState(state);
+            panel.search.setText(" SHIRT   blue ");assertEquals(2,panel.table.getRowCount());
+            assertTrue(panel.table.getValueAt(1,0).toString().contains("Small"));
+            panel.search.setText("name");assertEquals(0,panel.table.getRowCount());
+            panel.search.setText("red");assertEquals(2,panel.table.getRowCount());
+            assertTrue(panel.table.getValueAt(1,0).toString().contains("Large"));
+            panel.search.setText("");assertEquals(2,panel.table.getRowCount());
+        });
+    }
+    @Test void shirtFlagIsEditableOnParentInheritedAndFilterable()throws Exception{
+        SwingUtilities.invokeAndWait(()->{
+            var state=LanJson.create().fromJson("""
+                {"items":[{"itemId":1,"name":"Cotton","active":true,"isShirt":true,"hasVariants":true,"variants":[{"variantId":11,"itemId":1,"name":"M","active":true}]},{"itemId":2,"name":"Mug","active":true,"variants":[]}],"materials":[],"presets":[],"placements":[]}
+                """,State.class);
+            var panel=new CustomItemInventoryPanel(null,()->{},(a,b)->{},id->{});panel.setState(state);
+            panel.shirtsOnly.doClick();assertEquals(1,panel.table.getRowCount());toggle(panel);
+            int shirt=panel.table.convertColumnIndexToView(15);assertEquals("Shirts",panel.table.getValueAt(1,shirt));assertFalse(panel.table.isCellEditable(1,shirt));
+            panel.table.setValueAt("None / Other",0,shirt);assertFalse(panel.staged("I:1").get("isShirt").getAsBoolean());assertEquals("None / Other",panel.table.getValueAt(1,shirt));
+            panel.shirtsOnly.doClick();panel.shirtsOnly.doClick();assertEquals(0,panel.table.getRowCount());
+        });
+    }
     @Test void descriptionFollowsNameAndTemplateSizesCanBeShownWithInheritance()throws Exception{
         SwingUtilities.invokeAndWait(()->{
             String source="""

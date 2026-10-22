@@ -116,7 +116,8 @@ public final class CustomOrderDataService {
         }
     }
 
-    public record CustomerOption(Integer customerId, String name, String phone, String accountNumber, String email,boolean requireChargeAuthorization,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent) {
+    public record CustomerOption(Integer customerId, String name, String phone, String accountNumber, String email,boolean requireChargeAuthorization,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent,boolean customOrderDepositExempt) {
+        public CustomerOption(Integer customerId,String name,String phone,String accountNumber,String email,boolean requireChargeAuthorization,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent){this(customerId,name,phone,accountNumber,email,requireChargeAuthorization,customOrderDiscountEnabled,customOrderDiscountPercent,false);}
         @Override public String toString() {
             String account=accountNumber==null||accountNumber.isBlank()?"":accountNumber+" - ";
             String contact=email!=null&&!email.isBlank()?email:phone;
@@ -173,7 +174,18 @@ public final class CustomOrderDataService {
             String lineDiscountByName, String lineDiscountReason, BigDecimal minimumDepositPercent,
             BigDecimal originalBasePrice, BigDecimal priceOverridePrice, String priceOverrideReason,
             Integer priceOverrideByUserId, String priceOverrideByName, List<PrintAddonRequest> printAddons,
-            String lineDiscountApprovalToken, String priceOverrideApprovalToken, String itemSize, String itemColor, CustomerSuppliedItem customerItem) {
+            String lineDiscountApprovalToken, String priceOverrideApprovalToken, String itemSize, String itemColor, CustomerSuppliedItem customerItem, Integer inventoryProductId) {
+        public OrderLineRequest(
+            Long customItemId, Long customVariantId, String itemName, String variantName, String pricingType,
+            BigDecimal unitPrice, String customizationDetails, String orderInstructions, BigDecimal widthValue,
+            BigDecimal lengthValue, String dimensionUnit, BigDecimal areaValue, String areaUnit, BigDecimal areaPrice,
+            BigDecimal baseItemPrice, Long printMaterialId, String printMaterialName, Long printSizePresetId,
+            String printSizeName, BigDecimal printCharge, int printLineCount, BigDecimal originalLineTotal,
+            BigDecimal lineDiscountPercent, BigDecimal lineDiscountAmount, Integer lineDiscountByUserId,
+            String lineDiscountByName, String lineDiscountReason, BigDecimal minimumDepositPercent,
+            BigDecimal originalBasePrice, BigDecimal priceOverridePrice, String priceOverrideReason,
+            Integer priceOverrideByUserId, String priceOverrideByName, List<PrintAddonRequest> printAddons,
+            String lineDiscountApprovalToken, String priceOverrideApprovalToken, String itemSize, String itemColor, CustomerSuppliedItem customerItem) { this(customItemId,customVariantId,itemName,variantName,pricingType,unitPrice,customizationDetails,orderInstructions,widthValue,lengthValue,dimensionUnit,areaValue,areaUnit,areaPrice,baseItemPrice,printMaterialId,printMaterialName,printSizePresetId,printSizeName,printCharge,printLineCount,originalLineTotal,lineDiscountPercent,lineDiscountAmount,lineDiscountByUserId,lineDiscountByName,lineDiscountReason,minimumDepositPercent,originalBasePrice,priceOverridePrice,priceOverrideReason,priceOverrideByUserId,priceOverrideByName,printAddons,lineDiscountApprovalToken,priceOverrideApprovalToken,itemSize,itemColor,customerItem,null); }
         public OrderLineRequest(
             Long customItemId, Long customVariantId, String itemName, String variantName, String pricingType,
             BigDecimal unitPrice, String customizationDetails, String orderInstructions, BigDecimal widthValue,

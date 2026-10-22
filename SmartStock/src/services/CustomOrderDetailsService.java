@@ -7,7 +7,7 @@ import java.util.*;
 public final class CustomOrderDetailsService {
     private CustomOrderDetailsService() {}
     public static Map<String,Object> read(Connection c,long id,int location)throws SQLException {
-        var summaries=rows(c,"SELECT custom_order_id,order_number,customer_name,customer_phone,status,due_date,assigned_to_name,payment_method,payment_status,payment_reference,total_amount,amount_paid,balance_due,order_notes,invoice_billed,pricing_state,pricing_defer_reason,pricing_defer_by_name,pricing_finalized_at,pricing_finalized_by_name FROM custom_orders WHERE custom_order_id=? AND location_id=?",id,location);
+        var summaries=rows(c,"SELECT custom_order_id,customer_id,loyalty_discount_amount,order_number,customer_name,customer_phone,status,due_date,assigned_to_name,payment_method,payment_status,payment_reference,total_amount,amount_paid,balance_due,order_notes,invoice_billed,pricing_state,pricing_defer_reason,pricing_defer_by_name,pricing_finalized_at,pricing_finalized_by_name FROM custom_orders WHERE custom_order_id=? AND location_id=?",id,location);
         if(summaries.isEmpty())throw new SQLException("Order was not found for this store.");
         Map<String,Object> result=new LinkedHashMap<>();result.put("summary",summaries.get(0));
         result.put("lines",rows(c,"SELECT custom_order_line_id,custom_item_id,custom_variant_id,width_value,length_value,dimension_unit,area_value,area_unit,area_price,item_name,variant_name,item_size,item_color,line_total,production_status,delivery_status,return_status,returned_amount,customization_details,order_instructions FROM custom_order_lines WHERE custom_order_id=? ORDER BY sort_order,custom_order_line_id",id));

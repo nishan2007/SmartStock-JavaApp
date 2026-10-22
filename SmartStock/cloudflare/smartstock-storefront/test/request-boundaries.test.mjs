@@ -102,11 +102,11 @@ test('custom requests and proofs go only to their selected store, never a backup
    throw Error('Custom request was forwarded to an origin');
  };
  try{
-   for(const route of ['custom-quote','custom-quote-file','proof-file','proof-decision','favorite','favorite-state']){
+   for(const route of ['shirt-estimate','shirt-finalize','custom-quote','custom-quote-file','proof-file','proof-decision','favorite','favorite-state']){
      const response=await worker.fetch(new Request('https://shop.test/shop/api/v1/'+route,{method:'POST',headers:{Origin:'https://shop.test','X-Storefront-Request':'same-origin'},body:JSON.stringify({storeId:1,requestId:'test'})}),env);
      assert.equal(response.status,503);
    }
-   assert.equal(calls.length,12);
+   assert.equal(calls.length,16);
  }finally{globalThis.fetch=old;}
 });
 test('oversized custom artwork is rejected before contacting a store',async()=>{

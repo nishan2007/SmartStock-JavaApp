@@ -39,6 +39,7 @@ public class ChangeBasket extends JFrame {
     private final JButton updateButton = new JButton("Update Change");
     private final JButton clearButton = new JButton("Clear Qty");
     private final JButton refreshButton = new JButton("Refresh");
+    private final JButton historyButton = new JButton("History");
     private final JButton backButton = new JButton("Main Menu");
 
     private BigDecimal targetAmount = BigDecimal.ZERO;
@@ -88,6 +89,7 @@ public class ChangeBasket extends JFrame {
         clearButton.addActionListener(e -> clearQuantities());
         updateButton.addActionListener(e -> updateChange());
         refreshButton.addActionListener(e -> loadState());
+        historyButton.addActionListener(e -> showHistory());
         backButton.addActionListener(e -> NavigationManager.showMainMenu(this));
 
         addWindowListener(new java.awt.event.WindowAdapter() {
@@ -117,6 +119,7 @@ public class ChangeBasket extends JFrame {
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         actions.setOpaque(false);
         actions.add(refreshButton);
+        actions.add(historyButton);
         actions.add(backButton);
 
         panel.add(titleStack, BorderLayout.WEST);
@@ -175,22 +178,35 @@ public class ChangeBasket extends JFrame {
             statusLabel.setText("You do not have permission to count the change basket.");
             updateButton.setEnabled(false);
             clearButton.setEnabled(false);
+            historyButton.setEnabled(false);
             resetTable();
             return;
         }
 
-        CachedUiLoader.load(this, "change-basket:state", LanApiClient.ChangeBasketState.class,
+        CachedUiLoader.load(this, "change-basket:state:" + SessionManager.getCurrentLocationId(), LanApiClient.ChangeBasketState.class,
                 SessionDataCache.SCREEN_TTL, loadingState,
                 LanApiClient::loadChangeBasketState, this::applyState);
     }
 
     private void applyState(LanApiClient.ChangeBasketState state) {
         targetAmount=state.targetAmount()==null?BigDecimal.ZERO:state.targetAmount();
-            storeLabel.setText(state.storeName());targetLabel.setText(CURRENCY.format(targetAmount));statusLabel.setText("Count every bill in the change basket. The total should match the configured target.");
-        updateButton.setEnabled(true);clearButton.setEnabled(true);resetTable();
+        storeLabel.setText(state.storeName());targetLabel.setText(CURRENCY.format(targetAmount));
+        LanApiClient.ChangeBasketUpdate latest=state.latestUpdate();
+        statusLabel.setText(latest==null?"No saved change basket count yet.":
+                "Last saved: " + displayTime(latest.updatedAt()) + " by " + latest.updatedByName());
+        updateButton.setEnabled(true);clearButton.setEnabled(true);historyButton.setEnabled(true);
+        resetTable();
+        if(latest!=null && latest.denominationCounts()!=null) {
+            updatingTable=true;
+            for(int row=0;row<DENOMINATIONS.length;row++)
+                denominationModel.setValueAt(latest.denominationCounts().getOrDefault(DENOMINATIONS[row],0),row,1);
+            updatingTable=false;
+            recalculate();
+        }
     }
 
     private void resetTable() {
+        if (denominationTable.isEditing()) denominationTable.getCellEditor().cancelCellEditing();
         updatingTable = true;
         denominationModel.setRowCount(0);
         for (int denomination : DENOMINATIONS) {
@@ -232,6 +248,7 @@ public class ChangeBasket extends JFrame {
     }
 
     private void clearQuantities() {
+        if (denominationTable.isEditing()) denominationTable.getCellEditor().cancelCellEditing();
         updatingTable = true;
         for (int row = 0; row < DENOMINATIONS.length; row++) {
             denominationModel.setValueAt(0, row, 1);
@@ -242,6 +259,7 @@ public class ChangeBasket extends JFrame {
     }
 
     private void updateChange() {
+        if (denominationTable.isEditing() && !denominationTable.getCellEditor().stopCellEditing()) return;
         Integer locationId = SessionManager.getCurrentLocationId();
         if (locationId == null) {
             JOptionPane.showMessageDialog(this, "Select a store before saving a change basket update.", "Change Basket", JOptionPane.WARNING_MESSAGE);
@@ -271,7 +289,8 @@ public class ChangeBasket extends JFrame {
             if(pendingUpdateKey==null||!fingerprint.equals(pendingUpdateFingerprint)){pendingUpdateFingerprint=fingerprint;pendingUpdateKey=UUID.randomUUID().toString();}
             String mutationKey=pendingUpdateKey;
             UiTaskRunner.submit(this,"change-basket.update",()->LanApiClient.updateChangeBasket(counts,mutationKey),updateId->{pendingUpdateKey=null;pendingUpdateFingerprint=null;
-            SessionDataCache.invalidate("change-basket:state");
+            SessionDataCache.invalidate("change-basket:state:" + locationId);
+            loadState();
             JOptionPane.showMessageDialog(
                     this,
                     "Change basket update saved.\nUpdate ID: " + updateId
@@ -284,6 +303,50 @@ public class ChangeBasket extends JFrame {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save change basket update: " + ex.getMessage(), "Change Basket", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private static String displayTime(String value) {
+        if(value==null)return "";
+        try{return java.time.OffsetDateTime.parse(value).atZoneSameInstant(java.time.ZoneId.of("America/Guyana"))
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));}
+        catch(java.time.DateTimeException ex){return value;}
+    }
+
+    private void showHistory() {
+        JDialog dialog=new JDialog(this,"Change Basket History — " + storeLabel.getText(),true);
+        dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+        DefaultTableModel model=new DefaultTableModel(new Object[]{"Update","Saved (Guyana)","User","Device","Target","Counted","Short / Extra",
+                "$5,000 Qty","$2,000 Qty","$1,000 Qty","$500 Qty","$100 Qty","$50 Qty","$20 Qty","Notes"},0) {
+            @Override public boolean isCellEditable(int row,int column){return false;}
+        };
+        JTable table=new JTable(model);table.setRowHeight(30);table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+        for(int i=0;i<table.getColumnCount();i++)table.getColumnModel().getColumn(i).setPreferredWidth(i==1||i==2||i==3||i==14?180:110);
+        JLabel message=new JLabel("Loading history...");
+        JButton previous=new JButton("Newer"),next=new JButton("Older"),refresh=new JButton("Refresh");
+        int[] offset={0};
+        Runnable load=()->{
+            previous.setEnabled(false);next.setEnabled(false);refresh.setEnabled(false);message.setText("Loading history...");
+            UiTaskRunner.submit(dialog,"change-basket.history",()->LanApiClient.loadChangeBasketHistory(offset[0]),history->{
+                model.setRowCount(0);
+                for(LanApiClient.ChangeBasketUpdate update:history.updates()) {
+                    Object[] row=new Object[15];row[0]=update.updateId();row[1]=displayTime(update.updatedAt());
+                    row[2]=update.updatedByName();row[3]=update.deviceName();row[4]=CURRENCY.format(update.targetAmount());
+                    row[5]=CURRENCY.format(update.countedAmount());row[6]=formatVariance(update.variance());
+                    for(int i=0;i<DENOMINATIONS.length;i++)row[7+i]=update.denominationCounts()==null?0:update.denominationCounts().getOrDefault(DENOMINATIONS[i],0);
+                    row[14]=update.notes();model.addRow(row);
+                }
+                message.setText(model.getRowCount()==0?"No saved updates.":"Updates " + (offset[0]+1) + "–" + (offset[0]+model.getRowCount()) + " (newest first)");
+                previous.setEnabled(offset[0]>0);next.setEnabled(history.hasMore());refresh.setEnabled(true);
+            },failure->{message.setText("Could not load history: " + failure.getMessage());refresh.setEnabled(true);});
+        };
+        previous.addActionListener(e->{offset[0]=Math.max(0,offset[0]-100);load.run();});
+        next.addActionListener(e->{offset[0]+=100;load.run();});refresh.addActionListener(e->load.run());
+        JPanel controls=new JPanel(new FlowLayout(FlowLayout.RIGHT));controls.add(previous);controls.add(next);controls.add(refresh);
+        JPanel content=new JPanel(new BorderLayout(10,10));content.setBorder(new EmptyBorder(12,12,12,12));
+        content.add(message,BorderLayout.NORTH);content.add(new JScrollPane(table),BorderLayout.CENTER);content.add(controls,BorderLayout.SOUTH);
+        dialog.setContentPane(content);dialog.setSize(1100,500);dialog.setLocationRelativeTo(this);
+        dialog.addWindowListener(new java.awt.event.WindowAdapter(){@Override public void windowOpened(java.awt.event.WindowEvent e){load.run();}});
+        dialog.setVisible(true);
     }
 
     private Map<Integer, Integer> denominationCounts() {

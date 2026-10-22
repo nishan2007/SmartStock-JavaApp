@@ -36,6 +36,12 @@ final class LanSalesService {
     }
 
     static Map<String,Object> checkoutLockedStorefront(Connection connection,JsonObject body,UUID deviceId,int userId,String userName,int locationId,ApprovalConsumer approvalConsumer,JsonObject lockedQuote)throws Exception {
+        return checkoutInternal(connection,body,deviceId,userId,userName,locationId,approvalConsumer,lockedQuote,false);
+    }
+    static Map<String,Object> preview(Connection connection,JsonObject body,UUID deviceId,int userId,String userName,int locationId,ApprovalConsumer approvalConsumer)throws Exception {
+        return checkoutInternal(connection,body,deviceId,userId,userName,locationId,approvalConsumer,null,true);
+    }
+    private static Map<String,Object> checkoutInternal(Connection connection,JsonObject body,UUID deviceId,int userId,String userName,int locationId,ApprovalConsumer approvalConsumer,JsonObject lockedQuote,boolean preview)throws Exception {
         StorefrontService.lock(connection,locationId);
         CheckoutRequest request = GSON.fromJson(body, CheckoutRequest.class);
         validateRequest(request);
@@ -131,9 +137,25 @@ final class LanSalesService {
                 .divide(HUNDRED, 2, RoundingMode.HALF_UP));
         BigDecimal preVatTotal = money(afterLineDiscounts.subtract(saleDiscountAmount).max(BigDecimal.ZERO));
         BigDecimal vatAmount = money(vatBeforeSaleDiscount.multiply(saleMultiplier));
+        UUID loyaltyDocument=request.loyaltyDocumentUuid()==null?UUID.randomUUID():request.loyaltyDocumentUuid();
+        BigDecimal loyaltyEligible=BigDecimal.ZERO,eligibleVat=BigDecimal.ZERO;
+        Set<Integer> eligibleProducts=new HashSet<>();
+        for(ValidatedLine line:lines) if(LoyaltyCheckout.eligible(connection,line.catalog().productId())) {
+            eligibleProducts.add(line.catalog().productId());
+            BigDecimal net=money(line.enteredPrice().multiply(BigDecimal.valueOf(line.quantity())).subtract(line.lineDiscountAmount()).multiply(saleMultiplier));
+            loyaltyEligible=loyaltyEligible.add(net);
+            BigDecimal rate=config.vatEnabled()?(config.departmentVat()?line.catalog().departmentVatRate():config.fixedVatRate()):BigDecimal.ZERO;
+            eligibleVat=eligibleVat.add(money(net.multiply(rate).divide(HUNDRED,2,RoundingMode.HALF_UP)));
+        }
+        if(lockedQuote!=null && request.loyaltyPoints()>0)throw new SQLException("Apply loyalty through the original order before payment.");
+        BigDecimal loyaltyDiscount=LoyaltyCheckout.reserve(connection,loyaltyDocument,request.customerId(),request.loyaltyPoints(),loyaltyEligible,locationId,preview);
+        BigDecimal loyaltyMultiplier=loyaltyEligible.signum()==0?BigDecimal.ONE:BigDecimal.ONE.subtract(loyaltyDiscount.divide(loyaltyEligible,12,RoundingMode.HALF_UP));
+        preVatTotal=preVatTotal.subtract(loyaltyDiscount);
+        if(loyaltyDiscount.signum()>0)vatAmount=vatAmount.subtract(money(eligibleVat.multiply(BigDecimal.ONE.subtract(loyaltyMultiplier))));
         BigDecimal unroundedTotal = money(preVatTotal.add(vatAmount));
         BigDecimal total = roundSaleTotal(unroundedTotal, config.roundToNearestTwenty());
         if(lockedQuote!=null) total=lockedQuote.get("total").getAsBigDecimal();
+        if(preview)return Map.of("total",total,"discount",loyaltyDiscount,"eligible",loyaltyEligible);
         if (total.signum() <= 0) throw new SQLException("Sale total must be greater than zero.");
         BigDecimal cashCollected = money(request.cashCollected());
         if (cashPayment && cashCollected.compareTo(total) < 0) {
@@ -149,24 +171,40 @@ final class LanSalesService {
                 connection, locationId, deviceId);
         int saleId = insertSale(connection, request, deviceId, userId, userName, locationId, drawer,
                 receipt, grossSubtotal, money(grossSubtotal.subtract(preVatTotal).add(vatAmount).subtract(vatAmount)),
-                saleDiscount, vatAmount, total, saleApproval,customerSaleDiscount);
+                saleDiscount, vatAmount, total, saleApproval,customerSaleDiscount,loyaltyDocument,loyaltyDiscount);
         insertSaleAudit(connection, saleId, null, request.customerId(), null, locationId, userId, userName,
                 deviceId, "SALE_CREATED", "SALE", total,
                 "receipt=" + receipt.receiptNumber() + "; payment_method=" + request.paymentMethod()+
                         "; customer_discount_applied="+(customerSaleDiscount.signum()>0)+"; customer_discount_percent="+customerSaleDiscount);
 
+        BigDecimal loyaltyAllocated=BigDecimal.ZERO,eligibleCumulative=BigDecimal.ZERO,remainingNet=preVatTotal;
+        int lineIndex=0;
         for (ValidatedLine line : lines) {
             BigDecimal chargedUnitPrice = money(line.enteredPrice()
                     .multiply(BigDecimal.ONE.subtract(line.discountPercent().divide(HUNDRED, 6, RoundingMode.HALF_UP)))
                     .multiply(saleMultiplier));
-            BigDecimal lineAmount = money(chargedUnitPrice.multiply(BigDecimal.valueOf(line.quantity())));
+            BigDecimal lineAmount=money(chargedUnitPrice.multiply(BigDecimal.valueOf(line.quantity())));
+            if(loyaltyDiscount.signum()>0){
+            lineAmount=money(line.enteredPrice().multiply(BigDecimal.valueOf(line.quantity())).subtract(line.lineDiscountAmount()).multiply(saleMultiplier));
+            if(eligibleProducts.contains(line.catalog().productId())){
+                eligibleCumulative=eligibleCumulative.add(lineAmount);
+                BigDecimal upto=loyaltyEligible.signum()==0?BigDecimal.ZERO:loyaltyDiscount.multiply(eligibleCumulative).divide(loyaltyEligible,2,RoundingMode.DOWN);
+                lineAmount=lineAmount.subtract(upto.subtract(loyaltyAllocated));loyaltyAllocated=upto;
+            }
+            if(++lineIndex==lines.size())lineAmount=remainingNet;
+            remainingNet=remainingNet.subtract(lineAmount);
+            chargedUnitPrice=lineAmount.divide(BigDecimal.valueOf(line.quantity()),2,RoundingMode.HALF_UP);
+            }
             int saleItemId = insertSaleItemAndAudit(connection, saleId, request.customerId(), line,
                     chargedUnitPrice, lineAmount, locationId, userId, userName, deviceId);
+            try(var p=connection.prepareStatement("UPDATE sale_items SET loyalty_eligible=?,loyalty_net_amount=? WHERE sale_item_id=?")){p.setBoolean(1,eligibleProducts.contains(line.catalog().productId()));p.setBigDecimal(2,lineAmount);p.setInt(3,saleItemId);p.executeUpdate();}
             if ("INVENTORY".equals(line.catalog().productType())) {
                 applyInventory(connection, saleId, saleItemId, line, locationId, userId, userName, deviceId);
             }
         }
 
+        LoyaltyCheckout.record(connection,loyaltyDocument,request.loyaltyPoints(),loyaltyDiscount);
+        LoyaltyWorker.captureLines(connection,loyaltyDocument);
         if (request.customerId() != null) {
             long accountTransactionId=insertCustomerTransaction(connection, request.customerId(), saleId,
                     accountPayment ? total : BigDecimal.ZERO,
@@ -314,15 +352,15 @@ final class LanSalesService {
     private static int insertSale(Connection c, CheckoutRequest r, UUID deviceId, int userId, String userName,
                                   int locationId, CashDrawerContext drawer, ServerReceiptNumberManager.ReceiptNumber receipt,
                                   BigDecimal subtotal, BigDecimal discountAmount, BigDecimal discountPercent,
-                                  BigDecimal vat, BigDecimal total, Approval saleApproval,BigDecimal customerDiscount) throws SQLException {
+                                  BigDecimal vat, BigDecimal total, Approval saleApproval,BigDecimal customerDiscount,UUID loyaltyDocument,BigDecimal loyaltyDiscount) throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("""
                 INSERT INTO sales (location_id,user_id,customer_id,total_amount,status,payment_method,payment_status,
                   amount_paid,user_name,receipt_number,receipt_device_id,receipt_sequence,subtotal_amount,
                   discount_percent,discount_amount,vat_amount,vat_rate_percent,vat_mode,payment_reference,
                   transaction_source,device_id,cash_drawer_id,cash_drawer_name,cash_drawer_session_id,
                   discount_override_reason,discount_override_by_user_id,discount_override_by_name,
-                  customer_discount_percent,customer_discount_applied,completed_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+                  customer_discount_percent,customer_discount_applied,sync_uuid,loyalty_discount_amount,completed_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
                 """, Statement.RETURN_GENERATED_KEYS)) {
             int i = 1;
             ps.setInt(i++, locationId); ps.setInt(i++, userId); setInt(ps, i++, r.customerId());
@@ -339,7 +377,7 @@ final class LanSalesService {
             ps.setString(i++, text(r.saleDiscountOverrideReason()));
             setInt(ps, i++, saleApproval == null ? null : saleApproval.approverUserId());
             ps.setString(i++, saleApproval == null ? null : saleApproval.approverName());
-            ps.setBigDecimal(i++,customerDiscount);ps.setBoolean(i,customerDiscount.signum()>0);
+            ps.setBigDecimal(i++,customerDiscount);ps.setBoolean(i++,customerDiscount.signum()>0);ps.setObject(i++,loyaltyDocument);ps.setBigDecimal(i,loyaltyDiscount);
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (!keys.next()) throw new SQLException("Failed to create sale.");
@@ -546,7 +584,7 @@ final class LanSalesService {
     }
     record CheckoutRequest(String paymentMethod,String paymentReference,Integer customerId,BigDecimal saleDiscountPercent,
                            BigDecimal cashCollected,String saleDiscountApprovalToken,String saleDiscountOverrideReason,
-                           List<CheckoutLine> lines,CustomerChargeAuthorizationService.Authorization authorization,boolean applyCustomerDiscount) { }
+                           List<CheckoutLine> lines,CustomerChargeAuthorizationService.Authorization authorization,boolean applyCustomerDiscount,long loyaltyPoints,UUID loyaltyDocumentUuid) { }
     record CheckoutLine(int productId,int quantity,BigDecimal unitPrice,BigDecimal discountPercent,
                         String priceApprovalToken,String priceOverrideReason,String discountApprovalToken,
                         String discountOverrideReason,String miscItemName,boolean miscItem) { }

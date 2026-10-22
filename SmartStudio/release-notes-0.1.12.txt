@@ -1,0 +1,3 @@
+SmartStudio 0.1.12 (Windows build 1012)
+
+Uses SmartStock client 1.1.27, including the current publishing, custom-order and shirt-design integrations. Retains shape editing, continuous dragging, precise arrow-key movement and manual front/back card printing. No model weights are bundled.

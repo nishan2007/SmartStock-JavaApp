@@ -44,6 +44,7 @@ public class CustomerAccounts extends JFrame {
     private JCheckBox activeCheckBox;
     private JCheckBox whatsappOptInCheckBox;
     private JCheckBox requireChargeAuthorizationCheckBox;
+    private JCheckBox customOrderDepositExemptBox;
     private JCheckBox salesDiscountEnabledBox,invoiceDiscountEnabledBox,customOrderDiscountEnabledBox;
     private JTextField salesDiscountPercentField,invoiceDiscountPercentField,customOrderDiscountPercentField;
     private JButton addButton;
@@ -180,6 +181,8 @@ public class CustomerAccounts extends JFrame {
         activeCheckBox = new JCheckBox("Active", true);
         whatsappOptInCheckBox = new JCheckBox("<html>Customer consents to sales documents<br>by WhatsApp</html>");
         requireChargeAuthorizationCheckBox=new JCheckBox("<html>Require representative name and<br>signature for account charges</html>");
+        customOrderDepositExemptBox=new JCheckBox("Allow custom orders without a deposit");
+        customOrderDepositExemptBox.setEnabled(PermissionManager.hasPermission("CUSTOM_ORDER_DEPOSIT_OVERRIDE")||PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES"));
         salesDiscountEnabledBox=new JCheckBox("Apply to sales");salesDiscountPercentField=new JTextField("0",6);
         invoiceDiscountEnabledBox=new JCheckBox("Apply to invoices / quotations");invoiceDiscountPercentField=new JTextField("0",6);
         customOrderDiscountEnabledBox=new JCheckBox("Apply to custom orders");customOrderDiscountPercentField=new JTextField("0",6);
@@ -200,13 +203,14 @@ public class CustomerAccounts extends JFrame {
         addField(formPanel,gbc,10,"Sales discount:",discountControl(salesDiscountEnabledBox,salesDiscountPercentField));
         addField(formPanel,gbc,11,"Invoice discount:",discountControl(invoiceDiscountEnabledBox,invoiceDiscountPercentField));
         addField(formPanel,gbc,12,"Custom-order discount:",discountControl(customOrderDiscountEnabledBox,customOrderDiscountPercentField));
-        addField(formPanel, gbc, 13, "Account Type:", businessAccountCheckBox);
-        addField(formPanel, gbc, 14, "Status:", activeCheckBox);
+        addField(formPanel,gbc,13,"Custom-order deposit:",customOrderDepositExemptBox);
+        addField(formPanel, gbc, 14, "Account Type:", businessAccountCheckBox);
+        addField(formPanel, gbc, 15, "Status:", activeCheckBox);
         JScrollPane notesScrollPane = new JScrollPane(accountNotesArea);
         notesScrollPane.setPreferredSize(new Dimension(240, 96));
-        addField(formPanel, gbc, 15, "Notes:", notesScrollPane);
+        addField(formPanel, gbc, 16, "Notes:", notesScrollPane);
         customerPhotoSelector = ui.helpers.ProductImageHelper.createImageSelector(this);
-        addField(formPanel, gbc, 16, "Photo (optional):", customerPhotoSelector);
+        addField(formPanel, gbc, 17, "Photo (optional):", customerPhotoSelector);
 
         JPanel buttonPanel = new JPanel(new GridLayout(0, 2, 8, 8));
         addButton = new JButton("Add Account");
@@ -243,6 +247,11 @@ public class CustomerAccounts extends JFrame {
         customerTypesButton.addActionListener(e -> openCustomerTypes());
         clearButton.addActionListener(e -> clearFields());
         refreshButton.addActionListener(e -> loadCustomers());
+        if("ADMIN".equalsIgnoreCase(managers.SessionManager.getCurrentRole())) {
+            JButton mergeDuplicates=new JButton("Merge Duplicates");
+            buttonPanel.add(mergeDuplicates);
+            mergeDuplicates.addActionListener(e->mergeDuplicateAccounts());
+        }
         addChargeButton.addActionListener(e -> adjustBalance(true));
         recordPaymentButton.addActionListener(e -> adjustBalance(false));
         transactionHistoryButton.addActionListener(e -> openAccountDetails());
@@ -259,6 +268,33 @@ public class CustomerAccounts extends JFrame {
         wrapper.add(formScroll, BorderLayout.CENTER);
         wrapper.add(buttonPanel, BorderLayout.SOUTH);
         return wrapper;
+    }
+
+    private String pendingMergeFingerprint;
+    private String pendingMergeKey;
+
+    private void mergeDuplicateAccounts() {
+        try {
+            var preview=ResponsiveTask.await(this,"Finding duplicate customer accounts...",LanApiClient::previewCustomerAccountMerges);
+            if(preview==null)return;
+            if(preview.groups().isEmpty()) {JOptionPane.showMessageDialog(this,"No unmerged accounts have the same name and phone number.");return;}
+            DefaultTableModel model=new DefaultTableModel(new Object[]{"Name","Phone","Keep account","Merge accounts","References","Combined balance"},0) {
+                @Override public boolean isCellEditable(int row,int column){return false;}
+            };
+            for(var group:preview.groups())model.addRow(new Object[]{group.name(),group.phone(),group.survivorId(),group.duplicateIds().toString(),
+                    group.references().values().stream().mapToLong(Long::longValue).sum(),group.combinedBalance()});
+            JPanel panel=new JPanel(new BorderLayout(8,8));
+            panel.add(new JLabel("Keep the oldest account in each group and move its duplicates' orders, payments and history to it."),BorderLayout.NORTH);
+            JScrollPane rows=new JScrollPane(new JTable(model));rows.setPreferredSize(new Dimension(850,280));panel.add(rows,BorderLayout.CENTER);
+            panel.add(new JLabel("Old account IDs remain recorded. Existing account limits and discounts are kept; required charge authorization is preserved."),BorderLayout.SOUTH);
+            if(JOptionPane.showConfirmDialog(this,panel,"Merge all matching customer accounts",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE)!=JOptionPane.OK_OPTION)return;
+            if(!preview.fingerprint().equals(pendingMergeFingerprint)) {pendingMergeFingerprint=preview.fingerprint();pendingMergeKey=UUID.randomUUID().toString();}
+            String key=pendingMergeKey;
+            UiTaskRunner.submit(this,"customer-accounts.merge",()->LanApiClient.mergeCustomerAccounts(preview.fingerprint(),key),result->{
+                pendingMergeFingerprint=null;pendingMergeKey=null;SessionDataCache.invalidate("customer-accounts:");clearFields();loadCustomers();
+                JOptionPane.showMessageDialog(this,"Merged "+result.accountsRetired()+" duplicate accounts into "+result.groupsMerged()+" customer accounts.");
+            },error->JOptionPane.showMessageDialog(this,"Unable to merge customer accounts: "+error.getMessage()));
+        }catch(Exception ex){JOptionPane.showMessageDialog(this,"Unable to preview customer duplicates: "+ex.getMessage());}
     }
 
     private void addField(JPanel panel, GridBagConstraints gbc, int row, String label, JComponent field) {
@@ -335,6 +371,7 @@ public class CustomerAccounts extends JFrame {
         accountNotesArea.setCaretPosition(0);
         customerSinceField.setText(selectedAccount==null||selectedAccount.customerSince()==null?"":String.valueOf(selectedAccount.customerSince()));
         whatsappOptInCheckBox.setSelected(selectedAccount!=null&&selectedAccount.whatsappOptIn());
+        customOrderDepositExemptBox.setSelected(selectedAccount!=null&&selectedAccount.customOrderDepositExempt());
         requireChargeAuthorizationCheckBox.setSelected(selectedAccount!=null&&selectedAccount.requireChargeAuthorization());
         salesDiscountEnabledBox.setSelected(selectedAccount!=null&&selectedAccount.salesDiscountEnabled());salesDiscountPercentField.setText(discountText(selectedAccount==null?null:selectedAccount.salesDiscountPercent()));
         invoiceDiscountEnabledBox.setSelected(selectedAccount!=null&&selectedAccount.invoiceDiscountEnabled());invoiceDiscountPercentField.setText(discountText(selectedAccount==null?null:selectedAccount.invoiceDiscountPercent()));
@@ -415,7 +452,7 @@ public class CustomerAccounts extends JFrame {
         }
 
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(null,null,name,customerTypeId,
-                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince,customerPhotoSelector.getImageUrl(),whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),salesDiscountEnabledBox.isSelected(),salesDiscount,invoiceDiscountEnabledBox.isSelected(),invoiceDiscount,customOrderDiscountEnabledBox.isSelected(),customOrderDiscount);
+                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince,customerPhotoSelector.getImageUrl(),whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),salesDiscountEnabledBox.isSelected(),salesDiscount,invoiceDiscountEnabledBox.isSelected(),invoiceDiscount,customOrderDiscountEnabledBox.isSelected(),customOrderDiscount,customOrderDepositExemptBox.isSelected());
         String fingerprint=request.toString();
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
@@ -468,7 +505,7 @@ public class CustomerAccounts extends JFrame {
         }
 
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(selectedCustomerId,accountNumber,name,customerTypeId,
-                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince,customerPhotoSelector.getImageUrl(),whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),salesDiscountEnabledBox.isSelected(),salesDiscount,invoiceDiscountEnabledBox.isSelected(),invoiceDiscount,customOrderDiscountEnabledBox.isSelected(),customOrderDiscount);
+                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince,customerPhotoSelector.getImageUrl(),whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),salesDiscountEnabledBox.isSelected(),salesDiscount,invoiceDiscountEnabledBox.isSelected(),invoiceDiscount,customOrderDiscountEnabledBox.isSelected(),customOrderDiscount,customOrderDepositExemptBox.isSelected());
         String fingerprint=request.toString();
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
@@ -501,7 +538,7 @@ public class CustomerAccounts extends JFrame {
         preparedPhotoRequest = new LanApiClient.CustomerAccountSaveRequest(request.customerId(), request.accountNumber(),
                 request.name(), request.customerTypeId(), request.phone(), request.email(), request.creditLimit(),
                 request.business(), request.active(), request.accountNotes(), request.customerSince(), photo,
-                request.whatsappOptIn(), request.requireChargeAuthorization(),request.salesDiscountEnabled(),request.salesDiscountPercent(),request.invoiceDiscountEnabled(),request.invoiceDiscountPercent(),request.customOrderDiscountEnabled(),request.customOrderDiscountPercent());
+                request.whatsappOptIn(), request.requireChargeAuthorization(),request.salesDiscountEnabled(),request.salesDiscountPercent(),request.invoiceDiscountEnabled(),request.invoiceDiscountPercent(),request.customOrderDiscountEnabled(),request.customOrderDiscountPercent(),request.customOrderDepositExempt());
         preparedPhotoKey = mutationKey;
         return preparedPhotoRequest;
     }
@@ -595,7 +632,7 @@ public class CustomerAccounts extends JFrame {
         businessAccountCheckBox.setSelected(false);
         activeCheckBox.setSelected(true);
         whatsappOptInCheckBox.setSelected(false);
-        requireChargeAuthorizationCheckBox.setSelected(false);
+        requireChargeAuthorizationCheckBox.setSelected(false);customOrderDepositExemptBox.setSelected(false);
         salesDiscountEnabledBox.setSelected(false);salesDiscountPercentField.setText("0");invoiceDiscountEnabledBox.setSelected(false);invoiceDiscountPercentField.setText("0");customOrderDiscountEnabledBox.setSelected(false);customOrderDiscountPercentField.setText("0");
         updateButton.setEnabled(false);
         addChargeButton.setEnabled(false);

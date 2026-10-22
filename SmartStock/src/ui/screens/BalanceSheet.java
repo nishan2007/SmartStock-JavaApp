@@ -96,6 +96,31 @@ public class BalanceSheet extends JFrame {
     private BigDecimal cfExpectedTotal = BigDecimal.ZERO;
     private boolean updatingCfChecker;
 
+    private final javax.swing.table.DefaultTableModel overseasFundModel=new javax.swing.table.DefaultTableModel(new String[]{"Date","Overseas cash activity","Received","Expense / withdrawal"},0){public boolean isCellEditable(int row,int column){return false;}};
+    private LocalDate loadedFrom,loadedTo;
+    private final OverseasCashChecker overseasCashChecker=new OverseasCashChecker();
+    private final JLabel overseasFundTotals=new JLabel("Overseas cash fund");
+    private final JButton overseasWithdrawalButton=new JButton("Overseas cash withdrawal");
+    private String overseasWithdrawalKey;
+    private JPanel buildOverseasFundSection(){
+        JPanel p=new JPanel(new BorderLayout(8,8));p.setOpaque(false);p.setBorder(BorderFactory.createTitledBorder("Separate overseas-order cash fund"));
+        JPanel header=new JPanel(new BorderLayout());header.setOpaque(false);header.add(overseasFundTotals,BorderLayout.CENTER);header.add(overseasWithdrawalButton,BorderLayout.EAST);p.add(header,BorderLayout.NORTH);
+        JTable table=new JTable(overseasFundModel);JScrollPane scroll=new JScrollPane(table);scroll.setPreferredSize(new Dimension(500,140));p.add(scroll,BorderLayout.CENTER);
+        p.add(overseasCashChecker,BorderLayout.EAST);
+        overseasWithdrawalButton.addActionListener(e->showOverseasWithdrawal());return p;
+    }
+    private void showOverseasWithdrawal(){
+        if(currentSheet==null||currentSheet.submissionId()!=null){JOptionPane.showMessageDialog(this,"Refresh the current report before entering a withdrawal.");return;}
+        JTextField amount=new JTextField(),reason=new JTextField();JPanel p=new JPanel(new GridLayout(2,2,8,8));p.add(new JLabel("Amount removed (GYD)"));p.add(amount);p.add(new JLabel("Payee / purpose"));p.add(reason);
+        if(JOptionPane.showConfirmDialog(this,p,"Withdraw overseas cash",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
+        try{BigDecimal value=new BigDecimal(amount.getText().trim());String description=reason.getText().trim();if(value.signum()<=0||description.isBlank())throw new IllegalArgumentException("Enter a positive amount and purpose.");
+            String fingerprint=value.toPlainString()+"|"+description;if(!fingerprint.equals(overseasWithdrawalFingerprint)){overseasWithdrawalFingerprint=fingerprint;overseasWithdrawalKey=java.util.UUID.randomUUID().toString();}
+            String requestKey=overseasWithdrawalKey;overseasWithdrawalButton.setEnabled(false);
+            ui.helpers.UiTaskRunner.submit(this,"overseas-cash.withdraw",()->{BalanceSheetService.withdrawOverseasCash(value,description,requestKey);return true;},ignored->{overseasWithdrawalKey=null;overseasWithdrawalFingerprint=null;overseasWithdrawalButton.setEnabled(true);loadSheet();},error->{overseasWithdrawalButton.setEnabled(true);JOptionPane.showMessageDialog(this,error.getMessage(),"Overseas cash withdrawal",JOptionPane.ERROR_MESSAGE);});
+        }catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Overseas cash withdrawal",JOptionPane.ERROR_MESSAGE);}
+    }
+    private String overseasWithdrawalFingerprint;
+
     public BalanceSheet() {
         setTitle("Balance Sheet");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
@@ -207,6 +232,7 @@ public class BalanceSheet extends JFrame {
 
         mainPanel.add(top, BorderLayout.NORTH);
         mainPanel.add(grid, BorderLayout.CENTER);
+        mainPanel.add(buildOverseasFundSection(),BorderLayout.SOUTH);
         add(mainPanel, BorderLayout.CENTER);
 
         drawerCashTable.setToolTipText("Double-click a drawer to view its count history.");
@@ -509,7 +535,7 @@ public class BalanceSheet extends JFrame {
                     return;
                 }
                 try {
-                    currentSheet = get();
+                    currentSheet = get();loadedFrom=from;loadedTo=to;
                     renderSheet(currentSheet);
                     String sessionText = cashDrawerSessionIds.isEmpty() ? "" : " filtered to " + cashDrawerSessionIds.size() + " draw session(s)";
                     statusLabel.setText("Current draft for " + from + " to " + to + sessionText);
@@ -522,6 +548,11 @@ public class BalanceSheet extends JFrame {
     }
 
     private void renderSheet(services.BalanceSheetService.BalanceSheet sheet) {
+        overseasFundModel.setRowCount(0);var fund=sheet.overseasCash();
+        overseasCashChecker.display(fund,sheet.submissionId()!=null);
+        overseasWithdrawalButton.setEnabled(sheet.submissionId()==null);
+        overseasFundTotals.setText(fund==null?"No separate overseas cash snapshot":"B/F: "+fund.broughtForward()+"   Received: "+fund.received()+"   Expenses: "+fund.expenses()+"   C/F: "+fund.carriedForward()+" GYD");
+        if(fund!=null)for(var l:fund.lines())overseasFundModel.addRow(new Object[]{l.date(),l.description(),l.received(),l.expense()});
         fillIncome(sheet.income(), sheet.totalIncome());
         fill(receivableModel, sheet.receivables(), sheet.totalReceivables());
         fill(expenseModel, sheet.expenses(), sheet.totalExpenses());
@@ -657,9 +688,11 @@ public class BalanceSheet extends JFrame {
             String storeZoneId = StoreTimeZoneHelper.getStoreZoneId();
             String notes = notesArea.getText();
             List<Long> drawerSessionIds = List.copyOf(matchedDrawerSessionIds);
+            if(currentSheet==null||currentSheet.submissionId()!=null||!from.equals(loadedFrom)||!to.equals(loadedTo))throw new IllegalArgumentException("Refresh the selected Balance Sheet dates before verifying overseas cash.");
+            com.google.gson.JsonObject overseasCheck=overseasCashChecker.submission();
             SubmissionResult submitted = ResponsiveTask.await(this, "Submitting balance sheet...", () -> {
                 long submissionId = BalanceSheetService.submitBalanceSheet(
-                        from, to, storeZoneId, notes, drawerSessionIds);
+                        from, to, storeZoneId, notes, drawerSessionIds,overseasCheck);
                 services.EmailOutboxService.QueueResult emailResult;
                 try {
                     emailResult = services.EmailOutboxService.queueBalanceSheetSubmission(submissionId);
@@ -791,8 +824,9 @@ public class BalanceSheet extends JFrame {
         DefaultTableModel income=new DefaultTableModel(new Object[]{"ID","Date","Source","Description","Amount","Reference"},0);
         for(EditableOtherIncome i:context.otherIncome())income.addRow(new Object[]{i.otherIncomeId(),i.incomeDate(),i.sourceName(),i.description(),i.amount(),i.paymentReference()});
         JTable expenseTable=new JTable(expenses),incomeTable=new JTable(income);hideIdColumn(expenseTable);hideIdColumn(incomeTable);
+        expenseTable.getColumnModel().getColumn(1).setCellEditor(new DefaultCellEditor(expenseCategorySelector()));
         JTextArea notes=new JTextArea(context.notes()==null?"":context.notes(),3,60),reason=new JTextArea(2,60);
-        JTabbedPane tabs=new JTabbedPane();tabs.addTab("Expenses / Payables",editableTablePanel(expenseTable,()->expenses.addRow(new Object[]{null,context.periodStart(),"General","","",BigDecimal.ZERO,"CASH","","PAID"})));tabs.addTab("Other Income",editableTablePanel(incomeTable,()->income.addRow(new Object[]{null,context.periodStart(),"","",BigDecimal.ONE,""})));tabs.addTab("Audit History",new JScrollPane(auditText(context)));
+        JTabbedPane tabs=new JTabbedPane();tabs.addTab("Expenses / Payables",editableTablePanel(expenseTable,()->expenses.addRow(new Object[]{null,context.periodStart(),"Other","","",BigDecimal.ZERO,"CASH","","PAID"})));tabs.addTab("Other Income",editableTablePanel(incomeTable,()->income.addRow(new Object[]{null,context.periodStart(),"","",BigDecimal.ONE,""})));tabs.addTab("Audit History",new JScrollPane(auditText(context)));
         JPanel panel=new JPanel(new BorderLayout(0,8));panel.setPreferredSize(new Dimension(980,560));
         JLabel window=new JLabel("Editable until "+context.eligibility().expiresAt().format(DATE_TIME_FORMAT)+"  |  Revision "+context.eligibility().currentRevision());
         panel.add(window,BorderLayout.NORTH);panel.add(tabs,BorderLayout.CENTER);
@@ -932,9 +966,18 @@ public class BalanceSheet extends JFrame {
         return new DrawSessionSelection(from, to, sessionIds, label);
     }
 
+    static JComboBox<String> expenseCategorySelector() {
+        JComboBox<String> categories=new JComboBox<>(services.ExpenseCategories.OPTIONS.toArray(String[]::new));
+        categories.setEditable(true);
+        categories.setMaximumRowCount(12);
+        categories.setToolTipText("Choose a category or type a custom category");
+        return categories;
+    }
+
     private void showExpenseDialog() {
         JTextField dateField = new JTextField(StoreTimeZoneHelper.today().toString(), 12);
-        JTextField categoryField = new JTextField("General", 18);
+        JComboBox<String> categoryField = expenseCategorySelector();
+        categoryField.setSelectedIndex(-1);
         JTextField payeeField = new JTextField(18);
         JTextField amountField = new JTextField(12);
         JComboBox<String> statusBox = new JComboBox<>(new String[]{"PAID", "UNPAID"});
@@ -962,7 +1005,7 @@ public class BalanceSheet extends JFrame {
 
         LocalDate date = parseDate(dateField.getText().trim(), "Expense date");
         BigDecimal amount = parseMoney(amountField.getText().trim());
-        String category = categoryField.getText().trim();
+        String category = services.ExpenseCategories.normalize(java.util.Objects.toString(categoryField.getEditor().getItem(), ""));
         if (date == null || amount == null || category.isBlank()) {
             if (category.isBlank()) {
                 JOptionPane.showMessageDialog(this, "Category is required.", "Log Expense", JOptionPane.WARNING_MESSAGE);

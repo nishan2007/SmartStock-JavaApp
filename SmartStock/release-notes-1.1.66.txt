@@ -1,0 +1,4 @@
+SmartStock 1.1.66
+- Cumulative changes from all current application work, including overseas orders, sale-search corrections, saved badge records and image transparency/background editing.
+- Refresh shared publication document and rendering support used by SmartStudio.
+- Model-free application release; existing store-profile models are retained.

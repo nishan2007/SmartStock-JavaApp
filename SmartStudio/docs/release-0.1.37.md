@@ -1,0 +1,7 @@
+# SmartStudio 0.1.37: printed cut marks
+
+The printed sheet's MediaPrintableArea was set to the card packing margins. External cut marks extend 2.5 mm beyond card edges and could be clipped by that requested area while the full-sheet preview still showed them.
+
+The print path now queries the selected printer's largest supported printable area for the chosen media, refreshes that area after the printer dialog, and keeps it independent from the artwork packing margins. The exact printable validates paper dimensions and all packed artwork/cut-mark bounds before rendering and before sending the job. A printer that cannot accommodate the marks produces a margin-correction message rather than silently clipping. Card dimensions, placement, quantities and templates are unchanged.
+
+Regression tests render the actual Printable with a simulated 300 DPI hardware clip and assert that marks beyond the layout margin remain visible. Tests also cover disabled marks, invalid paper/physical limits, supported-area selection, rotated/duplex offset bounds and page bounds. Hardware output is not proven by these tests; a physical printer test remains required. Published at the user request on 2026-10-17. Exact installer: 225204965 bytes, SHA-256 d86564f80d27a58118590db9257c756c946ec487fdbdd34e382755af2140f5a7. Hosted installer bytes, release metadata and full public download verified. Public Windows selection points to 0.1.37.

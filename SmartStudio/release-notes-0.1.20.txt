@@ -1,0 +1,4 @@
+SmartStudio 0.1.20
+Business cards: detect and remember a local LibreOffice converter, preserve
+complete complex Publisher artwork once per page, and retain imported card sizes.
+Complex page text remains part of its image; new text/images can be added above it.

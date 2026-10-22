@@ -1,0 +1,9 @@
+SmartStock 1.1.57 (Windows build 101057)
+
+- Extends verified OneDrive image storage to employee and customer photos, company logos, badge logos, and general image assets. Servers already using OneDrive migrate the additional categories during reconciliation.
+- Gives employee photos and logos asset-specific OneDrive names to prevent matching filenames from overwriting different images.
+- Makes Image Storage status and errors readable and copyable, including full selected-image errors and server error codes.
+- Retains Supabase recovery copies and preserves authenticated access to private photos. Missing source files still require recovery before migration can be verified.
+- Includes the cumulative application changes from 1.1.56. AI model weights remain outside application updates.
+
+Update both store servers before accepting the expanded migration. Installed upgrade/rollback and live retrieval require separate acceptance. No macOS artifact is included.

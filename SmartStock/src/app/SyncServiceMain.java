@@ -8,6 +8,7 @@ import services.SyncWorker;
 import services.LanApiServer;
 import services.ServerRoleGuard;
 import services.SchedulerWebRuntimeController;
+import services.EmployeeWebRuntimeController;
 import services.WalletEnrollmentServer;
 
 import java.sql.Connection;
@@ -16,15 +17,18 @@ public final class SyncServiceMain {
     private static volatile boolean running = true;
     private static volatile LanApiServer lanApiServer;
     private static volatile SchedulerWebRuntimeController schedulerWeb;
+    private static volatile EmployeeWebRuntimeController employeeWeb;
     private static volatile WalletEnrollmentServer walletEnrollment;
 
     private SyncServiceMain() {
     }
 
     public static void main(String[] args) {
+        services.LanHttpsTransport.preserveDefaultProvider();
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             running = false;
             if (schedulerWeb != null) schedulerWeb.close();
+            if (employeeWeb != null) employeeWeb.close();
             if (walletEnrollment != null) walletEnrollment.close();
             if (lanApiServer != null) {
                 lanApiServer.close();
@@ -96,6 +100,7 @@ public final class SyncServiceMain {
             try {
                 lanApiServer = LanApiServer.start();
                 schedulerWeb = SchedulerWebRuntimeController.start();
+                employeeWeb = EmployeeWebRuntimeController.start();
                 try {
                     walletEnrollment = WalletEnrollmentServer.startIfConfigured();
                 } catch (Exception walletError) {
@@ -116,6 +121,10 @@ public final class SyncServiceMain {
             if (schedulerWeb != null) {
                 schedulerWeb.close();
                 schedulerWeb = null;
+            }
+            if (employeeWeb != null) {
+                employeeWeb.close();
+                employeeWeb = null;
             }
             if (walletEnrollment != null) {
                 walletEnrollment.close();

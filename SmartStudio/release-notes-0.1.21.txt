@@ -1,0 +1,6 @@
+SmartStudio 0.1.21
+Searchable business-card and label template libraries with previews.
+Separate editable source text, movable artwork, simple shapes and table cells.
+Built-in barcode/QR generation, editing and replacement of barcode pictures.
+Large multi-page label support and repeated-artwork deduplication.
+Picture-only lettering and complex WordArt still require visual review.

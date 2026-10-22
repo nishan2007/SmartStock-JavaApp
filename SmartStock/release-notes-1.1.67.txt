@@ -1,0 +1,3 @@
+SmartStock 1.1.67
+- Account-charge receipts show the current account ledger balance, including the posted charge.
+- Signature-required account charges include a blank Signature line at the bottom, also on reprints.

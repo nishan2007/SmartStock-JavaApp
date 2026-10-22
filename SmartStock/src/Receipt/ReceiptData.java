@@ -7,6 +7,9 @@ import java.util.Collections;
 import java.util.List;
 
 public class ReceiptData {
+    private String loyaltySummary="";
+    public String getLoyaltySummary(){return loyaltySummary;}
+    public ReceiptData withLoyaltySummary(String summary){loyaltySummary=summary==null?"":summary;return this;}
     private final int saleId;
     private final String receiptNumber;
     private final Timestamp saleTime;
@@ -15,6 +18,8 @@ public class ReceiptData {
     private final String customerName;
     private final String accountNumber;
     private final String representativeName;
+    private final BigDecimal accountBalance;
+    public BigDecimal getAccountBalance(){return accountBalance;}
     private final String paymentMethod;
     private final String paymentStatus;
     private final String deviceId;
@@ -58,6 +63,10 @@ public class ReceiptData {
         this(saleId,receiptNumber,saleTime,storeName,cashierName,customerName,accountNumber,paymentMethod,paymentStatus,deviceId,subtotalAmount,discountPercent,discountAmount,vatAmount,vatRatePercent,vatMode,totalAmount,amountPaid,returnedAmount,cashCollected,changeDue,items,"");
     }
     public ReceiptData(int saleId,String receiptNumber,Timestamp saleTime,String storeName,String cashierName,String customerName,String accountNumber,String paymentMethod,String paymentStatus,String deviceId,BigDecimal subtotalAmount,BigDecimal discountPercent,BigDecimal discountAmount,BigDecimal vatAmount,BigDecimal vatRatePercent,String vatMode,BigDecimal totalAmount,BigDecimal amountPaid,BigDecimal returnedAmount,BigDecimal cashCollected,BigDecimal changeDue,List<ReceiptItem>items,String representativeName){
+        this(saleId,receiptNumber,saleTime,storeName,cashierName,customerName,accountNumber,paymentMethod,paymentStatus,deviceId,subtotalAmount,discountPercent,discountAmount,vatAmount,vatRatePercent,vatMode,totalAmount,amountPaid,returnedAmount,cashCollected,changeDue,items,representativeName,null);
+    }
+    public ReceiptData(int saleId,String receiptNumber,Timestamp saleTime,String storeName,String cashierName,String customerName,String accountNumber,String paymentMethod,String paymentStatus,String deviceId,BigDecimal subtotalAmount,BigDecimal discountPercent,BigDecimal discountAmount,BigDecimal vatAmount,BigDecimal vatRatePercent,String vatMode,BigDecimal totalAmount,BigDecimal amountPaid,BigDecimal returnedAmount,BigDecimal cashCollected,BigDecimal changeDue,List<ReceiptItem>items,String representativeName,BigDecimal accountBalance){
+        this.accountBalance=accountBalance==null?null:money(accountBalance);
         this.saleId = saleId;
         this.receiptNumber = receiptNumber == null ? "" : receiptNumber;
         this.saleTime = saleTime;

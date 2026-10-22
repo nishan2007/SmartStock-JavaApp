@@ -227,7 +227,7 @@ final class LanRefundService {
                 connection, sale.saleId(), requestedQuantities);
         BigDecimal total = BigDecimal.ZERO;
         for (ValidatedLine line : lines) {
-            total = total.add(line.unitPrice().multiply(BigDecimal.valueOf(line.quantity())));
+            total = total.add(line.refundAmount());
         }
         total = money(total);
         if (total.signum() <= 0) {
@@ -282,7 +282,7 @@ final class LanRefundService {
 
         for (ValidatedLine line : lines) {
             long returnItemId = insertReturnItem(connection, returnId, line);
-            BigDecimal lineAmount = money(line.unitPrice().multiply(BigDecimal.valueOf(line.quantity())));
+            BigDecimal lineAmount = line.refundAmount();
             insertReturnAudit(connection, sale, returnId, returnItemId, line, userId, userName,
                     deviceId, deviceName, "RETURN_LINE_RECORDED", "RETURN_ITEM", lineAmount,
                     line.quantity(), request.reason().trim(), "refund_method=" + refundMethod);
@@ -388,7 +388,7 @@ final class LanRefundService {
                                       IN ('SERVICE', 'NON_INVENTORY')
                             THEN UPPER(COALESCE(si.product_type, p.product_type)) ELSE 'INVENTORY' END,
                        COALESCE((SELECT SUM(sri.quantity) FROM sale_return_items sri
-                                 WHERE sri.sale_item_id = si.sale_item_id), 0),si.custom_item_id,si.custom_variant_id
+                                 WHERE sri.sale_item_id = si.sale_item_id), 0),si.custom_item_id,si.custom_variant_id,si.loyalty_net_amount
                 FROM sale_items si
                 LEFT JOIN products p ON p.product_id = si.product_id
                 WHERE si.sale_id = ?
@@ -410,7 +410,7 @@ final class LanRefundService {
                     }
                     found.add(saleItemId);
                     result.add(new ValidatedLine(saleItemId, rs.getInt(2), requested,
-                            money(rs.getBigDecimal(4)), rs.getString(5),(Long)rs.getObject(7),(Long)rs.getObject(8)));
+                            money(rs.getBigDecimal(4)), rs.getString(5),(Long)rs.getObject(7),(Long)rs.getObject(8),rs.getBigDecimal(9)==null?money(rs.getBigDecimal(4).multiply(BigDecimal.valueOf(requested))):LoyaltyCheckout.refundAmount(rs.getBigDecimal(9),rs.getInt(3),rs.getInt(6),requested)));
                 }
             }
         }
@@ -475,8 +475,8 @@ final class LanRefundService {
     private static long insertReturnItem(Connection c, long returnId, ValidatedLine line)
             throws SQLException {
         try (PreparedStatement ps = c.prepareStatement("""
-                INSERT INTO sale_return_items (return_id,sale_item_id,product_id,quantity,unit_price,custom_item_id,custom_variant_id)
-                VALUES (?,?,?,?,?,?,?)
+                INSERT INTO sale_return_items (return_id,sale_item_id,product_id,quantity,unit_price,custom_item_id,custom_variant_id,loyalty_line_total)
+                VALUES (?,?,?,?,?,?,?,?)
                 """, Statement.RETURN_GENERATED_KEYS)) {
             ps.setLong(1, returnId);
             ps.setInt(2, line.saleItemId());
@@ -485,6 +485,7 @@ final class LanRefundService {
             ps.setBigDecimal(5, line.unitPrice());
             if(line.customItemId()==null)ps.setNull(6,Types.BIGINT);else ps.setLong(6,line.customItemId());
             if(line.customVariantId()==null)ps.setNull(7,Types.BIGINT);else ps.setLong(7,line.customVariantId());
+            ps.setBigDecimal(8,line.refundAmount());
             ps.executeUpdate();
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (!keys.next()) {
@@ -793,7 +794,7 @@ final class LanRefundService {
     }
 
     private record ValidatedLine(int saleItemId, int productId, int quantity,
-                                 BigDecimal unitPrice, String productType,Long customItemId,Long customVariantId) {
+                                 BigDecimal unitPrice, String productType,Long customItemId,Long customVariantId,BigDecimal refundAmount) {
     }
 
     private record BalanceChange(BigDecimal before, BigDecimal after) {

@@ -1,0 +1,1 @@
+Fixes empty business-card and label pickers before the server upgrade or first migration. Existing local designs remain selectable and editable, labeled Local on this computer, while server sharing is unavailable. Shared saves and store sharing still require the updated server.

@@ -43,7 +43,16 @@ final class StorefrontQuoteRequests {
             if(projectSource.entrySet().isEmpty())throw new IllegalArgumentException("This project is no longer available. Choose another project.");
             context=projectSource;
         }
-        String hash=LanSecurity.sha256(location+"|"+auth+"|"+(sourceRequest==null?"":sourceRequest+"|")+project+"|"+topic+"|"+description+"|"+quantity+"|"+size+"|"+color+"|"+material+"|"+phone+"|"+desired);
+        for(String privateKey:java.util.List.of("shirtDesign","shirtEstimate","shirtComplete","shirtCatalog"))context.remove(privateKey);
+        JsonObject shirt=null,estimate=null;
+        if(body.has("shirtDesign")){
+            shirt=ShirtDesignerService.design(body.getAsJsonObject("shirtDesign"));estimate=ShirtDesignerService.estimate(c,location,shirt);
+            if(!text(estimate,"fingerprint").equals(text(body,"estimateFingerprint")))return changedEstimate(estimate);
+            if(quantity!=integer(estimate,"quantity"))throw new IllegalArgumentException("Shirt quantities do not match.");
+            for(var candidate:ShirtDesignerService.catalog(c,location,shirt.get("itemId").getAsLong()))if(candidate.getAsJsonObject().get("id").getAsLong()==shirt.get("itemId").getAsLong())context.add("shirtCatalog",candidate.deepCopy());
+            context.add("shirtDesign",shirt);context.add("shirtEstimate",estimate);context.addProperty("shirtComplete",false);
+        }
+        String hash=LanSecurity.sha256((shirt==null?"":shirt.toString())+location+"|"+auth+"|"+(sourceRequest==null?"":sourceRequest+"|")+project+"|"+topic+"|"+description+"|"+quantity+"|"+size+"|"+color+"|"+material+"|"+phone+"|"+desired);
         JsonObject old=one(rows(c,"SELECT request_id,auth_id,location_id,request_hash,status,created_at FROM storefront.quote_requests WHERE request_id=? FOR UPDATE",id));
         if(!old.entrySet().isEmpty()){
             if(!auth.toString().equals(text(old,"auth_id"))||location!=integer(old,"location_id")||!hash.equals(text(old,"request_hash")))
@@ -57,7 +66,22 @@ final class StorefrontQuoteRequests {
                 description,quantity,size,color,material,contact_phone,desired_date,request_hash)
             VALUES(?,?,?,?,?,?::jsonb,?,?,?,?,?,?,?,?,?)
             """,id,location,auth,email,project,context.toString(),topic,description,quantity,size,color,material,phone,date,hash);
+        if(shirt!=null)execute(c,"UPDATE storefront.quote_requests SET status='AWAITING_ARTWORK' WHERE request_id=?",id);
         return response(one(rows(c,"SELECT request_id,status,created_at FROM storefront.quote_requests WHERE request_id=?",id)));
+    }
+    private static JsonObject changedEstimate(JsonObject estimate){JsonObject out=new JsonObject();out.addProperty("estimateChanged",true);out.add("estimate",estimate);return out;}
+    static JsonObject finalizeShirt(Connection c,int location,UUID auth,JsonObject body)throws SQLException{
+        UUID request=UUID.fromString(text(body,"requestId"));
+        JsonObject q=one(rows(c,"SELECT project_context,status FROM storefront.quote_requests WHERE request_id=? AND location_id=? AND auth_id=? FOR UPDATE",request,location,auth));
+        if(q.size()==0)throw new IllegalArgumentException("Shirt request not found.");JsonObject context=q.getAsJsonObject("project_context");
+        if(!context.has("shirtDesign"))throw new IllegalArgumentException("This request is not a shirt design.");
+        if(context.get("shirtComplete").getAsBoolean()){JsonObject result=new JsonObject();result.addProperty("requestId",request.toString());result.addProperty("status",text(q,"status"));return result;}
+        if(!text(q,"status").equals("AWAITING_ARTWORK"))throw new IllegalArgumentException("This request no longer accepts artwork.");
+        JsonObject design=context.getAsJsonObject("shirtDesign"),estimate=ShirtDesignerService.estimate(c,location,design);
+        if(!text(estimate,"fingerprint").equals(text(body,"estimateFingerprint")))return changedEstimate(estimate);
+        ShirtDesignerService.verifyFiles(c,location,auth,request,design);context.add("shirtEstimate",estimate);context.addProperty("shirtComplete",true);
+        execute(c,"UPDATE storefront.quote_requests SET project_context=?::jsonb,status='REQUESTED',updated_at=now() WHERE request_id=?",context.toString(),request);
+        JsonObject out=new JsonObject();out.addProperty("requestId",request.toString());out.addProperty("status","REQUESTED");return out;
     }
     static JsonObject template(Connection c,int location,UUID auth,UUID request)throws SQLException{
         JsonObject row=source(c,location,auth,request);
@@ -123,13 +147,16 @@ final class StorefrontQuoteRequests {
                 ||type.equals("application/pdf")&&!(bytes.length>5&&bytes[0]=='%'&&bytes[1]=='P'&&bytes[2]=='D'&&bytes[3]=='F'&&bytes[4]=='-')
                 ||extension.equals("3mf")&&!(bytes.length>4&&bytes[0]=='P'&&bytes[1]=='K'))
             throw new IllegalArgumentException("The file does not match its format.");
+        JsonObject quoteContext=one(rows(c,"SELECT project_context FROM storefront.quote_requests WHERE request_id=?",request)).getAsJsonObject("project_context");
+        if(quoteContext.has("shirtDesign")&&type.startsWith("image/"))ShirtDesignerService.validateImage(bytes);
+        if(quoteContext.has("shirtComplete")&&quoteContext.get("shirtComplete").getAsBoolean())throw new IllegalArgumentException("This shirt design has already been submitted.");
         if(extension.equals("3mf"))validate3mf(bytes);
         String sha;
         try{sha=java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));}
         catch(java.security.NoSuchAlgorithmException e){throw new IllegalStateException(e);}
-        JsonObject existing=one(rows(c,"SELECT original_filename,byte_size,sha256 FROM storefront.quote_files WHERE file_id=?",fileId));
+        JsonObject existing=one(rows(c,"SELECT request_id,original_filename,byte_size,sha256 FROM storefront.quote_files WHERE file_id=?",fileId));
         if(!existing.entrySet().isEmpty()){
-            if(!filename.equals(text(existing,"original_filename"))||bytes.length!=integer(existing,"byte_size")||!sha.equals(text(existing,"sha256")))
+            if(!request.toString().equals(text(existing,"request_id"))||!filename.equals(text(existing,"original_filename"))||bytes.length!=integer(existing,"byte_size")||!sha.equals(text(existing,"sha256")))
                 throw new IllegalArgumentException("This file identifier was already used for different content.");
             JsonObject result=new JsonObject();result.addProperty("fileId",fileId.toString());result.addProperty("saved",true);return result;
         }
@@ -187,19 +214,29 @@ final class StorefrontQuoteRequests {
                 o.order_number AS "orderNumber",o.status AS "nativeStatus"
             FROM storefront.quote_requests q LEFT JOIN storefront.quote_order_links l ON l.request_id=q.request_id
             LEFT JOIN custom_orders o ON o.custom_order_id=l.custom_order_id
-            WHERE q.location_id=? ORDER BY q.created_at DESC LIMIT 300
+            WHERE q.location_id=? AND (NOT jsonb_exists(q.project_context,'shirtComplete') OR (q.project_context->>'shirtComplete')::boolean) ORDER BY q.created_at DESC LIMIT 300
             """,location));
+    }
+    static JsonObject shirtImport(Connection c,int location,UUID request)throws SQLException{
+        JsonObject row=one(rows(c,"SELECT status,project_context FROM storefront.quote_requests WHERE request_id=? AND location_id=? FOR UPDATE",request,location));
+        if(row.size()==0||!row.getAsJsonObject("project_context").has("shirtComplete")||!row.getAsJsonObject("project_context").get("shirtComplete").getAsBoolean())throw new IllegalArgumentException("Choose a completed shirt design request at this store.");
+        if(java.util.Set.of("CANCELLED","COMPLETED").contains(text(row,"status"))||!rows(c,"SELECT 1 FROM storefront.quote_order_links WHERE request_id=?",request).isEmpty())throw new IllegalArgumentException("This request already has an order or is closed.");
+        JsonObject proof=one(rows(c,"SELECT status FROM storefront.quote_proofs WHERE request_id=? ORDER BY revision DESC LIMIT 1",request));
+        if(proof.size()>0&&!text(proof,"status").equals("APPROVED"))throw new IllegalArgumentException("The customer must approve the latest design proof before importing a production order.");
+        for(var value:staff(c,location)){JsonObject q=value.getAsJsonObject();if(request.toString().equals(text(q,"requestId")))return q;}
+        throw new IllegalArgumentException("Refresh the custom request queue before importing.");
     }
     static JsonObject linkOrder(Connection c,int location,int staff,JsonObject body)throws SQLException{
         UUID request=UUID.fromString(text(body,"requestId"));
         long order;try{order=body.get("customOrderId").getAsBigDecimal().longValueExact();}catch(Exception e){throw new IllegalArgumentException("Enter a valid SmartStock custom order ID.");}
         if(order<1)throw new IllegalArgumentException("Enter a valid SmartStock custom order ID.");
-        JsonObject quote=one(rows(c,"SELECT auth_id,status FROM storefront.quote_requests WHERE request_id=? AND location_id=? FOR UPDATE",request,location));
+        JsonObject quote=one(rows(c,"SELECT auth_id,status,project_context FROM storefront.quote_requests WHERE request_id=? AND location_id=? FOR UPDATE",request,location));
         if(quote.entrySet().isEmpty()||java.util.Set.of("CANCELLED","COMPLETED").contains(text(quote,"status")))
             throw new IllegalArgumentException("Choose an open request at this store.");
         JsonObject latestProof=one(rows(c,"SELECT status FROM storefront.quote_proofs WHERE request_id=? ORDER BY revision DESC LIMIT 1",request));
         if(!latestProof.entrySet().isEmpty()&&!"APPROVED".equals(text(latestProof,"status")))
             throw new IllegalArgumentException("The customer must approve the latest design proof before linking a production order.");
+        if(quote.has("project_context")&&quote.getAsJsonObject("project_context").has("shirtComplete")&&!quote.getAsJsonObject("project_context").get("shirtComplete").getAsBoolean())throw new IllegalArgumentException("Finish uploading this shirt request first.");
         JsonObject nativeOrder=one(rows(c,"""
             SELECT o.custom_order_id,o.order_number,o.status
             FROM custom_orders o JOIN customer_accounts a ON a.customer_id=o.customer_id

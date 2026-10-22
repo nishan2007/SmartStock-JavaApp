@@ -1,0 +1,6 @@
+SmartStudio 0.1.60
+- Add a dedicated Bill Books workspace with editable publication layers, number series, local template library and saved sheet-size restoration.
+- Recover editable text when Publisher exports a text field as a solid black image.
+- Include cumulative photo records, transparency, photo framing and background editing changes.
+- Update the shared SmartStock client dependency to 1.1.66.
+- Customer templates remain in the local profile and are not bundled. Template conversion and visual/font review remain separate from the app update.

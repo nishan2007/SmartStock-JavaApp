@@ -1,0 +1,5 @@
+SmartStudio 0.1.63
+- Add shared administrator-managed fonts. Studio computers connected to the same server download verified copies and retain them for offline use.
+- Include the latest bill-book and editable Publisher template import work, with font-aware text layout and shared template workflows.
+- Include the SmartStock 1.1.71 client dependency. Update the store server first.
+- Customer fonts, templates, original Publisher documents and merge records are not bundled in the installer. Import separately and review font licensing, visual fidelity and physical printing.

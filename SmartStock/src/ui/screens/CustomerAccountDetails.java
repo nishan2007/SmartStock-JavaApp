@@ -38,6 +38,7 @@ public class CustomerAccountDetails extends JFrame {
     private JTextField phoneField;
     private JCheckBox whatsappOptInCheckBox;
     private JCheckBox requireChargeAuthorizationCheckBox;
+    private JCheckBox customOrderDepositExemptBox;
     private JTextField emailField;
     private JTextField customerSinceField;
     private JTextField customerPhotoField;
@@ -97,6 +98,7 @@ public class CustomerAccountDetails extends JFrame {
         JButton previewCardButton=new JButton("Preview Card"),printCardButton=new JButton("Print Card"),pdfCardButton=new JButton("Save Card PDF"),renewCardButton=new JButton("Renew Card");
         buttonPanel.add(refreshButton);
         buttonPanel.add(paymentHistoryButton);
+        JButton loyalty=new JButton("Loyalty");loyalty.addActionListener(e->ui.helpers.LoyaltyDialog.open(this,customerId,null));buttonPanel.add(loyalty);
         buttonPanel.add(previewCardButton);buttonPanel.add(printCardButton);buttonPanel.add(pdfCardButton);buttonPanel.add(renewCardButton);
 
         refreshButton.addActionListener(e -> {
@@ -136,6 +138,8 @@ public class CustomerAccountDetails extends JFrame {
         nameField = new JTextField();
         phoneField = new JTextField();
         whatsappOptInCheckBox = new JCheckBox("Customer consents to sales documents by WhatsApp");
+        customOrderDepositExemptBox=new JCheckBox("Allow custom orders without a deposit");
+        customOrderDepositExemptBox.setEnabled(PermissionManager.hasPermission("CUSTOM_ORDER_DEPOSIT_OVERRIDE")||PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES"));
         requireChargeAuthorizationCheckBox=new JCheckBox("Require representative authorization for account charges");
         emailField = new JTextField();
         customerSinceField = new JTextField();
@@ -158,6 +162,7 @@ public class CustomerAccountDetails extends JFrame {
         addInfoField(grid, gbc, 1, 1, "Phone:", phoneField);
         addInfoField(grid, gbc, 6, 1, "WhatsApp:", whatsappOptInCheckBox);
         addInfoField(grid,gbc,7,1,"Account authorization:",requireChargeAuthorizationCheckBox);
+        addInfoField(grid,gbc,8,0,"Custom-order deposit:",customOrderDepositExemptBox);
         addInfoField(grid, gbc, 2, 0, "Email:", emailField);
         addInfoField(grid, gbc, 2, 1, "Type:", businessAccountCheckBox);
         addInfoField(grid, gbc, 3, 0, "Status:", activeCheckBox);
@@ -279,7 +284,7 @@ public class CustomerAccountDetails extends JFrame {
                 customerTypeSelector.setSelectedCustomerType(
                         account.customerTypeId(),account.customerTypeName()
                 );
-                phoneField.setText(text(account.phone()));emailField.setText(text(account.email()));businessAccountCheckBox.setSelected(account.business());whatsappOptInCheckBox.setSelected(account.whatsappOptIn());requireChargeAuthorizationCheckBox.setSelected(account.requireChargeAuthorization());
+                phoneField.setText(text(account.phone()));emailField.setText(text(account.email()));businessAccountCheckBox.setSelected(account.business());whatsappOptInCheckBox.setSelected(account.whatsappOptIn());requireChargeAuthorizationCheckBox.setSelected(account.requireChargeAuthorization());customOrderDepositExemptBox.setSelected(account.customOrderDepositExempt());
                 customerSinceField.setText(account.customerSince()==null?"":String.valueOf(account.customerSince()));
                 customerPhotoField.setText(text(account.customerPhotoUrl()));
                 ProductImageHelper.setPreviewImage(customerPhotoPreview,customerPhotoField.getText(),140,140);
@@ -339,14 +344,14 @@ public class CustomerAccountDetails extends JFrame {
         String photoInput=customerPhotoField.getText().trim();
         final BigDecimal savedCreditLimit=creditLimit;
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,
-                    customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,photoInput,whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected());
+                    customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,photoInput,whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),currentAccount.salesDiscountEnabled(),currentAccount.salesDiscountPercent(),currentAccount.invoiceDiscountEnabled(),currentAccount.invoiceDiscountPercent(),currentAccount.customOrderDiscountEnabled(),currentAccount.customOrderDiscountPercent(),customOrderDepositExemptBox.isSelected());
             String fingerprint=request.toString();if(pendingSaveKey==null||!fingerprint.equals(pendingFingerprint)){
                 pendingFingerprint=fingerprint;pendingSaveKey=UUID.randomUUID().toString();}
         String saveKey = pendingSaveKey;
         saveButton.setEnabled(false);
         UiTaskRunner.submit(this, "customer-account.save", () -> {
             String uploaded=CustomerPhotoService.uploadLocalPhotoIfNeeded(photoInput,name);
-            LanApiClient.saveCustomerAccount(new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,uploaded,whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected()), saveKey);
+            LanApiClient.saveCustomerAccount(new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,uploaded,whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),request.salesDiscountEnabled(),request.salesDiscountPercent(),request.invoiceDiscountEnabled(),request.invoiceDiscountPercent(),request.customOrderDiscountEnabled(),request.customOrderDiscountPercent(),request.customOrderDepositExempt()), saveKey);
             return null;
         }, ignored -> {
             pendingSaveKey=null;pendingFingerprint=null;

@@ -1,7 +1,7 @@
 param(
-    [string]$ServerAddress = '10.1.1.221',
-    [string]$RouterAddress = '10.1.1.1',
-    [string]$ClientSubnet = '10.1.1.0/24',
+    [Parameter(Mandatory = $true)][string]$ServerAddress,
+    [Parameter(Mandatory = $true)][string]$RouterAddress,
+    [Parameter(Mandatory = $true)][string]$ClientSubnet,
     [string]$WebHost = 'studio.deckers.gy',
     [string]$VerifiedArchive,
     [string]$InstallDirectory = (Join-Path $env:ProgramData 'SmartStockLocalDns')
@@ -74,3 +74,4 @@ Resolve-DnsName -Name $WebHost -Server $ServerAddress -Type A -TcpOnly -DnsOnly 
 Write-Host 'Local DNS startup task installed and local/public DNS verification passed.'
 Write-Host "Cudy DHCP Preferred DNS: $ServerAddress. Leave Alternate DNS empty so clients consistently resolve the private name."
 Write-Host 'Keep the router upstream DNS unchanged. Do not forward port 53 from the internet.'
+& (Join-Path $PSScriptRoot '..\src\windows\network-maintenance.ps1') -Install -LanSubnet $ClientSubnet

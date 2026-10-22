@@ -1,0 +1,7 @@
+SmartStock 1.1.29 — Custom inventory search
+
+Search custom inventory using item names, descriptions, sizes, colors, brands and barcodes. Combine parent and variant terms, ignore extra spaces and capitalization, and show only matching variants. Hidden JSON field names no longer cause false matches.
+
+This search fix runs in the desktop application. Update each workstation that uses the custom inventory list; no server API or database change is required for the search fix alone. Earlier shirt designer features remain included and require an updated store server and configured shirts.
+
+Model weights remain separate. Publication does not install the live store.

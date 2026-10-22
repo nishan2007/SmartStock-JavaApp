@@ -1,0 +1,4 @@
+SmartStudio 0.1.45
+Copy and paste selected layers across pages and compatible templates with Copy layers/Paste or Ctrl+C/Ctrl+V. Paste external text and images into templates.
+Business-card and label layouts now default to zero margins. Artwork and cut marks near printer hardware margins no longer block actual-size printing; physical printer limits still apply.
+Uses SmartStock 1.1.51 client libraries.

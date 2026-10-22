@@ -1,0 +1,8 @@
+SmartStock 1.1.34
+
+Fixes delivery of time-clock corrections made from another store's payroll screen.
+The owning store validates and applies explicit correction audits, then synchronizes its corrected record to other stores and employee screens.
+Previously saved corrections are picked up automatically. Retries apply each correction once; conflicting newer punches require management review.
+Update both the sending and owning store servers to enable correction delivery.
+Employee Time Clock refreshes automatically and refreshes the selected day's details when new records arrive.
+Application packages retain inference runtimes and licences and exclude AI model weights.

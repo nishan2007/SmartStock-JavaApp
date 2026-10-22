@@ -339,7 +339,32 @@ public final class ServerTimeClockManager {
     }
 
     private static List<TimeClockRow> buildRows(Connection conn, List<TimeRecord> records) throws SQLException {
-        List<TimeSegment> segments = splitRecordsByWorkDate(records);
+        return buildRows(conn, records, Map.of());
+    }
+
+    /** Read-only history with complete employee payroll context, across all stores. Caller authorizes userId. */
+    public static List<TimeClockRow> loadEmployeeHistory(Connection conn, int userId, String fallbackZone) throws SQLException {
+        RequestContext previous = REQUEST_CONTEXT.get();
+        try {
+            bindRequest(userId, 0, "", fallbackZone, "Employee web");
+            List<TimeRecord> records = loadRecords(conn, false);
+            Map<Integer, LocalDateTime> storeNow = new HashMap<>();
+            try (PreparedStatement p = conn.prepareStatement("SELECT location_id, COALESCE(NULLIF(timezone,''),?) FROM locations")) {
+                p.setString(1, fallbackZone);
+                try (ResultSet r = p.executeQuery()) {
+                    while (r.next()) storeNow.put(r.getInt(1), LocalDateTime.now(ZoneId.of(r.getString(2))));
+                }
+            }
+            return buildRows(conn, records, storeNow);
+        } finally {
+            if (previous == null) REQUEST_CONTEXT.remove(); else REQUEST_CONTEXT.set(previous);
+        }
+    }
+
+    private static List<TimeClockRow> buildRows(Connection conn, List<TimeRecord> records,
+                                               Map<Integer, LocalDateTime> storeNow) throws SQLException {
+        List<TimeSegment> segments = splitRecordsByWorkDate(records, storeNow);
+        java.util.Set<String> halfDays = services.DailyPayDayService.loadHalfDays(conn);
         Map<String, BigDecimal> payPeriodHours = new HashMap<>();
         Map<String, Integer> dailyPaidClockIds = new HashMap<>();
 
@@ -373,7 +398,8 @@ public final class ServerTimeClockManager {
             BigDecimal priorHours = allocatedHours.getOrDefault(periodKey, BigDecimal.ZERO);
             BigDecimal regularHours = segment.hours;
             BigDecimal overtimeHours = BigDecimal.ZERO;
-            BigDecimal basePay = segmentPay(segment, dailyPaidClockIds);
+            BigDecimal basePay = segmentPay(segment, dailyPaidClockIds,
+                    halfDays.contains(dailyPayKey(record.userId, segment.workDate)));
             BigDecimal regularPay = basePay;
             BigDecimal overtimePay = BigDecimal.ZERO;
             if (EmployeePayrollSettingsService.isHourly(record.compensationType)) {
@@ -435,7 +461,8 @@ public final class ServerTimeClockManager {
                     record.autoClockOut,
                     record.autoClockOutReviewStatus,
                     record.autoBreakEnd,
-                    record.autoBreakEndReviewStatus
+                    record.autoBreakEndReviewStatus,
+                    halfDays.contains(dailyPayKey(record.userId, segment.workDate))
             ));
         }
         rows.sort((a, b) -> {
@@ -950,7 +977,7 @@ public final class ServerTimeClockManager {
                     total_hours_worked = calculated.rounded_hours,
                     total_earned = ROUND(
                         CASE calculated.compensation_type
-                            WHEN 'DAILY' THEN CASE WHEN calculated.should_pay_daily THEN calculated.salary ELSE NULL END
+                            WHEN 'DAILY' THEN CASE WHEN calculated.should_pay_daily THEN calculated.salary * CASE WHEN EXISTS (SELECT 1 FROM employee_daily_pay_days d WHERE d.user_id=tc.user_id AND d.work_date=tc.work_date AND d.half_day) THEN 0.5 ELSE 1 END ELSE NULL END
                             WHEN 'SALARY' THEN NULL
                             ELSE calculated.salary * calculated.rounded_hours
                         END,
@@ -1068,10 +1095,14 @@ public final class ServerTimeClockManager {
     }
 
     private static List<TimeSegment> splitRecordsByWorkDate(List<TimeRecord> records) {
+        return splitRecordsByWorkDate(records, Map.of());
+    }
+
+    private static List<TimeSegment> splitRecordsByWorkDate(List<TimeRecord> records, Map<Integer, LocalDateTime> storeNow) {
         List<TimeSegment> segments = new ArrayList<>();
         LocalDateTime now = LocalDateTime.now(ZoneId.of(currentStoreZoneId()));
         for (TimeRecord record : records) {
-            segments.addAll(splitRecordByWorkDate(record, now));
+            segments.addAll(splitRecordByWorkDate(record, record.locationId == null ? now : storeNow.getOrDefault(record.locationId, now)));
         }
         return segments;
     }
@@ -1170,12 +1201,12 @@ public final class ServerTimeClockManager {
         return minutesBetween(overlapStart, overlapEnd);
     }
 
-    private static BigDecimal segmentPay(TimeSegment segment, Map<String, Integer> dailyPaidClockIds) {
+    private static BigDecimal segmentPay(TimeSegment segment, Map<String, Integer> dailyPaidClockIds, boolean halfDay) {
         TimeRecord record = segment.record;
         if (record.isDaily()) {
             Integer paidClockId = dailyPaidClockIds.get(dailyPayKey(record.userId, segment.workDate));
             return paidClockId != null && paidClockId == record.clockId
-                    ? utils.CurrencyFormatter.normalize(record.salary)
+                    ? services.DailyPayDayService.dailyPay(record.salary, halfDay)
                     : BigDecimal.ZERO;
         }
         if (record.isSalary()) {
@@ -1382,7 +1413,8 @@ public final class ServerTimeClockManager {
             boolean autoClockOut,
             String autoClockOutReviewStatus,
             boolean autoBreakEnd,
-            String autoBreakEndReviewStatus
+            String autoBreakEndReviewStatus,
+            boolean halfDay
     ) {
     }
 

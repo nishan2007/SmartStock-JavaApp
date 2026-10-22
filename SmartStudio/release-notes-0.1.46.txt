@@ -1,0 +1,7 @@
+SmartStudio 0.1.46
+
+- Added a visible New template button above the Badge Cards, Business Cards and Labels editor toolbars.
+- Added direct Create new template buttons in the template choosers, available while searching the library.
+- Keeps existing unsaved-change prompts and leaves zoom and print controls visible at smaller window sizes.
+
+Uses SmartStock 1.1.52 client libraries. Update the SmartStock store server to 1.1.52 for the staff template-save permission fix. AI models remain separate.

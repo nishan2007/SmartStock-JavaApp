@@ -1,0 +1,1 @@
+Fix banner image drag resizing and movement limits. Stretch artwork across large banners or beyond the page for cropping; unlock aspect ratio to stretch width and height independently.

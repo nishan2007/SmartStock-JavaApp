@@ -67,18 +67,21 @@ public class CustomOrderSlipFormatter {
         builder.append("DETAILS").append('\n');
         if (slipSettings.showLineItems()) {
             int index = 1;
-            for (CustomOrderSlipData.Line line : data.lines()) {
+            for (CustomOrderSlipData.PrintLine group : data.printLines()) {
+                CustomOrderSlipData.Line line = group.line();
                 String item = index++ + ". " + clean(line.itemName());
                 if (!clean(line.variantName()).isBlank()) {
                     item += " / " + clean(line.variantName());
                 }
+                item += group.quantitySuffix();
                 if (slipSettings.showPricing() && !data.pricePending()) {
-                    item += " " + money(line.lineTotal());
+                    item += " " + money(group.total());
                 }
                 appendWrapped(builder, item, RECEIPT_WIDTH);
                 appendWrapped(builder, indent(joinNonBlank(line.details(), line.instructions())), RECEIPT_WIDTH);
             }
         }
+        if(data.loyaltySummary()!=null&&!data.loyaltySummary().isBlank())for(String line:data.loyaltySummary().split("\n"))appendWrapped(builder,line,RECEIPT_WIDTH);
         if (!clean(data.orderNotes()).isBlank()) {
             appendWrapped(builder, "Notes: " + clean(data.orderNotes()), RECEIPT_WIDTH);
         }

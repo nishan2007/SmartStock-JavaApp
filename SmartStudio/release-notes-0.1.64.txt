@@ -1,0 +1,5 @@
+SmartStudio 0.1.64
+
+Sheet print setup now has independent left, right, top and bottom margins in millimetres, so extra space can be reserved for binding on the required edge. Preview, print and PDF export use the same margins. Saved bill-book sheet settings retain each edge separately.
+
+Windows build 1064. Uses the current SmartStock 1.1.72 client dependency. Update the store server before clients.

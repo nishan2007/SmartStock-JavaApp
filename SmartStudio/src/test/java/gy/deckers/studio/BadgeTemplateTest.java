@@ -11,6 +11,21 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class BadgeTemplateTest {
     @TempDir Path temp;
+    @Test void retentionIsOptInAndTemplateNeverContainsPersonalPhotos() throws Exception {
+        BadgeTemplate template=BadgeTemplate.builtin();
+        assertFalse(template.savePrintRecords);
+        template.savePrintRecords=true;
+        var slot=template.elements.stream().filter(e->e.type.equals("PHOTO")).findFirst().orElseThrow();
+        slot.personalPhoto=new BufferedImage(2,2,BufferedImage.TYPE_INT_RGB);
+        slot.photoFraming=PhotoFraming.initial(slot.personalPhoto);
+        Path file=temp.resolve("retention.sstbadge");template.save(file);
+        BadgeTemplate loaded=BadgeTemplate.load(file);
+        assertTrue(loaded.savePrintRecords);
+        assertNull(loaded.elements.stream().filter(e->e.type.equals("PHOTO")).findFirst().orElseThrow().personalPhoto);
+        assertFalse(Files.readString(file).contains("personalPhoto"));
+        loaded.savePrintRecords=false;loaded.save(file);
+        assertFalse(BadgeTemplate.load(file).savePrintRecords);
+    }
     @Test void parkedLayersRoundTripAndOnlyPageIntersectionPrints() throws Exception {
         BadgeTemplate t=new BadgeTemplate();
         BadgeTemplate.Element e=new BadgeTemplate.Element();

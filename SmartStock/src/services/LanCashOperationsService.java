@@ -10,16 +10,41 @@ import java.sql.ResultSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.List;
+import java.util.ArrayList;
 
 /** Server-only small cash operations shared by register screens. */
 final class LanCashOperationsService{
     private static final Gson GSON=new Gson();private LanCashOperationsService(){}
     static Map<String,Object>changeBasketState(Connection c,int userId,int locationId)throws Exception{
-        require(c,userId,"BALANCE_DRAWER");try(PreparedStatement ps=c.prepareStatement("""
-                SELECT COALESCE(l.name,'Current Store'),COALESCE(cc.change_basket_target_amount,0)
-                FROM locations l LEFT JOIN company_customization cc ON cc.location_id=l.location_id WHERE l.location_id=?
-                """)){ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw rule(404,"LOCATION_NOT_FOUND","The selected store was not found.");
-            return Map.of("storeName",rs.getString(1),"targetAmount",rs.getBigDecimal(2));}}
+        require(c,userId,"BALANCE_DRAWER");
+        Map<String,Object> result=changeBasketStateUnchecked(c,locationId);
+        List<LanApiClient.ChangeBasketUpdate> latest=basketUpdates(c,locationId,0,1);
+        if(!latest.isEmpty()) result.put("latestUpdate",latest.get(0));
+        return result;
+    }
+    static Map<String,Object> changeBasketHistory(Connection c,int userId,int locationId,int offset)throws Exception {
+        require(c,userId,"BALANCE_DRAWER");
+        if(offset<0)throw rule(400,"VALIDATION_ERROR","Invalid history page.");
+        List<LanApiClient.ChangeBasketUpdate> rows=basketUpdates(c,locationId,offset,101);
+        return Map.of("updates",rows.subList(0,Math.min(100,rows.size())),"hasMore",rows.size()>100);
+    }
+    private static List<LanApiClient.ChangeBasketUpdate> basketUpdates(Connection c,int locationId,int offset,int limit)throws Exception {
+        List<LanApiClient.ChangeBasketUpdate> rows=new ArrayList<>();
+        try(PreparedStatement ps=c.prepareStatement("""
+                SELECT change_basket_update_id,updated_at,updated_by_name,device_name,
+                       target_amount,counted_amount,variance,denomination_counts,notes
+                FROM change_basket_updates WHERE location_id=?
+                ORDER BY updated_at DESC,change_basket_update_id DESC LIMIT ? OFFSET ?
+                """)) {
+            ps.setInt(1,locationId);ps.setInt(2,limit);ps.setInt(3,offset);
+            try(ResultSet rs=ps.executeQuery()) {while(rs.next()) {
+                Map<Integer,Integer> counts=GSON.fromJson(rs.getString(8),new com.google.gson.reflect.TypeToken<Map<Integer,Integer>>(){}.getType());
+                rows.add(new LanApiClient.ChangeBasketUpdate(rs.getLong(1),rs.getObject(2,java.time.OffsetDateTime.class).toString(),
+                        rs.getString(3),rs.getString(4),rs.getBigDecimal(5),rs.getBigDecimal(6),rs.getBigDecimal(7),counts,rs.getString(9)));
+            }}
+        }
+        return rows;
     }
     static Map<String,Object>recordChangeBasket(Connection c,JsonObject body,UUID deviceId,int userId,String userName,int locationId)throws Exception{
         require(c,userId,"BALANCE_DRAWER");State state=state(c,locationId);Request r=GSON.fromJson(body,Request.class);

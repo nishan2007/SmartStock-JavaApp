@@ -85,7 +85,8 @@ public class CustomOrderSlipRenderer {
             currentY += 8;
             g.setFont(new Font("SansSerif", Font.BOLD, 10));
             List<String> footerLines = wrap(g, slipSettings.footerNote(), right - left);
-            int footerRows = (slipSettings.showTakenBy() ? 1 : 0)
+            List<String> loyaltyLines=new ArrayList<>();if(data.loyaltySummary()!=null)for(String line:data.loyaltySummary().split("\n"))if(!line.isBlank())loyaltyLines.addAll(wrap(g,line,right-left));
+            int footerRows = loyaltyLines.size() + (slipSettings.showTakenBy() ? 1 : 0)
                     + (slipSettings.showPaymentSummary() ? 2 : 0)
                     + (slipSettings.showPaymentReference() && data.paymentReference() != null && !data.paymentReference().isBlank() ? 1 : 0)
                     + (slipSettings.showTeamMemberSignature() ? 1 : 0)
@@ -94,6 +95,7 @@ public class CustomOrderSlipRenderer {
             currentY = drawDetails(g, left, right, currentY, footerStart - 10, data, slipSettings);
 
             currentY = Math.max(currentY + 8, footerStart);
+            for(String line:loyaltyLines){g.drawString(line,left,currentY);currentY+=18;}
             if (slipSettings.showTakenBy()) {
                 currentY = drawLabelLine(g, left, right, currentY, "DELIVERED BY:", data.takenByName(), "RECEIVED BY:", "");
             }
@@ -128,13 +130,15 @@ public class CustomOrderSlipRenderer {
         int currentY = y;
         if (settings.showLineItems()) {
             int index = 1;
-            for (CustomOrderSlipData.Line line : data.lines()) {
-                StringBuilder text = new StringBuilder(index++).append(". ").append(clean(line.itemName()));
+            for (CustomOrderSlipData.PrintLine group : data.printLines()) {
+                CustomOrderSlipData.Line line = group.line();
+                StringBuilder text = new StringBuilder().append(index++).append(". ").append(clean(line.itemName()));
                 if (line.variantName() != null && !line.variantName().isBlank()) {
                     text.append(" / ").append(line.variantName());
                 }
+                text.append(group.quantitySuffix());
                 if (settings.showPricing() && !data.pricePending()) {
-                    text.append(" - ").append(money(line.lineTotal()));
+                    text.append(" - ").append(money(group.total()));
                 }
                 for (String wrapped : wrap(g, text.toString(), right - left)) {
                     if (currentY + lineHeight > maxY) return currentY;

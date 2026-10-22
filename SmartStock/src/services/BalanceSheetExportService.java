@@ -151,6 +151,14 @@ public final class BalanceSheetExportService {
         List<Row> cheques = safe(s.pendingCheques()).stream().map(v -> new Row(text(v.sourceLabel()) + detail(v.payer(), v.reference()), money(v.amount()))).toList();
         result.add(new Section("Cheques To Deposit", cheques, null)); result.add(lines("Drawer Match Checks", s.drawerChecks(), null));
         if (s.notes() != null && !s.notes().isBlank()) result.add(new Section("Notes", List.of(new Row(s.notes().replace('\n', ' '), "")), null));
+        if(s.overseasCash()!=null){var o=s.overseasCash();List<Row> rows=new ArrayList<>();
+            rows.add(new Row("Separate fund B/F",money(o.broughtForward())));rows.add(new Row("Received from closed draws",money(o.received())));rows.add(new Row("Overseas withdrawals / expenses",money(o.expenses())));rows.add(new Row("Separate fund C/F",money(o.carriedForward())));
+            if(o.verification()!=null){var check=o.verification();rows.add(new Row("Counted overseas cash",money(check.counted())));rows.add(new Row("Overseas cash variance",money(check.variance())));rows.add(new Row("Count reason",text(check.reason())));rows.add(new Row("Verified by",text(check.verifiedBy())));rows.add(new Row("Verified at",text(check.verifiedAt())));
+                for(var d:OverseasCashService.COUNT_DENOMINATIONS)rows.add(new Row("GYD "+d+" notes",Integer.toString(check.denominations().getOrDefault(d.toString(),0))));
+            }
+            result.add(new Section("Overseas Cash Fund",rows,null));
+            result.add(new Section("Overseas Receipts and Expenses",o.lines().stream().map(l->new Row(l.date()+" "+l.description(),l.expense().signum()>0?"Expense "+money(l.expense()):"Received "+money(l.received()))).toList(),null));
+        }
         return result;
     }
 

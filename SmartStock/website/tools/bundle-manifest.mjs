@@ -18,7 +18,7 @@ async function files(directory,prefix=''){
 }
 async function hashes(base,names,normalize=false){
   const result={};
-  for(const name of names){let bytes=await readFile(path.join(base,name));if(normalize&&!/\.(?:png|jpe?g|webp|gif|ico|woff2?|ttf|otf|mp4|webm|pdf)$/i.test(name))bytes=Buffer.from(bytes.toString('utf8').replaceAll('\r\n','\n'));result[name]=createHash('sha256').update(bytes).digest('hex');}
+  for(const name of names){let bytes=await readFile(path.join(base,name));if(normalize&&!/\.(?:png|jpe?g|webp|gif|ico|woff2?|ttf|otf|mp4|webm|pdf|glb)$/i.test(name))bytes=Buffer.from(bytes.toString('utf8').replaceAll('\r\n','\n'));result[name]=createHash('sha256').update(bytes).digest('hex');}
   return result;
 }
 const inputs=['package.json','pnpm-lock.yaml','pnpm-workspace.yaml','tsconfig.json','vite.config.ts','index.html',

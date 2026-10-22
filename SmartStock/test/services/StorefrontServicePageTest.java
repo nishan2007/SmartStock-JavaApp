@@ -16,7 +16,8 @@ class StorefrontServicePageTest {
     }
     @Test void eachKnownServiceHasItsOwnCanonicalAndFallback(){
         String template="<html><head><title>Store</title></head><body><div id=\"root\"></div></body></html>";
-        assertEquals(14,StorefrontServicePage.slugs().size());
+        assertEquals(15,StorefrontServicePage.slugs().size());
+        assertEquals("sublimation",StorefrontServicePage.slugForName("Sublimation"));
         for(String slug:StorefrontServicePage.slugs()){
             String html=StorefrontServicePage.render(template,"https://deckers.example",slug);
             assertTrue(html.contains("https://deckers.example/shop/services/"+slug));

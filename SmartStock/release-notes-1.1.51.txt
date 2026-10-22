@@ -1,0 +1,6 @@
+SmartStock 1.1.51
+
+- OneDrive reconciliation recognizes current image filenames with timestamp and unique suffix, preventing verified images from repeatedly returning to the migration queue.
+- OneDrive activation reports remaining unverified images or a failed server connection check instead of a generic request failure.
+
+Update the store server first, then registers. Reconcile images after updating. Missing original images still require recovery or re-upload before OneDrive activation; this update does not bypass verification. AI models remain separate from this update.

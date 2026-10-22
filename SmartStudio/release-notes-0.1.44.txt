@@ -1,0 +1,1 @@
+Adds a full-sheet Riso print preview, independently scrolling sub-page navigation, Save in the Template & insert menu, and Ctrl+S support in the Riso organiser. Uses SmartStock 1.1.50 client libraries.

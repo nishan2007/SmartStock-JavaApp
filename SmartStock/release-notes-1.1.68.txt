@@ -1,0 +1,4 @@
+SmartStock 1.1.68
+- Add the authenticated BILL_BOOKS template category to the local-first store server, with existing store access, revision conflict protection and OneDrive backup.
+- Retain cumulative account balance and signature receipt corrections from 1.1.67.
+- Update the server before SmartStudio 0.1.61 clients synchronize bill book templates.

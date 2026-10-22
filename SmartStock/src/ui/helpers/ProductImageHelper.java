@@ -116,6 +116,9 @@ public final class ProductImageHelper {
         private final Component parent;
         private final JTextField imageUrlField;
         private final JLabel previewLabel;
+        private final JPanel previewCards=new JPanel(new CardLayout());
+        private final VariantPhotoGrid variantGrid=new VariantPhotoGrid();
+        private List<TableImageHoverPreview.Picture> fallbackPictures=List.of();
         private final List<String> additionalImages = new ArrayList<>();
         private final JButton galleryButton = new JButton("Photos (0)...");
 
@@ -125,6 +128,7 @@ public final class ProductImageHelper {
             setOpaque(false);
 
             previewLabel = createImagePreview("", 150, 110);
+            previewCards.setOpaque(false);previewCards.add(previewLabel,"main");previewCards.add(variantGrid,"variants");
             imageUrlField = new JTextField();
             galleryButton.addActionListener(e -> manageGallery());
 
@@ -152,7 +156,7 @@ public final class ProductImageHelper {
             JPanel wrapper = new JPanel(new BorderLayout(8, 8));
             wrapper.setOpaque(false);
             wrapper.setBorder(new EmptyBorder(0, 0, 0, 0));
-            wrapper.add(previewLabel, BorderLayout.WEST);
+            wrapper.add(previewCards, BorderLayout.WEST);
             wrapper.add(fieldPanel, BorderLayout.CENTER);
 
             add(wrapper, BorderLayout.CENTER);
@@ -183,7 +187,7 @@ public final class ProductImageHelper {
             actionsPanel.add(guidanceLabel, BorderLayout.NORTH);
             actionsPanel.add(buttonPanel, BorderLayout.CENTER);
 
-            add(previewLabel, BorderLayout.WEST);
+            add(previewCards, BorderLayout.WEST);
             add(actionsPanel, BorderLayout.CENTER);
 
             chooseButton.addActionListener(e -> chooseLocalImage());
@@ -217,8 +221,16 @@ public final class ProductImageHelper {
             }
         }
 
+        public void setFallbackPictures(List<TableImageHoverPreview.Picture> pictures) {
+            fallbackPictures=pictures==null?List.of():List.copyOf(pictures);
+            if(getImageUrl().isBlank())refreshPreview();
+        }
         private void refreshPreview() {
-            setPreviewImage(previewLabel, getImageUrl(), 150, 110);
+            boolean fallback=getImageUrl().isBlank()&&!fallbackPictures.isEmpty();
+            if(fallback)variantGrid.setPictures(fallbackPictures);
+            else {variantGrid.setPictures(List.of());setPreviewImage(previewLabel,getImageUrl(),150,110);}
+            ((CardLayout)previewCards.getLayout()).show(previewCards,fallback?"variants":"main");
+            revalidate();repaint();
         }
 
         private void chooseLocalImage() {

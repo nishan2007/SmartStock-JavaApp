@@ -1,5 +1,9 @@
+import {templateSubmissionRoute} from './template-submit.js';
+import {captureRoute,StudioCapture} from './studio-capture.js';
+import {queueRoute} from './studio-photo-queue.js';
+export {StudioCapture};
 const json = (value, status = 200) => new Response(JSON.stringify(value), {status, headers:{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
-const publicSnapshotKeys=['locationId','capturedAt','settings','unavailableServices','store','branding','tax','products','projects'];
+const publicSnapshotKeys=['locationId','capturedAt','settings','unavailableServices','store','branding','tax','products','projects','shirts','sublimationProducts','businessCardsProducts','largeFormatPrintingProducts','laserProducts'];
 const publicSyncSnapshot=snapshot=>{
   const selected=Object.fromEntries(publicSnapshotKeys.filter(key=>Object.hasOwn(snapshot,key)).map(key=>[key,snapshot[key]]));
   if(selected.settings)selected.settings={...selected.settings,enabled:false};
@@ -120,11 +124,24 @@ export default {
       if(url.protocol==='http:'||(env.REDIRECT_HOST&&url.hostname===env.REDIRECT_HOST&&env.CANONICAL_HOST)){
         // Redirect navigation only; never forward account/order POST bodies across hosts.
         if(!['GET','HEAD'].includes(request.method))return json({message:'Use the main website address.'},421);
-        const destination=new URL('https://'+(env.CANONICAL_HOST||url.host));
+        const destination=new URL('https://'+(env.PHOTO_HOST&&url.hostname===env.PHOTO_HOST?env.PHOTO_HOST:(env.CANONICAL_HOST||url.host)));
         destination.pathname=url.pathname;destination.search=url.search;
         return Response.redirect(destination.toString(),308);
       }
       const configured=origins(env);
+      if(['/photo.webmanifest','/photo-qr.js','/photo-icon-180.png','/photo-icon-192.png','/photo-icon-512.png'].includes(url.pathname))return await queueRoute(request,env,configured);
+      if(env.PHOTO_HOST&&url.hostname===env.PHOTO_HOST){
+        if(url.pathname==='/'){
+          if(!['GET','HEAD'].includes(request.method))return json({message:'Use the photo upload controls.'},405);
+          const destination=new URL(request.url);destination.pathname='/shop/studio-photo-queue';
+          return await queueRoute(new Request(destination,request),env,configured);
+        }
+        if(!['/shop/studio-photo-queue','/shop/studio-photo-queue/upload'].includes(url.pathname))return json({message:'Not found'},404);
+      }
+
+      if(['/shop/template-submit','/shop/template-submit/api'].includes(url.pathname))return await templateSubmissionRoute(request,env,configured);
+      if(['/shop/studio-photo-queue','/shop/studio-photo-queue/upload'].includes(url.pathname))return await queueRoute(request,env,configured);
+      if(['/shop/studio-capture','/shop/studio-capture/upload','/shop/internal/studio-capture'].includes(url.pathname))return await captureRoute(request,env,configured);
       if(url.pathname==='/shop/internal/sync'){
         const id=Number(url.searchParams.get('storeId')),origin=configured.find(x=>x.storeId===id);
         if(!origin||request.method!=='POST'||request.headers.get('X-Storefront-Instance')!==origin.instanceId||request.headers.get('X-Storefront-Key')!==originKey(env,origin))return json({message:'Forbidden'},403);
@@ -143,7 +160,7 @@ export default {
       let data=body?parseObject(body):{};for(const key of Object.keys(data))if(key.startsWith('_'))delete data[key];
       const selected=selectedStoreId(data,url,configured);
       if(!configured.some(x=>x.storeId===selected))return json({message:'Choose a store'},400);
-      if(['/shop/api/v1/custom-quote','/shop/api/v1/custom-quote-file','/shop/api/v1/quote-template','/shop/api/v1/proof-file','/shop/api/v1/proof-decision','/shop/api/v1/favorite','/shop/api/v1/favorite-state','/shop/api/v1/custom-order-private'].includes(url.pathname)){
+      if(['/shop/api/v1/shirt-estimate','/shop/api/v1/shirt-finalize','/shop/api/v1/custom-quote','/shop/api/v1/custom-quote-file','/shop/api/v1/quote-template','/shop/api/v1/proof-file','/shop/api/v1/proof-decision','/shop/api/v1/favorite','/shop/api/v1/favorite-state','/shop/api/v1/custom-order-private'].includes(url.pathname)){
         const primary=configured.find(x=>x.storeId===selected);
         for(const origin of await healthy(env,selected))if(origin.storeId===primary.storeId){
           try{return await proxy(request,origin,env,JSON.stringify(data));}catch{}

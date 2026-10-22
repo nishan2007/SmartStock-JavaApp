@@ -1,0 +1,5 @@
+SmartStock 1.1.26 (Windows build 101026)
+
+Custom-order slips combine identical items into one entry with a quantity and combined price, shortening both thermal and page-format printouts. For example, five identical shirts print as one "Custom shirt / Large x 5" entry with their summed price and instructions shown once. Different variants, customizations, instructions or unit prices remain separate. Saved order items and order/payment totals are unchanged.
+
+Update the store server before registers.

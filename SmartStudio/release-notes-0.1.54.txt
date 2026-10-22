@@ -1,0 +1,4 @@
+SmartStudio 0.1.54
+
+Photo framing now includes brightness, contrast, saturation and warmth controls with a separate reset. Corrections preserve the original photo and apply to preview, export and printing.
+Passport photo sheets now preserve the selected background color instead of forcing white, in both template preview and printing. Background colors show through transparent areas of cutout photos.

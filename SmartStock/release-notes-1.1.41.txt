@@ -1,0 +1,16 @@
+SmartStock 1.1.41
+
+Fix incoming product synchronization between stores. Product creation and edit
+notifications now apply the sending store's verified catalog snapshot, including
+names, prices, colors, descriptions, variants, pictures, and additional barcodes.
+Previously received notifications are retried automatically after the update.
+Outgoing product notifications include the catalog version so receiving stores
+can wait for the matching snapshot without copying quantity-only adjustments.
+
+Store stock counts and transactions remain local. Newer local product edits are
+preserved, conflicting catalog identities are reported, and failed deliveries
+remain available for retry instead of being marked as applied.
+
+Update the receiving store server first. On Rosehall, run Sync Now after the
+update (or allow the scheduled cycle), then reload Inventory. Item 689 should
+show Purple cardboard, price 260, and color Purple, unless a newer edit exists.

@@ -1,0 +1,6 @@
+SmartStock 1.1.72
+- Add historical receiving shortages to the Loss Ledger without deducting stock again. Preserve original dates and audit notes, skip duplicate entries, and clearly label historical selling values as current-price estimates.
+- Simplify receiving shortages to a reason dropdown, without mandatory notes or a second adjustment-reason prompt. Existing stock-adjustment permissions remain enforced.
+- Include signed stock expenses, separate noncash expense/loss totals, and audited reversals.
+- Update the store server before registers so the historical loss import runs on the authoritative local database.
+- Windows release; publishing does not install or restart live applications. AI model weights remain outside application packages.

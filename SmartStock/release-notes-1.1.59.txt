@@ -1,0 +1,9 @@
+SmartStock 1.1.59 (Windows build 101059)
+
+- Temporarily maps a compatible Windows pen tablet to the customer account signature box while the signing dialog is active. Requires the XP-Pen Wintab driver.
+- Follows changes to the dialog position and size and releases the temporary mapping when the dialog closes, loses focus, or signature entry is disabled. Driver settings are not saved or overwritten.
+- Shows mapping status and retains normal pointer signing when the driver is unavailable or rejects box mapping.
+- Uses the same mapping in Company Preferences > Sale > Signature Pad testing.
+- Includes cumulative application changes from 1.1.58. AI model weights remain outside application updates.
+
+Windows update ZIP only. Physical G430S input, installed upgrade/rollback, and live store flows require separate acceptance.

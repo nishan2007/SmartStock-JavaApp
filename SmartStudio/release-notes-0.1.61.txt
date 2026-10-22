@@ -1,0 +1,5 @@
+SmartStudio 0.1.61
+- Fix Bill Books templates being visible only on the importing computer.
+- Synchronize bill books through the authenticated store server with verified local caches, store folders, revision protection and backup.
+- Upload existing local bill book designs automatically after online sign-in and discover later converted files without repeating completed uploads.
+- Requires SmartStock server 1.1.68 or later. Update the importing computer and sign in there to upload its local bill book collection before other computers can download it.

@@ -104,6 +104,7 @@ foreach ($rule in $lanRules) {
 }
 
 Start-Sleep -Seconds 3
+& (Join-Path $AppDir 'src\windows\network-maintenance.ps1') -Install -LanSubnet $LanSubnet
 $task = schtasks /Query /TN "SmartStockServerService" /FO LIST
 if ($LASTEXITCODE -ne 0) {
     throw "SmartStockServerService was not installed."

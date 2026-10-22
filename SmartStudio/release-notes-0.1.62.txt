@@ -1,0 +1,6 @@
+SmartStudio 0.1.62
+- Bill book printing supports Full template + numbers or Numbers only for preprinted books, using the same sheet layout and number field geometry.
+- Add number fields, fill number sequences with zero padding, or merge Excel columns. Preview, PDF and Riso output follow the selected print mode. Saved templates retain their artwork.
+- Recover damaged black Publisher table exports from reference PDFs, retaining editable text cells. Exclude NUMBERING/NUM variants from bill book discovery and transfer.
+- Includes the current SmartStock 1.1.69 client dependency. Update the store server first.
+- Customer templates, original Publisher files and merge records are not bundled in the application installer. Physical print alignment and imported fonts require review.

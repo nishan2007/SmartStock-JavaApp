@@ -1,0 +1,9 @@
+SmartStudio 0.1.65 — Bill-book print control
+
+Print the template without numbering, numbers only, or the complete template with numbers.
+Choose numbering by rows or columns from any corner, or set a custom order using the sheet position map.
+Cut-and-stack numbering keeps a consecutive set at each cut position: 1,000 numbers on two positions use 500 sheets, with 1–500 in the first pile and 501–1000 in the second.
+Preview, Print and Export PDF share these settings. Direction and stacking settings save with the template.
+Separate left, right, top and bottom margins remain available for binding space.
+
+Windows build 1065. Includes shared print-engine client 1.1.73. Physical printing and stack delivery order require a proof.

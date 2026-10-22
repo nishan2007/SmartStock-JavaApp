@@ -1,0 +1,7 @@
+SmartStock 1.1.70
+- Include the cumulative shared SmartStock application changes from all chats, including the existing overseas-order, photo-record, receipt/signature, shared-template and storefront work.
+- Add multi-size shirt sets with quantities per size and shared design, files and add-ons; support fixed and variable catalogue pricing and show explicit size and colour columns.
+- Add an optional print colour field and optional names or different text per shirt, labelled by size and shirt number. Preserve names during editing and Hold/Resume and display them on saved order details and slips.
+- Group the cart summary by size and show every shirt separately in the expanded cart, including its individual add-on text.
+- Include the latest print-service product flags, inventory filters, storefront sections and ordered local schema migration.
+- Windows update only. Update the store server before registers. Existing first-install downloads and SmartStudio 0.1.62 remain available; publication does not install or restart live applications.

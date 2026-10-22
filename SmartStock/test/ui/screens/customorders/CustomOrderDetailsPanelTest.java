@@ -5,6 +5,25 @@ import javax.swing.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CustomOrderDetailsPanelTest {
+    @Test void newProductionStepsCanBeSelectedAndSentWithoutLosingTheirStatus()throws Exception{
+        SwingUtilities.invokeAndWait(()->{
+            for(String status:java.util.List.of("STARTED","WAITING_FOR_APPROVAL")){
+                var data=fixture("0",false);
+                data.getAsJsonObject("summary").addProperty("custom_order_id",40);
+                data.getAsJsonObject("summary").addProperty("status","NEW");
+                data.getAsJsonArray("lines").get(0).getAsJsonObject().addProperty("delivery_status","PENDING");
+                var panel=new CustomOrderDetailsPanel(enabled->{});
+                var sent=new java.util.concurrent.atomic.AtomicReference<String>();
+                panel.setProductionUpdater((orderId,lineId,value,completion)->{
+                    assertEquals(40,orderId);assertEquals(1,lineId);sent.set(value);completion.accept(false);
+                });
+                panel.showDetails(panel.loading(),data);
+                var box=selector(panel);assertNotNull(box);
+                box.setSelectedItem(status);assertEquals(status,sent.get());
+                assertEquals("NOT_STARTED",box.getSelectedItem());
+            }
+        });
+    }
     private static JComboBox<?> selector(java.awt.Container parent){
         for(var child:parent.getComponents()){
             if(child instanceof JComboBox<?> box)return box;

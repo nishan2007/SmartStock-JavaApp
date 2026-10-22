@@ -50,6 +50,19 @@ class StudioDeviceEnrollmentTest {
             assertThrows(StudioDeviceEnrollmentService.Denied.class,()->StudioDeviceEnrollmentService.authenticate(c,hash,"/v1/studio/branding"));c.rollback();
         }
     }
+    @Test void serverComputerReusesApprovedRowAndPreservesRegisterCredential()throws Exception {
+        try(Connection c=open()) {
+            UUID id=register(c);
+            try(var s=c.createStatement()){s.execute("UPDATE devices SET access_mode='SERVER',allow_studio=true");}
+            var b=body("studio");
+            var enrolled=StudioDeviceEnrollmentService.enroll(c,b,1,"challenge");
+            assertEquals(id,enrolled.deviceId());assertTrue(enrolled.allowed());
+            assertEquals(id,StudioDeviceEnrollmentService.claim(c,b).deviceId());
+            assertEquals(1,count(c,"SELECT count(*) FROM devices"));
+            assertEquals(1,count(c,"SELECT count(*) FROM devices WHERE access_mode='SERVER' AND pairing_public_key='register-key' AND api_credential_hash='register-hash'"));
+            c.rollback();
+        }
+    }
     @Test void oldStudioDuplicateIsRetainedForHistoryAndHiddenUnderExistingDevice()throws Exception {
         try(Connection c=open()) {
             UUID parent=register(c);
@@ -84,6 +97,15 @@ class StudioDeviceEnrollmentTest {
     }
     @Test void studioCredentialsCannotInvokeRegisterOrAdministrationRoutes() {
         assertTrue(StudioDeviceEnrollmentService.allowedPath("/v1/studio/remove-background"));
+        assertTrue(StudioDeviceEnrollmentService.allowedPath("/v1/studio/templates"));
+        assertTrue(StudioDeviceEnrollmentService.allowedPath("/v1/studio/phone-capture"));
+        assertTrue(StudioDeviceEnrollmentService.allowedPath("/v1/studio/photo-queue"));
+        assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/studio/photo-queue/other"));
+        assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/studio/phone-capture/other"));
+        assertTrue(StudioDeviceEnrollmentService.allowedPath("/v1/sessions/badge-status"));
+        assertTrue(StudioDeviceEnrollmentService.allowedPath("/v1/sessions/badge-pin-setup"));
+        assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/sessions/badge-pin-setup/other"));
+        assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/studio/templates/other"));
         assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/security/devices/update"));
         assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/cloud/storage/upload"));
     }

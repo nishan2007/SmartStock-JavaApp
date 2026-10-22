@@ -128,6 +128,7 @@ class CustomOrderCancellationTest {
                     else if(sql.startsWith("SELECT invoice_billed"))rows.add(new Object[]{false});
                     else if(sql.startsWith("SELECT order_number,customer_id"))rows.add(new Object[]{"CO-1",4,total,paid,balance});
                     else if(sql.startsWith("SELECT l.custom_order_line_id")){if(!returned)rows.add(new Object[]{11L,"Shirt","",BigDecimal.TEN,BigDecimal.ZERO,BigDecimal.TEN});}
+                    else if(sql.startsWith("SELECT inventory_product_id"))rows.add(new Object[]{null,false});
                     else if(sql.startsWith("SELECT custom_item_id"))rows.add(new Object[]{customerSupplied?null:1L,null,"Shirt","",BigDecimal.TEN,BigDecimal.ZERO,BigDecimal.TEN});
                     else if(sql.startsWith("INSERT INTO custom_order_line_returns")){
                         if(customerSupplied){assertNull(parameters.get(3),"Customer-supplied returns must bind SQL NULL, never stock ID zero");nullItemRecorded=true;}

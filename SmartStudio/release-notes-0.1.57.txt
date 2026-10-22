@@ -1,0 +1,2 @@
+SmartStudio 0.1.57
+- Fix photo-field replacement rejecting large camera images at the old 12-megapixel limit. Accept PNG/JPG/JPEG sources up to 20 MiB and 100 megapixels, using bounded decoding to prepare a smaller photo for cropping and print records.

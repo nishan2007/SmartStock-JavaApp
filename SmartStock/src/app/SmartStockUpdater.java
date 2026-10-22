@@ -958,6 +958,11 @@ public final class SmartStockUpdater {
             runMacLaunchctl("bootstrap", label);
             runMacLaunchctl("kickstart", label);
         } else if (isWindows()) {
+            UpdaterProgress.stage("Installing LAN network maintenance");
+            String maintenance = services.WindowsNetworkMaintenance.installationScript(null);
+            runRequiredCommand(List.of(windowsPowerShellExecutable(), "-NoProfile", "-NonInteractive",
+                    "-ExecutionPolicy", "Bypass", "-Command", "$ErrorActionPreference='Stop';" + maintenance),
+                    "Could not install SmartStock LAN network maintenance");
             updateSyncServiceLauncher(app, jar.getFileName().toString(), props);
             updateWindowsSyncServiceTask(props, app, jar.getFileName().toString());
             String task = required(props, "sync.service.task.name");

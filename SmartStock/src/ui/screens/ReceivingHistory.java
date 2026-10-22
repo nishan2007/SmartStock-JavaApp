@@ -21,6 +21,12 @@ import java.time.format.DateTimeParseException;
 import java.util.List;
 
 public class ReceivingHistory extends JFrame {
+    /** Open the originating receiving slip from a loss ledger entry. */
+    public ReceivingHistory(String receiveId) {
+        this();
+        searchField.setText(receiveId);
+        loadReceivingHistory();
+    }
     private List<List<LanApiClient.ReceivingHistoryRow>> slips = List.of();
     private final JTextField searchField = new JTextField();
     private final JTextField fromDateField = new JTextField();

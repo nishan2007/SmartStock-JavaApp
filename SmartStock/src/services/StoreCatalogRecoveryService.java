@@ -137,9 +137,11 @@ final class StoreCatalogRecoveryService {
                 if(cols.isEmpty() || keys.isEmpty())throw new SQLException("Catalog target schema is incomplete: "+table);
                 rows=decodeJsonColumns(rows,jsonColumns);
                 String join=String.join(" AND ",keys.stream().map(k->"t.\""+k+"\"=s.\""+k+"\"").toList());
-                String ignored="ARRAY['created_at','updated_at','last_verified_at','last_error','local_status','cloud_verified_at','unused_since','retained']::text[]";
+                String ignored="ARRAY['created_at','updated_at','last_verified_at','last_error','local_status','cloud_verified_at','unused_since','retained','catalog_uid']::text[]";
                 String relation="jsonb_populate_recordset(NULL::"+table+",?::jsonb)";
-                try(var p=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM "+relation+" s JOIN "+table+" t ON "+join+" WHERE (to_jsonb(s)-"+ignored+") IS DISTINCT FROM (to_jsonb(t)-"+ignored+"))")) {
+                String identityCollision=cols.contains("catalog_uid")
+                        ? " OR (s.catalog_uid IS NOT NULL AND s.catalog_uid IS DISTINCT FROM t.catalog_uid)" : "";
+                try(var p=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM "+relation+" s JOIN "+table+" t ON "+join+" WHERE ((to_jsonb(s)-"+ignored+") IS DISTINCT FROM (to_jsonb(t)-"+ignored+")"+identityCollision+"))")) {
                     p.setString(1,rows.toString());try(var r=p.executeQuery()){r.next();if(r.getBoolean(1))throw new SQLException("Catalog ID collision in "+table+"; existing store data was preserved. Review before merging.");}
                 }
                 String columns=String.join(",",cols.stream().map(k->"\""+k+"\"").toList());

@@ -4925,3 +4925,222 @@ INSERT INTO public.role_permissions(role_id,permission_id,updated_at)
 SELECT r.role_id,p.permission_id,now() FROM public.roles r CROSS JOIN public.permissions p
 WHERE UPPER(r.role_name)='ADMIN' AND p.permission_key IN ('CUSTOM_ORDER_DEFER_PRICING','CUSTOM_ORDER_UNPRICED_DELIVERY_OVERRIDE')
 ON CONFLICT(role_id,permission_id) DO NOTHING;
+
+-- POS tables remain local; cloud recovery uses smartstock_store_rows.
+DO $smartstock_local$ BEGIN
+IF to_regclass('public.custom_orders') IS NOT NULL THEN
+-- Local store authority; mirrored off-site only for synchronization/recovery.
+ALTER TABLE public.custom_orders ADD COLUMN IF NOT EXISTS order_type text NOT NULL DEFAULT 'CUSTOM';
+ALTER TABLE public.custom_order_payments ADD COLUMN IF NOT EXISTS overseas_receipt jsonb;
+CREATE TABLE IF NOT EXISTS public.overseas_orders (
+    overseas_order_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    location_id integer NOT NULL REFERENCES public.locations(location_id),
+    customer_id integer REFERENCES public.customer_accounts(customer_id),
+    customer_name text NOT NULL,
+    customer_phone text NOT NULL,
+    expected_date date,
+    notes text NOT NULL DEFAULT '',
+    shipping numeric(12,2) NOT NULL DEFAULT 0 CHECK (shipping >= 0),
+    total numeric(12,2) NOT NULL DEFAULT 0 CHECK (total >= 0),
+    state text NOT NULL DEFAULT 'DRAFT' CHECK (state IN ('DRAFT','ISSUED','COMPLETED','CANCELLED')),
+    custom_order_id bigint UNIQUE REFERENCES public.custom_orders(custom_order_id),
+    revision bigint NOT NULL DEFAULT 1,
+    created_by integer NOT NULL REFERENCES public.users(user_id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS public.overseas_order_lines (
+    line_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    overseas_order_id uuid NOT NULL REFERENCES public.overseas_orders(overseas_order_id),
+    description text NOT NULL,
+    product_url text NOT NULL DEFAULT '',
+    options text NOT NULL DEFAULT '',
+    quantity integer NOT NULL CHECK (quantity > 0 AND quantity <= 100000),
+    unit_price numeric(12,2) NOT NULL CHECK (unit_price >= 0),
+    usd_cost numeric(12,2) CHECK (usd_cost >= 0),
+    exchange_rate numeric(12,4) CHECK (exchange_rate > 0),
+    screenshot text NOT NULL DEFAULT '',
+    purchased integer NOT NULL DEFAULT 0,
+    shipped integer NOT NULL DEFAULT 0,
+    arrived integer NOT NULL DEFAULT 0,
+    collected integer NOT NULL DEFAULT 0,
+    sort_order integer NOT NULL DEFAULT 0,
+    CHECK (0 <= collected AND collected <= arrived AND arrived <= shipped AND shipped <= purchased AND purchased <= quantity)
+);
+CREATE TABLE IF NOT EXISTS public.overseas_order_events (
+    event_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    overseas_order_id uuid NOT NULL REFERENCES public.overseas_orders(overseas_order_id),
+    actor_id integer NOT NULL,
+    actor_name text NOT NULL,
+    action text NOT NULL,
+    reason text NOT NULL DEFAULT '',
+    before_value jsonb,
+    after_value jsonb,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS public.overseas_order_images (
+    image_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    overseas_order_id uuid NOT NULL REFERENCES public.overseas_orders(overseas_order_id),
+    asset_reference text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS overseas_order_images_order_idx ON public.overseas_order_images(overseas_order_id);
+CREATE TABLE IF NOT EXISTS public.overseas_order_requests (
+    request_id uuid NOT NULL,
+    actor_id integer NOT NULL,
+    location_id integer NOT NULL,
+    request_hash text NOT NULL,
+    response jsonb NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (actor_id,location_id,request_id)
+);
+CREATE INDEX IF NOT EXISTS overseas_orders_lookup_idx ON public.overseas_orders(location_id,state,updated_at DESC);
+CREATE INDEX IF NOT EXISTS overseas_order_lines_order_idx ON public.overseas_order_lines(overseas_order_id,sort_order);
+CREATE INDEX IF NOT EXISTS overseas_order_events_order_idx ON public.overseas_order_events(overseas_order_id,created_at);
+CREATE INDEX IF NOT EXISTS custom_orders_type_location_idx ON public.custom_orders(order_type,location_id,created_at DESC);
+
+END IF;
+END $smartstock_local$;
+INSERT INTO public.mobile_permissions(permission_key,permission_name,description,permission_group,permission_subgroup,created_at)
+VALUES
+ ('OVERSEAS_ORDERS_VIEW','View Overseas Orders','View quotes, receipts and shipment progress.','Orders','Overseas Orders',now()),
+ ('OVERSEAS_ORDERS_QUOTE','Prepare Overseas Orders','Create and edit quotes, including private cost references.','Orders','Overseas Orders',now()),
+ ('OVERSEAS_ORDERS_PAYMENT','Collect Overseas Payments','Collect payments at an authorized register.','Orders','Overseas Orders',now()),
+ ('OVERSEAS_ORDERS_SHIP','Update Overseas Shipments','Record purchased, shipped and arrived quantities.','Orders','Overseas Orders',now()),
+ ('OVERSEAS_ORDERS_COLLECT','Hand Over Overseas Orders','Record partial and final customer collections.','Orders','Overseas Orders',now()),
+ ('OVERSEAS_ORDERS_ADJUST','Adjust Overseas Orders','Authorize financial corrections, cancellation and refunds.','Orders','Overseas Orders',now())
+ON CONFLICT(permission_key) DO NOTHING;
+INSERT INTO public.role_mobile_permissions(role_id,permission_key,updated_at)
+SELECT r.role_id,p.permission_key,now() FROM public.roles r CROSS JOIN public.mobile_permissions p
+WHERE upper(r.role_name)='ADMIN' AND p.permission_key LIKE 'OVERSEAS_ORDERS_%'
+ON CONFLICT(role_id,permission_key) DO NOTHING;
+-- POS tables remain local; cloud recovery uses smartstock_store_rows.
+DO $smartstock_local$ BEGIN
+IF to_regclass('public.custom_orders') IS NOT NULL THEN
+-- Off-site mirrors are accessible only to the server service role.
+DO $$ DECLARE t text; BEGIN
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+  FOREACH t IN ARRAY ARRAY['overseas_orders','overseas_order_lines','overseas_order_images','overseas_order_events','overseas_order_requests'] LOOP
+   EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',t);
+   EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC',t);
+   IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN EXECUTE format('REVOKE ALL ON public.%I FROM anon',t); END IF;
+   IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN EXECUTE format('REVOKE ALL ON public.%I FROM authenticated',t); END IF;
+   EXECUTE format('GRANT ALL ON public.%I TO service_role',t);
+  END LOOP;
+ END IF;
+END $$;
+
+END IF;
+END $smartstock_local$;
+
+-- POS tables remain local; cloud recovery uses smartstock_store_rows.
+DO $smartstock_local$ BEGIN
+IF to_regclass('public.overseas_order_lines') IS NOT NULL THEN
+ALTER TABLE public.overseas_order_lines ADD COLUMN IF NOT EXISTS seller text NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS overseas_order_lines_seller_idx
+ON public.overseas_order_lines (lower(seller)) WHERE seller<>'';
+
+END IF;
+END $smartstock_local$;
+
+-- POS tables remain local; cloud recovery uses smartstock_store_rows.
+DO $smartstock_local$ BEGIN
+IF to_regclass('public.cash_drawers') IS NOT NULL THEN
+-- Separate cash has no opening float. Existing payments retain their original classification.
+ALTER TABLE public.cash_drawers ADD COLUMN IF NOT EXISTS handles_overseas_cash boolean NOT NULL DEFAULT false;
+ALTER TABLE public.cash_drawer_sessions ADD COLUMN IF NOT EXISTS handles_overseas_cash boolean NOT NULL DEFAULT false;
+ALTER TABLE public.cash_drawer_sessions ADD COLUMN IF NOT EXISTS overseas_expected numeric(14,2);
+ALTER TABLE public.cash_drawer_sessions ADD COLUMN IF NOT EXISTS overseas_counted numeric(14,2) CHECK (overseas_counted>=0);
+ALTER TABLE public.cash_drawer_sessions ADD COLUMN IF NOT EXISTS overseas_variance_reason text;
+ALTER TABLE public.custom_order_payments ADD COLUMN IF NOT EXISTS overseas_cash_separate boolean NOT NULL DEFAULT false;
+ALTER TABLE public.balance_sheet_submissions ADD COLUMN IF NOT EXISTS overseas_cash_snapshot jsonb;
+CREATE TABLE IF NOT EXISTS public.overseas_cash_fund (
+  entry_id uuid PRIMARY KEY,
+  location_id integer NOT NULL REFERENCES public.locations(location_id),
+  cash_drawer_session_id bigint UNIQUE REFERENCES public.cash_drawer_sessions(cash_drawer_session_id),
+  entry_type text NOT NULL CHECK (entry_type IN ('HANDOVER','WITHDRAWAL')),
+  amount numeric(14,2) NOT NULL CHECK (amount>=0),
+  reason text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  user_id integer REFERENCES public.users(user_id),
+  user_name text NOT NULL,
+  device_id text,
+  CHECK ((entry_type='HANDOVER')=(cash_drawer_session_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS overseas_cash_fund_location_date_idx ON public.overseas_cash_fund(location_id,created_at,entry_id);
+CREATE INDEX IF NOT EXISTS overseas_cash_payments_session_idx ON public.custom_order_payments(cash_drawer_session_id) WHERE overseas_cash_separate;
+ALTER TABLE public.overseas_cash_fund ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.overseas_cash_fund FROM PUBLIC;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN GRANT ALL ON public.overseas_cash_fund TO service_role; END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN REVOKE ALL ON public.overseas_cash_fund FROM anon; END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN REVOKE ALL ON public.overseas_cash_fund FROM authenticated; END IF;
+END $$;
+
+END IF;
+END $smartstock_local$;
+
+-- Exact loyalty refund totals travel only as document metadata in the existing mirror.
+ALTER TABLE public.smartstock_cross_store_refund_lines ADD COLUMN IF NOT EXISTS loyalty_line_total numeric(14,2);
+
+CREATE OR REPLACE FUNCTION public.smartstock_reserve_cross_store_refund(p_request jsonb) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO ''
+    AS $$
+DECLARE v_id uuid; v_source integer; v_receiving integer; v_sale integer; v_line jsonb;
+        v_item integer; v_qty integer; v_sold integer; v_returned integer; v_reserved integer;
+        v_sequence bigint;
+BEGIN
+  v_id=(p_request->>'request_id')::uuid; v_source=(p_request->>'source_location_id')::integer;
+  v_receiving=(p_request->>'receiving_location_id')::integer; v_sale=(p_request->>'source_sale_id')::integer;
+  IF v_source<=0 OR v_receiving<=0 OR v_source=v_receiving OR v_sale<=0
+     OR COALESCE(p_request->>'return_receipt_number','')='' OR COALESCE(p_request->>'receipt_device_id','')=''
+     OR (p_request->>'receipt_sequence')::integer<=0
+     OR pg_catalog.jsonb_typeof(p_request->'lines')<>'array'
+     OR pg_catalog.jsonb_array_length(p_request->'lines') NOT BETWEEN 1 AND 200 THEN
+    RAISE EXCEPTION 'Invalid cross-store refund request.' USING ERRCODE='22023';
+  END IF;
+  SELECT request_sequence INTO v_sequence FROM public.smartstock_cross_store_refund_requests WHERE request_id=v_id;
+  IF FOUND THEN RETURN pg_catalog.jsonb_build_object('requestId',v_id,'requestSequence',v_sequence,'duplicate',true); END IF;
+  FOR v_line IN SELECT value FROM pg_catalog.jsonb_array_elements(p_request->'lines') LOOP
+    v_item=(v_line->>'source_sale_item_id')::integer; v_qty=(v_line->>'quantity')::integer;
+    SELECT COALESCE((r.row_data->>'quantity')::integer,0) INTO v_sold
+      FROM public.smartstock_store_rows r WHERE r.location_id=v_source AND r.table_name='sale_items'
+       AND NOT r.is_deleted AND (r.row_data->>'sale_id')::integer=v_sale
+       AND (r.row_data->>'sale_item_id')::integer=v_item;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Sale item is not available in the latest source mirror.' USING ERRCODE='P0002'; END IF;
+    SELECT COALESCE(SUM((r.row_data->>'quantity')::integer),0) INTO v_returned
+      FROM public.smartstock_store_rows r WHERE r.location_id=v_source AND r.table_name='sale_return_items'
+       AND NOT r.is_deleted AND (r.row_data->>'sale_item_id')::integer=v_item;
+    SELECT COALESCE(SUM(l.quantity),0) INTO v_reserved
+      FROM public.smartstock_cross_store_refund_lines l JOIN public.smartstock_cross_store_refund_requests q USING(request_id)
+      WHERE q.source_location_id=v_source AND q.status NOT IN ('REJECTED','CANCELLED') AND l.source_sale_item_id=v_item;
+    IF v_qty<=0 OR v_qty>v_sold-v_returned-v_reserved THEN
+      RAISE EXCEPTION 'Requested return quantity is no longer available.' USING ERRCODE='23514';
+    END IF;
+  END LOOP;
+  INSERT INTO public.smartstock_cross_store_refund_requests(request_id,source_location_id,receiving_location_id,
+    source_sale_id,refund_method,refund_amount,reason,actor,return_receipt_number,receipt_device_id,receipt_sequence)
+  VALUES(v_id,v_source,v_receiving,v_sale,p_request->>'refund_method',(p_request->>'refund_amount')::numeric,
+    p_request->>'reason',COALESCE(p_request->'actor','{}'::jsonb),p_request->>'return_receipt_number',
+    p_request->>'receipt_device_id',(p_request->>'receipt_sequence')::integer) RETURNING request_sequence INTO v_sequence;
+  FOR v_line IN SELECT value FROM pg_catalog.jsonb_array_elements(p_request->'lines') LOOP
+    INSERT INTO public.smartstock_cross_store_refund_lines(request_id,source_sale_item_id,product_id,quantity,unit_price,
+      disposition,destination_location_id,disposition_reason,loyalty_line_total)
+    VALUES(v_id,(v_line->>'source_sale_item_id')::integer,(v_line->>'product_id')::integer,
+      (v_line->>'quantity')::integer,(v_line->>'unit_price')::numeric,v_line->>'disposition',
+      NULLIF(v_line->>'destination_location_id','')::integer,v_line->>'disposition_reason',NULLIF(v_line->>'loyalty_line_total','')::numeric);
+  END LOOP;
+  RETURN pg_catalog.jsonb_build_object('requestId',v_id,'requestSequence',v_sequence,'duplicate',false);
+END $$;
+
+-- POS tables remain local; cloud recovery uses smartstock_store_rows.
+DO $smartstock_local$ BEGIN
+IF to_regclass('public.custom_order_lines') IS NOT NULL THEN
+-- Regular inventory products used as custom-order blanks. One saved line is one physical item.
+ALTER TABLE public.custom_order_lines ADD COLUMN IF NOT EXISTS inventory_product_id integer REFERENCES public.products(product_id);
+ALTER TABLE public.custom_order_lines ADD COLUMN IF NOT EXISTS inventory_restocked boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS custom_order_lines_inventory_product_idx ON public.custom_order_lines(inventory_product_id) WHERE inventory_product_id IS NOT NULL;
+
+END IF;
+END $smartstock_local$;

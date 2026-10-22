@@ -75,6 +75,35 @@ public final class StorefrontService {
             var product=e.getAsJsonObject();var manifest=ServerImageAssetService.storefrontManifest(c,text(product,"image"));
             if(manifest!=null){product.add("_imageManifest",manifest);product.addProperty("image",ImageAssetReference.format(UUID.fromString(text(manifest,"id"))));}
         }
+        s.add("shirts",ShirtDesignerService.catalog(c,location));
+        s.add("sublimationProducts",rows(c,"""
+            SELECT custom_item_id AS id,item_name AS name,COALESCE(description,'') AS description,
+                   COALESCE(size,'') AS size,COALESCE(color,'') AS color
+            FROM custom_order_items
+            WHERE is_sublimation AND NOT is_shirt AND NOT is_business_cards AND NOT is_large_format_printing AND NOT is_laser AND is_active AND NOT is_archived AND product_type='INVENTORY'
+            ORDER BY item_name,custom_item_id
+            """));
+        s.add("businessCardsProducts",rows(c,"""
+            SELECT custom_item_id AS id,item_name AS name,COALESCE(description,'') AS description,
+                   COALESCE(size,'') AS size,COALESCE(color,'') AS color
+            FROM custom_order_items
+            WHERE is_business_cards AND NOT is_shirt AND NOT is_sublimation AND NOT is_large_format_printing AND NOT is_laser AND is_active AND NOT is_archived
+            ORDER BY item_name,custom_item_id
+            """));
+        s.add("largeFormatPrintingProducts",rows(c,"""
+            SELECT custom_item_id AS id,item_name AS name,COALESCE(description,'') AS description,
+                   COALESCE(size,'') AS size,COALESCE(color,'') AS color
+            FROM custom_order_items
+            WHERE is_large_format_printing AND NOT is_shirt AND NOT is_sublimation AND NOT is_business_cards AND NOT is_laser AND is_active AND NOT is_archived
+            ORDER BY item_name,custom_item_id
+            """));
+        s.add("laserProducts",rows(c,"""
+            SELECT custom_item_id AS id,item_name AS name,COALESCE(description,'') AS description,
+                   COALESCE(size,'') AS size,COALESCE(color,'') AS color
+            FROM custom_order_items
+            WHERE is_laser AND NOT is_shirt AND NOT is_sublimation AND NOT is_business_cards AND NOT is_large_format_printing AND is_active AND NOT is_archived
+            ORDER BY item_name,custom_item_id
+            """));
         s.add("projects",rows(c,"""
             SELECT project_id AS id,title,summary,category,materials,production_method AS "productionMethod",service_slug AS "serviceSlug",
                    customization,tags,starting_price AS "startingPrice",product_ids AS "productIds",cover_reference AS cover,
@@ -124,7 +153,7 @@ public final class StorefrontService {
     static JsonObject publicSyncSnapshot(JsonObject snapshot){
         JsonObject publicOnly=new JsonObject();
         for(String key:List.of("locationId","capturedAt","settings","unavailableServices",
-                "store","branding","tax","products","projects")){
+                "store","branding","tax","products","projects","shirts","sublimationProducts","businessCardsProducts","largeFormatPrintingProducts","laserProducts")){
             if(snapshot.has(key))publicOnly.add(key,snapshot.get(key).deepCopy());
         }
         if(publicOnly.has("settings"))publicOnly.getAsJsonObject("settings").addProperty("enabled",false);
@@ -136,7 +165,7 @@ public final class StorefrontService {
         return row.getAsJsonObject("payload");
     }
     static JsonObject catalog(JsonObject s){
-        JsonObject out=new JsonObject();for(String k:List.of("locationId","capturedAt","settings","store","products","projects","branding","unavailableServices"))out.add(k,s.has(k)?s.get(k).deepCopy():JsonNull.INSTANCE);
+        JsonObject out=new JsonObject();for(String k:List.of("locationId","capturedAt","settings","store","products","projects","shirts","sublimationProducts","businessCardsProducts","largeFormatPrintingProducts","laserProducts","branding","unavailableServices"))out.add(k,s.has(k)?s.get(k).deepCopy():JsonNull.INSTANCE);
         JsonObject settings=out.get("settings").isJsonObject()?out.getAsJsonObject("settings"):new JsonObject();
         JsonObject campaign=new JsonObject();
         for(String[] field:new String[][]{{"topic","campaign_topic"},{"eyebrow","campaign_eyebrow"},{"headline","campaign_headline"},

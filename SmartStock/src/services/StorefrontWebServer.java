@@ -44,12 +44,53 @@ public final class StorefrontWebServer implements AutoCloseable {
             }
         }
     }
+    static String bundledFile(String path){
+        return path.startsWith("/shop/")&&(path.startsWith("/shop/assets/")||path.startsWith("/shop/fonts/")||path.endsWith(".png")||path.endsWith(".jpg")||path.endsWith(".jpeg")||path.equals("/shop/favicon.svg"))?path.substring("/shop/".length()):"index.html";
+    }
+    static String bundledContentType(String file){
+        return file.endsWith(".glb")?"model/gltf-binary":file.endsWith(".js")?"text/javascript":file.endsWith(".css")?"text/css":file.endsWith(".svg")?"image/svg+xml":file.endsWith(".jpg")||file.endsWith(".jpeg")?"image/jpeg":file.endsWith(".png")?"image/png":file.endsWith(".ttf")?"font/ttf":file.endsWith(".txt")?"text/plain":"text/html";
+    }
     private void handle(HttpExchange x){
         try{
             if(!x.getRemoteAddress().getAddress().isLoopbackAddress()||!LanSecurity.constantTimeEquals(config.edgeKey(),Objects.toString(x.getRequestHeaders().getFirst("X-Storefront-Key"),""))){send(x,403,Map.of("message","Use the Deckers website."));return;}
             if(!config.instanceId().equals(x.getRequestHeaders().getFirst("X-Storefront-Instance"))){send(x,403,Map.of("message","Store server identity does not match."));return;}
             if(ServerRoleGuard.state()!=ServerRoleGuard.State.PRIMARY){send(x,503,Map.of("message","This server is unavailable."));return;}
             String path=x.getRequestURI().getPath();
+            if(path.equals("/shop/internal/template-submit")){
+                if(!"POST".equals(x.getRequestMethod())){send(x,405,Map.of("message","POST required."));return;}
+                if(!allow("template-submit:"+Objects.toString(x.getRequestHeaders().getFirst("X-Submission-Client"),"unknown"))){send(x,429,Map.of("message","Too many requests. Try again later."));return;}
+                byte[] bytes=x.getRequestBody().readNBytes(StudioSubmissionQueue.MAX_BYTES+1);
+                if(bytes.length>StudioSubmissionQueue.MAX_BYTES){send(x,413,Map.of("message","Submission exceeds 12 MB."));return;}
+                try(Connection c=DB.getConnection()){
+                    var body=JsonParser.parseString(new String(bytes,StandardCharsets.UTF_8)).getAsJsonObject();
+                    send(x,200,StudioSubmissionQueue.publicRequest(c,body));
+                }catch(SecurityException ex){send(x,403,Map.of("message",ex.getMessage()));}
+                catch(IllegalStateException ex){send(x,409,Map.of("message",ex.getMessage()));}
+                catch(IllegalArgumentException ex){send(x,400,Map.of("message","Check the link, code, fields and photos, then retry."));}
+                catch(java.nio.file.NoSuchFileException ex){send(x,403,Map.of("message","This template is unavailable."));}
+                return;
+            }
+            if(path.equals("/shop/internal/studio-photo-queue")){
+                if(!"POST".equals(x.getRequestMethod())){send(x,405,Map.of("message","POST required."));return;}
+                try{
+                    String authorization=Objects.toString(x.getRequestHeaders().getFirst("Authorization"),"");
+                    String token=authorization.startsWith("Bearer ")?authorization.substring(7):"";
+                    Map<String,String> query=new HashMap<>();for(String entry:Objects.toString(x.getRequestURI().getRawQuery(),"").split("&")){
+                        String[] pair=entry.split("=",2);if(pair.length==2)query.put(URLDecoder.decode(pair[0],StandardCharsets.UTF_8),URLDecoder.decode(pair[1],StandardCharsets.UTF_8));
+                    }
+                    byte[] photo=x.getRequestBody().readNBytes(2*1024*1024+1);
+                    if(photo.length>2*1024*1024){send(x,413,Map.of("message","Choose a photo of at most 2 MB."));return;}
+                    String removal=query.getOrDefault("removeBackground","true");
+                    if(!removal.equals("true")&&!removal.equals("false"))throw new IllegalArgumentException("Invalid background removal option.");
+                    boolean removeBackground=Boolean.parseBoolean(removal);
+                    JsonObject row=StudioPhotoQueue.current().upload(DatabaseConfig.load().locationId(),token,query.get("uploadId"),query.getOrDefault("name",""),photo,removeBackground);
+                    if(removeBackground)StudioPhotoQueue.prepareUploadedPhoto();
+                    send(x,200,Map.of("id",row.get("id").getAsString(),"queued",true));
+                }catch(SecurityException ex){send(x,403,Map.of("message",ex.getMessage()));}
+                catch(IllegalArgumentException ex){send(x,400,Map.of("message","The photo or upload details are invalid. Choose a new photo and try again."));}
+                catch(IllegalStateException ex){send(x,409,Map.of("message",ex.getMessage()));}
+                return;
+            }
             if(path.equals("/shop/internal/resolve-command")){
                 if(config.browseOnly()){send(x,503,Map.of("message","Order commands are disabled during browse-only launch."));return;}
                 if(!"POST".equals(x.getRequestMethod())){send(x,405,Map.of("message","POST required."));return;}
@@ -78,10 +119,18 @@ public final class StorefrontWebServer implements AutoCloseable {
                     JsonObject s=body.has("_snapshot")?body.getAsJsonObject("_snapshot"):cached(c,location);
                     if(integer(s,"locationId")!=location)throw new IllegalArgumentException("Store selection does not match the catalog.");
                     if(route.equals("catalog")){JsonObject publicCatalog=catalog(s);publicCatalog.addProperty("servingBackup",location!=DatabaseConfig.load().locationId());if(config.browseOnly())markBrowseOnly(publicCatalog);send(x,200,publicCatalog);return;}
+                    if(route.equals("shirt-estimate")){
+                        if(location!=DatabaseConfig.load().locationId())throw new IllegalArgumentException("Choose the shirt's store.");
+                        send(x,200,ShirtDesignerService.estimate(c,location,body.getAsJsonObject("shirtDesign")));return;
+                    }
                     JsonObject session=session(x,true);String email=text(session,"email");UUID user=UUID.fromString(text(session,"id"));
                     if(route.equals("quote-template")){
                         if(location!=DatabaseConfig.load().locationId())throw new IllegalArgumentException("Choose this store to repeat a custom request.");
                         send(x,200,StorefrontQuoteRequests.template(c,location,user,UUID.fromString(text(body,"requestId"))));return;
+                    }
+                    if(route.equals("shirt-finalize")){
+                        if(location!=DatabaseConfig.load().locationId())throw new IllegalArgumentException("Choose the shirt's store.");
+                        c.setAutoCommit(false);try{StorefrontRuntime.requirePrimary();JsonObject result=StorefrontQuoteRequests.finalizeShirt(c,location,user,body);StorefrontRuntime.requirePrimary();c.commit();send(x,200,result);}catch(Exception e){c.rollback();throw e;}return;
                     }
                     if(route.equals("custom-quote")){
                         if(location!=DatabaseConfig.load().locationId())throw new IllegalArgumentException("Choose this store to send a custom request.");
@@ -172,11 +221,11 @@ public final class StorefrontWebServer implements AutoCloseable {
                 }
                 return;
             }
-            String file=path.startsWith("/shop/assets/")?path.substring("/shop/".length()):path.equals("/shop/favicon.svg")?"favicon.svg":path.equals("/shop/hero-3d.jpg")?"hero-3d.jpg":path.equals("/shop/services-editorial.jpg")?"services-editorial.jpg":path.equals("/shop/new-3d.jpg")?"new-3d.jpg":path.equals("/shop/new-apparel.jpg")?"new-apparel.jpg":"index.html";
+            String file=bundledFile(path);
             if(file.contains("..")||!file.matches("[a-zA-Z0-9_./-]+")){send(x,404,Map.of("message","Not found."));return;}
             try(var in=getClass().getClassLoader().getResourceAsStream("storefront-web/"+file)){
                 if(in==null){send(x,503,Map.of("message","The storefront bundle is not installed."));return;}
-                respond(x,200,file.endsWith(".js")?"text/javascript":file.endsWith(".css")?"text/css":file.endsWith(".svg")?"image/svg+xml":file.endsWith(".jpg")?"image/jpeg":"text/html",in.readAllBytes());
+                respond(x,200,bundledContentType(file),in.readAllBytes());
             }
         }catch(EmploymentPortalCloud.AuthFailure e){safe(x,401,e.getMessage());}
         catch(IllegalArgumentException|JsonParseException e){safe(x,400,e instanceof JsonParseException?"Invalid request.":e.getMessage());}
@@ -384,7 +433,7 @@ public final class StorefrontWebServer implements AutoCloseable {
     private static void safe(HttpExchange x,int status,String message){try{send(x,status,Map.of("message",Objects.toString(message,"Request failed.")));}catch(Exception ignored){}}
     private static void send(HttpExchange x,int status,Object object)throws java.io.IOException{respond(x,status,"application/json",JSON.toJson(object).getBytes(StandardCharsets.UTF_8));}
     private static void respond(HttpExchange x,int status,String type,byte[] bytes)throws java.io.IOException{
-        var h=x.getResponseHeaders();h.set("Content-Type",type+"; charset=utf-8");h.set("Cache-Control","no-store");h.set("X-Content-Type-Options","nosniff");h.set("Referrer-Policy","same-origin");h.set("Content-Security-Policy","default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");x.sendResponseHeaders(status,bytes.length);x.getResponseBody().write(bytes);
+        var h=x.getResponseHeaders();h.set("Content-Type",type+"; charset=utf-8");h.set("Cache-Control","no-store");h.set("X-Content-Type-Options","nosniff");h.set("Referrer-Policy","same-origin");h.set("Content-Security-Policy","default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");x.sendResponseHeaders(status,bytes.length);x.getResponseBody().write(bytes);
     }
     public void close(){server.stop(1);pool.shutdownNow();}
 }

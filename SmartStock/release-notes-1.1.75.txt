@@ -1,0 +1,5 @@
+SmartStock 1.1.75 - Quick Windows update
+
+Includes the current application and workflow improvements from the shared workspace, including custom-order inventory, stock and loss ledgers, loyalty, Photo Studio and printing updates.
+
+Build 101075. Update the store server before registers. AI models remain separate.

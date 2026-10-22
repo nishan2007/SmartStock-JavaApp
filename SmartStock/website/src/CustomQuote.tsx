@@ -11,10 +11,10 @@ import {physicalModelSize} from './modelUnits.mjs';
 export type QuoteFile={fileId:string;file:File};
 export type QuoteTemplate={requestId:string;topic:string;description:string;quantity:number;size:string;color:string;material:string;contactPhone:string;projectContext?:{title?:string;category?:string;materials?:string;productionMethod?:string;customization?:string}};
 export type Payload={requestId:string;topic:string;description:string;quantity:number;size:string;color:string;material:string;printQuality?:'STANDARD'|'DETAIL';modelUnits?:string;contactPhone:string;desiredDate:string;projectId?:string;sourceRequestId?:string;files:QuoteFile[]};
-export function CustomQuote({topic,project,initial,store,authenticated,busy,onLogin,onSubmit}:{topic:string;project?:Project;initial?:QuoteTemplate|null;store:string;authenticated:boolean;busy:boolean;onLogin:()=>void;onSubmit:(payload:Payload)=>Promise<boolean>}){
+export function CustomQuote({topic,project,initial,prefill,store,authenticated,busy,onLogin,onSubmit}:{topic:string;project?:Project;initial?:QuoteTemplate|null;prefill?:{name:string;size:string;color:string}|null;store:string;authenticated:boolean;busy:boolean;onLogin:()=>void;onSubmit:(payload:Payload)=>Promise<boolean>}){
   const questions=questionsFor(topic,project||initial?.projectContext);
-  const draft=repeatDraft(initial?.description||'',questions);
-  const [description,setDescription]=useState(draft.description),[quantity,setQuantity]=useState(initial?.quantity||1),[size,setSize]=useState(initial?.size||''),[color,setColor]=useState(initial?.color||''),[material,setMaterial]=useState(initial?.material||''),[phone,setPhone]=useState(initial?.contactPhone||''),[date,setDate]=useState('');
+  const draft=repeatDraft(initial?.description||(prefill?`${topic}: ${prefill.name}`:''),questions);
+  const [description,setDescription]=useState(draft.description),[quantity,setQuantity]=useState(initial?.quantity||1),[size,setSize]=useState(initial?.size||prefill?.size||''),[color,setColor]=useState(initial?.color||prefill?.color||''),[material,setMaterial]=useState(initial?.material||''),[phone,setPhone]=useState(initial?.contactPhone||''),[date,setDate]=useState('');
   const [answers,setAnswers]=useState<Record<string,string>>(draft.answers);
   const [detailError,setDetailError]=useState('');
   const is3D=topic==='3D Printing'||/3d print|additive|filament|resin/i.test(project?.productionMethod||initial?.projectContext?.productionMethod||'');

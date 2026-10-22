@@ -42,6 +42,7 @@ final class CustomOrderPricingDialog {
                     var input=new PricingLine(saved.lineId(),number(model,i,1,true),number(model,i,2,true),number(model,i,3,false),List.copyOf(addons.get(i)),number(model,i,4,false),value(model,i,5),null,value(model,i,6),null);
                     total=total.add(CustomOrderPricingService.calculate(saved,input,details.customerDiscountPercent(),details.roundToNearestTwenty()).total());inputs.add(input);
                 }
+                total=utils.CurrencyFormatter.customOrderTotal(total,details.roundToNearestTwenty());
                 BigDecimal balance=CustomOrderPricingService.finalBalance(total,details.paid());
                 if(JOptionPane.showConfirmDialog(parent,"Final total: $"+total+"\nDeposits: $"+details.paid()+"\nBalance due: $"+balance,"Confirm final price",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)continue;
                 List<PricingLine> approved=new ArrayList<>();boolean cancelled=false;

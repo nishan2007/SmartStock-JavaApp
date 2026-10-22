@@ -97,6 +97,13 @@ public class OrdersManagerDashboard extends JFrame {
         right.setOpaque(false);
         right.add(storeLabel);
         right.add(refreshButton);
+        JButton pairDevice = new JButton("Pair Orders Device");
+        pairDevice.setToolTipText("Scan a one-time QR code, then sign in with your SmartStock account.");
+        pairDevice.addActionListener(e -> new MobileItemWebDialog(this, "orders=1").setVisible(true));
+        right.add(pairDevice);
+        JButton overseas=new JButton("Overseas Orders");
+        overseas.addActionListener(e -> {if(!ui.helpers.WindowHelper.focusIfAlreadyOpen(OverseasOrders.class))new OverseasOrders().setVisible(true);});
+        right.add(overseas);
 
         header.add(title, BorderLayout.WEST);
         header.add(right, BorderLayout.EAST);

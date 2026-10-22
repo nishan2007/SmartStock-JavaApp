@@ -56,7 +56,7 @@ final class LanDocumentDataService {
                 SELECT CASE WHEN si.is_misc_item THEN COALESCE(si.item_name,'Misc Item') ELSE COALESCE(p.name,'Deleted Item') || CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END END,
                        COALESCE(p.sku,''),COALESCE(si.quantity,0),COALESCE(si.original_unit_price,si.unit_price,0),
                        COALESCE(si.unit_price,0),COALESCE(si.discount_percent,0),
-                       COALESCE(si.quantity,0)*COALESCE(si.unit_price,0)
+                       COALESCE(si.loyalty_net_amount,COALESCE(si.quantity,0)*COALESCE(si.unit_price,0))
                 FROM sale_items si LEFT JOIN products p ON p.product_id=si.product_id
                 WHERE si.sale_id=? ORDER BY si.sale_item_id
                 """)) {
@@ -107,6 +107,7 @@ final class LanDocumentDataService {
                     }
                 }
                 if (header == null) throw rule(404,"ORDER_NOT_FOUND","Custom order was not found.");
+                try(var p=connection.prepareStatement("SELECT custom_order_id FROM custom_orders WHERE order_number=? AND location_id=?")){p.setString(1,number);p.setInt(2,locationId);try(var r=p.executeQuery()){if(r.next())header=header.withLoyaltySummary(LoyaltyReceipt.summary(connection,"CUSTOM_ORDER",r.getLong(1)));}}
                 return header;
             }
         }

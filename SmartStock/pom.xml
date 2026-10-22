@@ -5,7 +5,7 @@
 
   <groupId>edu.fiu</groupId>
   <artifactId>inventory-management</artifactId>
-  <version>1.1.23</version>
+  <version>1.1.75</version>
 
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
@@ -16,6 +16,11 @@
   </properties>
 
   <dependencies>
+    <dependency>
+      <groupId>org.eclipse.jetty</groupId>
+      <artifactId>jetty-http-spi</artifactId>
+      <version>12.0.40</version>
+    </dependency>
     <dependency><groupId>net.java.dev.jna</groupId><artifactId>jna</artifactId><version>5.17.0</version></dependency>
     <dependency>
       <groupId>com.googlecode.libphonenumber</groupId>
@@ -86,8 +91,10 @@
           <include>ICONS/**</include>
           <include>Images/**</include>
           <include>models/catalogue-v1.json</include>
+          <include>windows/**</include>
           <include>mobile-web/**</include>
           <include>scheduler-web/**</include>
+            <include>employee-web/**</include>
           <include>employee-registration-web/**</include>
           <include>storefront-web/**</include>
           <include>custom-order-portal/**</include>
@@ -151,6 +158,7 @@
         <configuration>
           <useModulePath>false</useModulePath>
           <systemPropertyVariables>
+            <com.sun.net.httpserver.HttpServerProvider>sun.net.httpserver.DefaultHttpServerProvider</com.sun.net.httpserver.HttpServerProvider>
             <java.awt.headless>true</java.awt.headless>
             <smartstock.failOnEdtBlocking>true</smartstock.failOnEdtBlocking>
           </systemPropertyVariables>

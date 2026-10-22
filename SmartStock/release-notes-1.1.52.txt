@@ -1,0 +1,6 @@
+SmartStock 1.1.52
+
+- Staff signed in on approved SmartStudio devices can save template changes in their accessible store folders without company-settings or catalog-management permission.
+- Store ownership and sharing changes still require management permission. Store access and conflicting-edit checks remain enforced by the server.
+
+Update the store server first, then registers. AI models remain separate from this update.

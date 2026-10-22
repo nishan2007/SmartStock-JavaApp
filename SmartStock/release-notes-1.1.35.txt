@@ -1,0 +1,10 @@
+SmartStock 1.1.35
+
+Adds editable WordArt to the Publishing workspace: plain, arch and wave text,
+gradients, outlines and shadows. Text fields retain independent position,
+dimensions and rotation. The shared publication engine supports editable
+imported text and table cells plus built-in barcode/QR generation used by
+SmartStudio 0.1.22.
+Includes the previously published 1.1.34 time-clock correction delivery fixes.
+Application packages retain inference runtimes and licences and exclude AI
+model weights. Physical printer and NFC reader validation remain separate checks.

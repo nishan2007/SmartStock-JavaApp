@@ -144,7 +144,7 @@ public final class CashDrawerService {
                        COALESCE(cd.description, '') AS description,
                        COALESCE(cd.starting_cash_amount, 20000.00) AS starting_cash_amount,
                        COALESCE(cd.float_mix, ?::jsonb)::text AS float_mix,
-                       cd.is_active,
+                       cd.is_active, cd.handles_overseas_cash,
                        COUNT(cdda.assignment_id) FILTER (WHERE cdda.is_active = TRUE) AS active_device_count
                 FROM cash_drawers cd
                 LEFT JOIN locations l ON l.location_id = cd.location_id
@@ -179,7 +179,7 @@ public final class CashDrawerService {
                             defaultZero(rs.getBigDecimal("starting_cash_amount")),
                             parseFloatMix(rs.getString("float_mix")),
                             rs.getBoolean("is_active"),
-                            rs.getInt("active_device_count")
+                            rs.getInt("active_device_count"), rs.getBoolean("handles_overseas_cash")
                     ));
                 }
             }
@@ -407,10 +407,10 @@ public final class CashDrawerService {
                     opening_cash, status, opened_by_user_id, opened_by_name,
                     main_cashier_user_id, main_cashier_name,
                     current_cashier_user_id, current_cashier_name,
-                    opening_notes
+                    opening_notes, handles_overseas_cash
                 )
                 SELECT cd.cash_drawer_id, cd.location_id, ?::uuid, cd.drawer_name, ?,
-                       COALESCE(cd.starting_cash_amount, 20000.00), 'OPEN', ?, ?, ?, ?, ?, ?, ?
+                       COALESCE(cd.starting_cash_amount, 20000.00), 'OPEN', ?, ?, ?, ?, ?, ?, ?, cd.handles_overseas_cash
                 FROM cash_drawers cd
                 WHERE cd.cash_drawer_id = ?
                 RETURNING *
@@ -549,7 +549,8 @@ public final class CashDrawerService {
             throw new SQLException("Accept the pending handover before closing the drawer.");
         BigDecimal cashToRemove = cleanCountedCash.subtract(openingCash);
         BigDecimal variance = cleanCountedCash.subtract(expectedCash);
-        String closingReport = buildClosingReport(conn, session, expectedCash, cleanCountedCash, cashToRemove, variance);
+        String overseasReport=OverseasCashService.finishClose(conn,session,userId,userName);
+        String closingReport = buildClosingReport(conn, session, expectedCash, cleanCountedCash, cashToRemove, variance)+overseasReport;
 
         String sql = """
                 UPDATE cash_drawer_sessions
@@ -631,6 +632,7 @@ public final class CashDrawerService {
         BigDecimal cashToRemove = cleanCountedCash.subtract(openingCash);
         BigDecimal variance = cleanCountedCash.subtract(expectedCash);
         String closingReport = buildClosingReport(conn, session, expectedCash, cleanCountedCash, cashToRemove, variance);
+        if(session.closingReport()!=null)for(String line:session.closingReport().split("\n"))if(line.startsWith("Overseas "))closingReport+="\n"+line;
         String correctionNotes = mergeCorrectionNotes(session.closingNotes(), notes);
 
         String sql = """
@@ -775,7 +777,7 @@ public final class CashDrawerService {
                     ELSE payment_amount
                 END), 0)
                 FROM custom_order_payments
-                WHERE cash_drawer_session_id = ?
+                WHERE NOT overseas_cash_separate AND cash_drawer_session_id = ?
                   AND payment_method = 'CASH'
                   AND COALESCE(payment_reference, '') NOT LIKE 'Account payment transaction #%'
                 """, sessionId));
@@ -805,7 +807,7 @@ public final class CashDrawerService {
         ensureSchema(conn);BigDecimal total=BigDecimal.ZERO;
         total=total.add(sum(conn,"SELECT COALESCE(SUM(refund_amount),0) FROM sale_returns WHERE cash_drawer_session_id=? AND refund_method='CASH'",sessionId));
         total=total.add(sum(conn,"SELECT COALESCE(SUM(refund_amount),0) FROM cross_store_refund_requests WHERE cash_drawer_session_id=? AND refund_method='CASH' AND status NOT IN ('REJECTED','CANCELLED')",sessionId));
-        total=total.add(sum(conn,"SELECT COALESCE(SUM(payment_amount),0) FROM custom_order_payments WHERE cash_drawer_session_id=? AND payment_method='CASH' AND COALESCE(payment_action,'PAYMENT') IN ('REFUND','REVERSAL')",sessionId));
+        total=total.add(sum(conn,"SELECT COALESCE(SUM(payment_amount),0) FROM custom_order_payments WHERE NOT overseas_cash_separate AND cash_drawer_session_id=? AND payment_method='CASH' AND COALESCE(payment_action,'PAYMENT') IN ('REFUND','REVERSAL')",sessionId));
         total=total.add(sum(conn,"SELECT COALESCE(SUM(payment_amount),0) FROM invoice_payments WHERE cash_drawer_session_id=? AND payment_method='CASH' AND COALESCE(payment_action,'PAYMENT') IN ('REFUND','REVERSAL')",sessionId));
         return total;
     }
@@ -887,7 +889,7 @@ public final class CashDrawerService {
         addNamesFromQuery(conn, names, """
                 SELECT taken_by_name AS name
                 FROM custom_order_payments
-                WHERE cash_drawer_session_id = ?
+                WHERE NOT overseas_cash_separate AND cash_drawer_session_id = ?
                   AND payment_method = 'CASH'
                   AND COALESCE(payment_reference, '') NOT LIKE 'Account payment transaction #%'
                 """, sessionId);
@@ -1022,7 +1024,7 @@ public final class CashDrawerService {
         return null;
     }
 
-    private static CashDrawerSession getSessionForUpdate(Connection conn, long sessionId) throws SQLException {
+    static CashDrawerSession getSessionForUpdate(Connection conn, long sessionId) throws SQLException {
         String sql = "SELECT * FROM cash_drawer_sessions WHERE cash_drawer_session_id = ? FOR UPDATE";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, sessionId);

@@ -26,6 +26,11 @@ public class CustomerInfoPanel extends JPanel {
     private CustomerOption selectedCustomer;
     private boolean updatingSearch;
     private final LoadingStatePanel searchLoadingState = new LoadingStatePanel();
+    private final JPanel phoneMatches=new JPanel();
+    private long phoneLookupVersion;
+    @FunctionalInterface interface PhoneLookup {com.google.gson.JsonObject find(String phone)throws Exception;}
+    private PhoneLookup phoneLookup=services.LanApiClient::customOrderCustomerPhone;
+    CustomerInfoPanel(PhoneLookup lookup){this();phoneLookup=lookup;}
 
     public CustomerInfoPanel() {
         super(new GridBagLayout());
@@ -118,6 +123,7 @@ public class CustomerInfoPanel extends JPanel {
         gbc.gridx=2;gbc.weightx=0;add(new JLabel("Email:"),gbc);
         gbc.gridx=3;gbc.weightx=.35;add(emailField,gbc);
         gbc.gridx=0;gbc.gridy=3;gbc.gridwidth=4;gbc.weightx=1;applyCustomerDiscountBox.setVisible(false);add(applyCustomerDiscountBox,gbc);gbc.gridwidth=1;
+        gbc.gridx=0;gbc.gridy=4;gbc.gridwidth=4;phoneMatches.setLayout(new BoxLayout(phoneMatches,BoxLayout.Y_AXIS));phoneMatches.setVisible(false);add(phoneMatches,gbc);gbc.gridwidth=1;
         if (trailingField != null) {
             gbc.gridx = 4;
             gbc.gridy = 1;
@@ -138,6 +144,11 @@ public class CustomerInfoPanel extends JPanel {
         searchPopup.add(scrollPane);
 
         UiDebouncer.bind(searchField, 300, this::searchFromSearchField);
+        UiDebouncer.bind(phoneField,350,this::lookupPhone);
+        phoneField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener(){
+            private void changed(){phoneLookupVersion++;phoneMatches.removeAll();phoneMatches.setVisible(false);}
+            public void insertUpdate(javax.swing.event.DocumentEvent e){changed();}public void removeUpdate(javax.swing.event.DocumentEvent e){changed();}public void changedUpdate(javax.swing.event.DocumentEvent e){changed();}
+        });
         UiDebouncer.bind(nameField,300,()->{if(!updatingSearch&&selectedCustomer!=null&&!nameField.getText().trim().equals(selectedCustomer.name())){selectedCustomer=null;accountNumberField.setText("");emailField.setText("");}});
         searchField.addFocusListener(new java.awt.event.FocusAdapter() {
             @Override
@@ -218,11 +229,34 @@ public class CustomerInfoPanel extends JPanel {
         searchField.requestFocusInWindow();
     }
 
+    private void lookupPhone(){
+        String query=phoneField.getText().trim();long version=++phoneLookupVersion;
+        if(updatingSearch||query.isBlank())return;
+        try{utils.CustomerPhoneNumber.normalize(query);}catch(IllegalArgumentException e){return;}
+        new SwingWorker<com.google.gson.JsonObject,Void>(){
+            protected com.google.gson.JsonObject doInBackground()throws Exception{return phoneLookup.find(query);}
+            protected void done(){if(version!=phoneLookupVersion||!query.equals(phoneField.getText().trim()))return;
+                try{var result=get();phoneMatches.removeAll();
+                    for(var element:result.getAsJsonArray("customers")){var c=element.getAsJsonObject();int id=c.get("customerId").getAsInt();if(selectedCustomer!=null&&selectedCustomer.customerId()==id)continue;
+                        if(!c.get("active").getAsBoolean()){phoneMatches.add(new JLabel(c.get("name").getAsString()+" — inactive account; ask an administrator."));continue;}
+                        JButton choose=new JButton("Select existing customer: "+c.get("name").getAsString()+" · "+c.get("accountNumber").getAsString());
+                        choose.addActionListener(e->{if(version==phoneLookupVersion)selectCustomer(new com.google.gson.Gson().fromJson(c,CustomerOption.class));});phoneMatches.add(choose);
+                    }
+                    if(result.get("reserved").getAsBoolean()&&result.getAsJsonArray("customers").isEmpty())phoneMatches.add(new JLabel("This number is reserved. Ask an administrator to check the customer account."));
+                    phoneMatches.setVisible(phoneMatches.getComponentCount()>0);revalidate();repaint();
+                }catch(Exception e){phoneMatches.removeAll();phoneMatches.add(new JLabel("Phone lookup unavailable. Use Search Customer or retry."));phoneMatches.setVisible(true);revalidate();}
+            }
+        }.execute();
+    }
+
     private void selectHighlightedCustomer() {
         CustomerOption customer = searchList.getSelectedValue();
         if (customer == null) {
             return;
         }
+        selectCustomer(customer);
+    }
+    private void selectCustomer(CustomerOption customer){
         selectedCustomer = customer;
         updatingSearch = true;
         searchField.setText(customer.toString());

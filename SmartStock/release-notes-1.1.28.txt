@@ -1,0 +1,9 @@
+SmartStock 1.1.28 (Windows build 101028)
+
+Mobile item saves now retain their original idempotency key after an interrupted response, retry safely, and use bounded save/upload timeouts so an uncertain connection does not create duplicate items.
+
+Includes the shirt catalogue and website designer for round-neck T-shirts, V-neck T-shirts, and collared polo shirts; editable text/artwork, grouped sizes/colors, current-store estimates, private quote review, and order import. Configure each shirt in Custom Order Items before enabling it for the website.
+
+Retains final-order-total rounding, mixed-size sets and individual editing, held drafts, grouped slips, the publishing workspace, and current Studio acceleration. Existing finalized orders are not repriced. Models remain outside application/update packages.
+
+Update the store server before registers. The website bundle is served by the updated server; publication alone does not install it or enable customer ordering. Validate actual store services, private uploads/proofs, printing, update and rollback before rollout.

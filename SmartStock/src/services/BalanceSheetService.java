@@ -77,7 +77,10 @@ public final class BalanceSheetService {
 
     public static long submitBalanceSheet(LocalDate from, LocalDate to, String storeZoneId, String notes,
                                           List<Long> cashDrawerSessionIds) throws SQLException {
-        JsonObject body=range(from,to);body.addProperty("storeZoneId",storeZoneId);body.addProperty("notes",notes);
+        return submitBalanceSheet(from,to,storeZoneId,notes,cashDrawerSessionIds,null);
+    }
+    public static long submitBalanceSheet(LocalDate from,LocalDate to,String storeZoneId,String notes,List<Long>cashDrawerSessionIds,JsonObject overseasCashCheck)throws SQLException {
+        JsonObject body=range(from,to);body.addProperty("storeZoneId",storeZoneId);body.addProperty("notes",notes);if(overseasCashCheck!=null)body.add("overseasCashCheck",overseasCashCheck);
         body.add("cashDrawerSessionIds",GSON.toJsonTree(cashDrawerSessionIds));return mutate("SUBMIT",body).get("submissionId").getAsLong();
     }
 
@@ -100,6 +103,10 @@ public final class BalanceSheetService {
         return new EditResult(edit.submissionId(),result.get("revisionNo").getAsInt(),GSON.fromJson(result.get("sheet"),BalanceSheet.class));
     }
 
+    public static void withdrawOverseasCash(BigDecimal amount,String reason,String key)throws SQLException {
+        JsonObject b=new JsonObject();b.addProperty("amount",amount);b.addProperty("reason",reason);
+        try{LanApiClient.balanceSheetMutation("OVERSEAS_WITHDRAW",b,key);}catch(Exception e){throw sql(e);}
+    }
     public static void setBalanceBf(LocalDate periodStart, BigDecimal amount) throws SQLException {
         JsonObject body=new JsonObject();
         body.addProperty("periodStart",periodStart.toString());
@@ -150,5 +157,7 @@ public final class BalanceSheetService {
     public record DrawerHistoryOption(long sessionId,String label,BigDecimal amount,boolean inferred){public String toString(){return "Session #"+sessionId+" - "+label+" - "+zero(amount)+(inferred?" (inferred)":"");}}
     public record LegacyCashRecovery(String sourceType,long sourceId,Long beforeSessionId,long afterSessionId,long drawerId,String drawerName){}
     public record SubmissionOption(long submissionId,LocalDate periodStart,LocalDate periodEnd,LocalDateTime submittedAt,String submittedByName,BigDecimal balanceCf,int revisionNo,LocalDateTime lastEditedAt,String lastEditedByName,LocalDateTime editExpiresAt,boolean latestWithinWindow){public String toString(){return periodStart+" to "+periodEnd+" - "+text(submittedByName)+" - CF "+zero(balanceCf).toPlainString()+(revisionNo>0?" - Rev "+revisionNo:"");}}
-    public record BalanceSheet(Long submissionId,LocalDate periodStart,LocalDate periodEnd,LocalDateTime submittedAt,String submittedByName,String notes,List<SheetLine>income,List<SheetLine>receivables,List<SheetLine>expenses,List<SheetLine>payables,List<SheetLine>drawerCash,List<SheetLine>deviceSales,List<SheetLine>deviceOrders,List<SheetLine>devicePayments,List<SheetLine>accountPayments,List<BankTransactionLine>bankTransactions,List<ChequeDepositOption>pendingCheques,List<SheetLine>drawerChecks,BigDecimal cashInHand,BigDecimal balanceBf,BigDecimal totalIncome,BigDecimal totalReceivables,BigDecimal totalExpenses,BigDecimal totalPayables,BigDecimal balanceCf){}
+    public record BalanceSheet(Long submissionId,LocalDate periodStart,LocalDate periodEnd,LocalDateTime submittedAt,String submittedByName,String notes,List<SheetLine>income,List<SheetLine>receivables,List<SheetLine>expenses,List<SheetLine>payables,List<SheetLine>drawerCash,List<SheetLine>deviceSales,List<SheetLine>deviceOrders,List<SheetLine>devicePayments,List<SheetLine>accountPayments,List<BankTransactionLine>bankTransactions,List<ChequeDepositOption>pendingCheques,List<SheetLine>drawerChecks,BigDecimal cashInHand,BigDecimal balanceBf,BigDecimal totalIncome,BigDecimal totalReceivables,BigDecimal totalExpenses,BigDecimal totalPayables,BigDecimal balanceCf, OverseasCashService.FundReport overseasCash){
+        public BalanceSheet(Long submissionId,LocalDate periodStart,LocalDate periodEnd,LocalDateTime submittedAt,String submittedByName,String notes,List<SheetLine>income,List<SheetLine>receivables,List<SheetLine>expenses,List<SheetLine>payables,List<SheetLine>drawerCash,List<SheetLine>deviceSales,List<SheetLine>deviceOrders,List<SheetLine>devicePayments,List<SheetLine>accountPayments,List<BankTransactionLine>bankTransactions,List<ChequeDepositOption>pendingCheques,List<SheetLine>drawerChecks,BigDecimal cashInHand,BigDecimal balanceBf,BigDecimal totalIncome,BigDecimal totalReceivables,BigDecimal totalExpenses,BigDecimal totalPayables,BigDecimal balanceCf){this(submissionId,periodStart,periodEnd,submittedAt,submittedByName,notes,income,receivables,expenses,payables,drawerCash,deviceSales,deviceOrders,devicePayments,accountPayments,bankTransactions,pendingCheques,drawerChecks,cashInHand,balanceBf,totalIncome,totalReceivables,totalExpenses,totalPayables,balanceCf,null);}
+}
 }

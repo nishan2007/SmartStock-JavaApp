@@ -75,6 +75,7 @@ public class MainMenu extends JFrame {
     private final JButton customerTransactionHistoryButton;
     private final JButton invoicesButton;
     private final JButton customOrdersButton;
+    private final JButton overseasOrdersButton;
     private final JButton ordersButton;
     private final JButton viewInventoryButton;
     private final JButton priceTagPrintingButton;
@@ -154,6 +155,7 @@ public class MainMenu extends JFrame {
         customerTransactionHistoryButton = createMenuButtonLazy("Customer History", "Open full transaction history for a customer", "src/ICONS/MainMenuCustomerHistory.png");
         invoicesButton = createMenuButtonLazy("Quotations & Invoices", "Create quotes, take payments, and post deliveries", "src/ICONS/MainMenuInvoices.png");
         customOrdersButton = createMenuButtonLazy("Customer Orders", "Take a new customized customer order", "src/ICONS/MainMenuCustomOrders.png");
+        overseasOrdersButton = createMenuButtonLazy("Overseas Orders", "Prepare quotes, receive payments, and track overseas shipments", "src/ICONS/MainMenuOrders.png");
         ordersButton = createMenuButtonLazy("Orders", "Lookup, assign, and deliver custom orders", "src/ICONS/MainMenuOrders.png");
         viewInventoryButton = createMenuButtonLazy("View Inventory", "View current inventory levels", "src/ICONS/MainMenuViewInventory.png");
         priceTagPrintingButton = createMenuButtonLazy("Price Tag Printing", "Select normal or custom items and print sticker tags", "src/ICONS/MainMenuViewInventory.png");
@@ -214,6 +216,7 @@ public class MainMenu extends JFrame {
                 DeckersPalette.MAGENTA,
                 ordersManagerDashboardButton,
                 customOrdersButton,
+                overseasOrdersButton,
                 ordersButton
         ));
         leftSectionStackPanel.add(Box.createVerticalStrut(18));
@@ -1229,6 +1232,8 @@ public class MainMenu extends JFrame {
         setMenuButtonAuthorized(customerTransactionHistoryButton, canCustomerAccounts);
         setMenuButtonAuthorized(invoicesButton, canQuotationsInvoices);
         setMenuButtonAuthorized(customOrdersButton, canCustomOrders);
+        // Overseas permissions are resolved by the workflow server, including mobile role grants.
+        setMenuButtonAuthorized(overseasOrdersButton, true);
         setMenuButtonAuthorized(ordersButton, canOrders);
         setMenuButtonAuthorized(viewInventoryButton, canViewInventory);
         setMenuButtonAuthorized(priceTagPrintingButton, canViewInventory);
@@ -1284,7 +1289,7 @@ public class MainMenu extends JFrame {
                 enterInventoryButton, receivingHistoryButton, storeTransferButton,
                 customOrderItemsButton, departmentListButton, vendorListButton,
                 viewSalesButton, onlineOrdersButton, customerAccountsButton, customerTransactionHistoryButton,
-                invoicesButton, customOrdersButton, ordersButton, viewInventoryButton,
+                invoicesButton, customOrdersButton, overseasOrdersButton, ordersButton, viewInventoryButton,
                 priceTagPrintingButton, addItemButton, editItemsButton, timeClockButton,
                 payrollDashboardButton, weeklyScheduleButton, employeeManagementButton,
                 rolesPermissionsButton, deviceManagementButton, machineManagementButton,
@@ -1416,6 +1421,9 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openInvoices(this);
+        });
+        overseasOrdersButton.addActionListener(e -> {
+            if (!WindowHelper.focusIfAlreadyOpen(OverseasOrders.class)) new OverseasOrders().setVisible(true);
         });
         customOrdersButton.addActionListener(e -> {
             if (!PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")) {

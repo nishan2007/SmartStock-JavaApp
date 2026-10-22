@@ -48,8 +48,7 @@ public final class StudioImageEnhancer implements AutoCloseable {
         }
     }
     static long availableMemory(){
-        var os=java.lang.management.ManagementFactory.getOperatingSystemMXBean();
-        long physical=os instanceof com.sun.management.OperatingSystemMXBean m?m.getFreeMemorySize():Long.MAX_VALUE;
+        long physical=StudioMemory.availablePhysical();
         Runtime r=Runtime.getRuntime();return Math.min(physical,r.maxMemory()-r.totalMemory()+r.freeMemory());
     }
     static int cpuThreads(long bytes,int processors){return Math.max(1,Math.min(bytes<1024L*1024*1024?2:4,processors-2));}
@@ -180,5 +179,8 @@ public final class StudioImageEnhancer implements AutoCloseable {
         double b = (image.getRGB(x0, y1) >>> 24) * (1 - fx) + (image.getRGB(x1, y1) >>> 24) * fx;
         return (int) Math.round(a * (1 - fy) + b * fy);
     }
-    @Override public void close() throws OrtException { if(gpu!=null)gpu.close();if(session!=null)session.close(); }
+    @Override public void close() throws OrtException {
+        if(gpu!=null){gpu.close();gpu=null;}
+        if(session!=null){var previous=session;session=null;previous.close();}
+    }
 }

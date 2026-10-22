@@ -1,0 +1,3 @@
+SmartStudio 0.1.56
+- Add a Generate QR code shortcut alongside the barcode generator.
+- Accept local PNG, JPG and JPEG photos up to 20 MB when choosing, replacing, pasting or dropping images. The existing 12-megapixel limit remains.

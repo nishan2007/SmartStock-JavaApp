@@ -1,0 +1,8 @@
+SmartStock 1.1.58 (Windows build 101058)
+
+- Adds Company Preferences > Sale > Signature Pad with XP-Pen G430S setup guidance and a test using the same customer account charge signing dialog.
+- Previews the captured test signature without saving a charge or sending the test signature to the server.
+- Improves pen stroke rendering, prevents disabled pads and secondary pen buttons from drawing, and preserves signature validation through Clear/Redo.
+- Includes cumulative application changes from 1.1.57. AI model weights remain outside application updates.
+
+Windows update ZIP only. Physical G430S input and installed upgrade/rollback require separate acceptance.

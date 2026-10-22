@@ -66,6 +66,8 @@ public class Reports extends JFrame {
     private final JPanel productChart = chartHolder();
     private final JPanel employeeChart = chartHolder();
     private final JPanel cashChart = chartHolder();
+    private final StockLedgerPanel stockExpenses = new StockLedgerPanel("EXPENSE",this::loadReports);
+    private final StockLedgerPanel losses = new StockLedgerPanel("LOSS",this::loadReports);
     private final JPanel expenseChart = chartHolder();
     private final JPanel balanceChart = chartHolder();
     private final JPanel overviewMetrics = new JPanel(new GridLayout(0, 4, 10, 10));
@@ -232,7 +234,12 @@ public class Reports extends JFrame {
         tabs.addTab("Employees", chartTablePanel(employeeChart, new JTable(employeeModel)));
         tabs.addTab("Cash Flow", chartTablePanel(cashChart, new JTable(cashModel)));
         if (PermissionManager.hasPermission("BALANCE_SHEET")) {
-            tabs.addTab("Expenses", expenseReportPanel());
+            JPanel monetary=expenseReportPanel();
+            JSplitPane expenses=new JSplitPane(JSplitPane.VERTICAL_SPLIT,monetary,stockExpenses);
+            expenses.setResizeWeight(0.5);expenses.setDividerLocation(330);
+            monetary.setMinimumSize(new Dimension(200,180));stockExpenses.setMinimumSize(new Dimension(200,200));
+            tabs.addTab("Expense Ledger",expenses);
+            tabs.addTab("Loss Ledger",losses);
             tabs.addTab("Balance C/F", chartTablePanel(balanceChart, new JTable(balanceModel)));
         }
         tabs.addTab("Orders", reportPanel(
@@ -300,7 +307,7 @@ public class Reports extends JFrame {
         status.addActionListener(e -> update.run()); method.addActionListener(e -> update.run());
         JPanel panel = new JPanel(new BorderLayout(10,10)); panel.setOpaque(false);
         JPanel top = new JPanel(new BorderLayout()); top.setOpaque(false); top.add(expenseChart, BorderLayout.CENTER); top.add(filters, BorderLayout.SOUTH);
-        top.setPreferredSize(new Dimension(600,350)); panel.add(top,BorderLayout.NORTH); panel.add(new JScrollPane(table),BorderLayout.CENTER);
+        top.setPreferredSize(new Dimension(600,220)); panel.add(top,BorderLayout.NORTH); panel.add(new JScrollPane(table),BorderLayout.CENTER);
         return panel;
     }
 
@@ -365,6 +372,9 @@ public class Reports extends JFrame {
                 Set.copyOf(selectedProducts), Set.copyOf(selectedBrands), Set.copyOf(selectedDepartments),
                 Set.copyOf(selectedItemTypes), Set.copyOf(selectedEmployees), Set.copyOf(selectedPayments)
         );
+        if(PermissionManager.hasPermission("BALANCE_SHEET")){
+            stockExpenses.setRange(from,to);losses.setRange(from,to);
+        }
         boolean allRevenue = allRevenueToggle.isSelected();
         boolean includeAccounting = PermissionManager.hasPermission("BALANCE_SHEET");
         String cacheKey = "reports:" + filters + ":allRevenue=" + allRevenue + ":accounting=" + includeAccounting;
@@ -438,6 +448,7 @@ public class Reports extends JFrame {
         for (ReportDataService.ExpenseRow r : s.expenses()) expenseModel.addRow(new Object[]{
                 r.id(), r.date(), r.category(), r.payee(), r.description(), r.method(), r.status(), r.source(), r.creator(), CURRENCY.format(r.amount())
         });
+        stockExpenses.setMonetaryTotal(s.expenses().stream().map(ReportDataService.ExpenseRow::amount).reduce(BigDecimal.ZERO,BigDecimal::add));
         balanceModel.setRowCount(0);
         for (ReportDataService.BalanceRow r : s.balances()) balanceModel.addRow(new Object[]{
                 r.id(), r.from(), r.to(), r.submittedAt().format(DISPLAY_FORMAT), r.submitter(),
@@ -544,8 +555,26 @@ public class Reports extends JFrame {
         axes.setYAxisTickMarkSpacingHint(45);
     }
 
-    private void replaceChart(JPanel holder, Chart<?, ?> chart) {
-        holder.removeAll(); holder.add(new XChartPanel<>(chart), BorderLayout.CENTER);
+    static void replaceChart(JPanel holder, Chart<?, ?> chart) {
+        holder.removeAll();
+        holder.setOpaque(true);
+        if (chart.getSeriesMap().isEmpty()) {
+            // XChart's category axis throws during painting when there are no series.
+            JLabel empty = new JLabel("No data for the selected period.", SwingConstants.CENTER);
+            empty.setOpaque(true);
+            empty.setBackground(chart.getStyler().getChartBackgroundColor());
+            empty.setForeground(chart.getStyler().getChartFontColor());
+            holder.add(empty, BorderLayout.CENTER);
+        } else {
+            holder.add(new XChartPanel<Chart<?, ?>>(chart) {
+                @Override protected void paintComponent(Graphics graphics) {
+                    // Chart renderers must not leave transforms/clips on Swing's shared context.
+                    Graphics isolated = graphics.create();
+                    try { super.paintComponent(isolated); }
+                    finally { isolated.dispose(); }
+                }
+            }, BorderLayout.CENTER);
+        }
         holder.revalidate(); holder.repaint();
     }
 

@@ -1,0 +1,1 @@
+Makes the Details, Properties, Insert and Layers side panel resizable in all workspaces. Drag the divider beside the panel; Hide panel retains the chosen width for reopening.

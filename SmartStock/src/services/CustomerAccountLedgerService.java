@@ -143,7 +143,7 @@ public final class CustomerAccountLedgerService {
             throw new SQLException("Customer credit is temporarily unavailable because one or more store balances have not completed a current synchronization.","55000");
     }
 
-    private static BigDecimal calculateCustomerBalance(Connection conn, int customerId) throws SQLException {
+    static BigDecimal calculateCustomerBalance(Connection conn, int customerId) throws SQLException {
         String remoteDelta = columnExists(conn, "sync_cross_store_customer_history_cache", "credit_applied_amount")
                 ? remoteBalanceDeltaSql()
                 : legacyRemoteBalanceDeltaSql();

@@ -18,6 +18,7 @@ class ManualTimeClockDatabaseTest {
         c.setAutoCommit(false);
         try(var s=c.createStatement()) {
             s.execute("CREATE TEMP TABLE users(user_id int PRIMARY KEY,full_name text,username text,is_active boolean,compensation_type text,salary numeric)");
+            s.execute("CREATE TEMP TABLE employee_daily_pay_days(user_id int,work_date date,half_day boolean)");
             s.execute("CREATE TEMP TABLE locations(location_id int PRIMARY KEY,name text,timezone text)");
             s.execute("CREATE TEMP TABLE user_locations(user_id int,location_id int)");
             s.execute("CREATE TEMP TABLE employee_registrations(employee_id int,status text)");

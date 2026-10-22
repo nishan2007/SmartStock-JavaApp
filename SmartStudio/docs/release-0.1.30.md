@@ -1,0 +1,3 @@
+# SmartStudio 0.1.30: design undo
+
+Business cards and labels previously had no document undo history. Adds bounded 30-step history, Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z ancestor bindings and toolbar buttons. Snapshot copies preserve immutable asset data. Drag changes are grouped until editCompleted. New/open clears history. All 88 tests passed including shortcut dispatch, undo/redo in both categories and redo invalidation after another edit. Local installed main JAR and backed-up launcher configuration updated; native launcher passed. Existing windows preserved. Not published. SmartStock not restarted.

@@ -67,8 +67,6 @@ public class DatePickerField extends JTextField {
 
         JDialog dialog = createDialog();
         dialog.setLayout(new BorderLayout(8, 8));
-        dialog.setSize(340, 300);
-        dialog.setLocationRelativeTo(this);
 
         final YearMonth[] visibleMonth = {YearMonth.from(selectedDate)};
         JLabel monthLabel = new JLabel("", SwingConstants.CENTER);
@@ -89,6 +87,13 @@ public class DatePickerField extends JTextField {
         for (int i = 0; i < dayButtons.length; i++) {
             JButton button = new JButton("");
             button.setFocusPainted(false);
+            button.setMargin(new Insets(4, 6, 4, 6));
+            button.setFont(button.getFont().deriveFont(16f));
+            FontMetrics metrics = button.getFontMetrics(button.getFont());
+            Insets insets = button.getInsets();
+            button.setPreferredSize(new Dimension(
+                    Math.max(52, metrics.stringWidth("28") + insets.left + insets.right + 8),
+                    Math.max(38, metrics.getHeight() + insets.top + insets.bottom + 4)));
             dayButtons[i] = button;
             daysPanel.add(button);
         }
@@ -139,6 +144,9 @@ public class DatePickerField extends JTextField {
         dialog.add(header, BorderLayout.NORTH);
         dialog.add(daysPanel, BorderLayout.CENTER);
         dialog.add(bottom, BorderLayout.SOUTH);
+        dialog.pack();
+        dialog.setMinimumSize(dialog.getSize());
+        dialog.setLocationRelativeTo(this);
         dialog.setVisible(true);
     }
 

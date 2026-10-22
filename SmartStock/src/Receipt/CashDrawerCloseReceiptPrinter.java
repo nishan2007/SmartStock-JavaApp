@@ -123,6 +123,7 @@ public final class CashDrawerCloseReceiptPrinter {
         pair(receipt, "Variance", money(session.variance()));
         pair(receipt, "CIH", optionalMoney(cashInHand));
         pair(receipt, "Float", optionalMoney(floatCash));
+        if(session.closingReport()!=null)for(String line:session.closingReport().split("\n"))if(line.startsWith("Overseas "))receipt.append(line).append('\n');
         pair(receipt, "Cash to Remove", money(session.cashToRemove()));
         receipt.append("----------------------------------------\n");
         center(receipt, footerLine, 40);

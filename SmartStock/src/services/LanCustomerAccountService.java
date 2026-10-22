@@ -37,8 +37,9 @@ final class LanCustomerAccountService {
                   COALESCE(ca.whatsapp_opt_in,FALSE),COALESCE(ca.whatsapp_consent_phone,''),COALESCE(ca.require_charge_authorization,FALSE),
                   COALESCE(ca.sales_discount_enabled,FALSE),COALESCE(ca.sales_discount_percent,0),
                   COALESCE(ca.invoice_discount_enabled,FALSE),COALESCE(ca.invoice_discount_percent,0),
-                  COALESCE(ca.custom_order_discount_enabled,FALSE),COALESCE(ca.custom_order_discount_percent,0)
+                  COALESCE(ca.custom_order_discount_enabled,FALSE),COALESCE(ca.custom_order_discount_percent,0),ca.custom_order_deposit_exempt
                 FROM customer_accounts ca LEFT JOIN customer_types ct ON ct.customer_type_id=ca.customer_type_id
+                WHERE NOT EXISTS(SELECT 1 FROM customer_account_merges m WHERE m.source_customer_id=ca.customer_id)
                 ORDER BY ca.name
                 """)){try(ResultSet rs=ps.executeQuery()){while(rs.next())rows.add(account(rs));}}
         return rows;
@@ -57,7 +58,7 @@ final class LanCustomerAccountService {
                   COALESCE(ca.whatsapp_opt_in,FALSE),COALESCE(ca.whatsapp_consent_phone,''),COALESCE(ca.require_charge_authorization,FALSE),
                   COALESCE(ca.sales_discount_enabled,FALSE),COALESCE(ca.sales_discount_percent,0),
                   COALESCE(ca.invoice_discount_enabled,FALSE),COALESCE(ca.invoice_discount_percent,0),
-                  COALESCE(ca.custom_order_discount_enabled,FALSE),COALESCE(ca.custom_order_discount_percent,0)
+                  COALESCE(ca.custom_order_discount_enabled,FALSE),COALESCE(ca.custom_order_discount_percent,0),ca.custom_order_deposit_exempt
                 FROM customer_accounts ca LEFT JOIN customer_types ct ON ct.customer_type_id=ca.customer_type_id
                 WHERE ca.customer_id=?
                 """)){ps.setInt(1,customerId);try(ResultSet rs=ps.executeQuery()){
@@ -95,6 +96,8 @@ final class LanCustomerAccountService {
         String phone=clean(r.phone(),100),email=clean(r.email(),320),notes=clean(r.accountNotes(),4000),photo=r.customerPhotoUrl()==null?null:clean(r.customerPhotoUrl(),2000);
         try { phone=utils.CustomerPhoneNumber.normalize(phone); }
         catch(IllegalArgumentException ex){throw rule(400,"VALIDATION_ERROR",ex.getMessage());}
+        try { CustomerPhoneOwnership.requireAvailable(c,phone,r.customerId()); }
+        catch(SQLException ex){if("23505".equals(ex.getSQLState()))throw rule(409,"CUSTOMER_PHONE_IN_USE",CustomerPhoneOwnership.MESSAGE);throw ex;}
         if(r.whatsappOptIn())try{ServerWhatsAppService.normalizePhone(phone);}catch(ServerWhatsAppService.Rule ex){throw rule(400,ex.code,ex.getMessage());}
         int currentYear=java.time.Year.now().getValue();Integer since=r.customerSince();if(r.customerId()==null&&since==null)since=currentYear;
         if(since!=null&&(since<1900||since>currentYear))throw rule(400,"VALIDATION_ERROR","Customer Since must be a four-digit year from 1900 through "+currentYear+".");
@@ -106,21 +109,27 @@ final class LanCustomerAccountService {
         if(credit.signum()!=0&&!has(c,userId,"SET_CREDIT_LIMIT"))throw rule(403,"PERMISSION_DENIED","You do not have permission to set credit limits.");
         if(r.customerTypeId()!=null)requireReference(c,"customer_types","customer_type_id",r.customerTypeId(),"Customer type");
         // Baseline customer-card contract: customer_since,customer_photo_url) VALUES; WhatsApp consent columns follow it.
+        boolean exempt=Boolean.TRUE.equals(r.customOrderDepositExempt());
+        boolean canExempt=has(c,userId,"CUSTOM_ORDER_DEPOSIT_OVERRIDE")||has(c,userId,"CUSTOM_ORDER_OVERRIDES");
+        if(r.customerId()==null&&exempt&&!canExempt)throw rule(403,"PERMISSION_DENIED","You do not have permission to waive custom-order deposits.");
         int id;String number;
         if(r.customerId()==null){
             try(PreparedStatement ps=c.prepareStatement("""
                     INSERT INTO customer_accounts(name,customer_type_id,phone,email,credit_limit,current_balance,
                       is_business,is_active,account_notes,customer_since,customer_photo_url,whatsapp_opt_in,whatsapp_consent_phone,whatsapp_consent_at,whatsapp_consent_by_user_id,require_charge_authorization,
-                      sales_discount_enabled,sales_discount_percent,invoice_discount_enabled,invoice_discount_percent,custom_order_discount_enabled,custom_order_discount_percent)
-                    VALUES (?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING customer_id,account_number
+                      sales_discount_enabled,sales_discount_percent,invoice_discount_enabled,invoice_discount_percent,custom_order_discount_enabled,custom_order_discount_percent,custom_order_deposit_exempt)
+                    VALUES (?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING customer_id,account_number
                     """)){ps.setString(1,name);setInt(ps,2,r.customerTypeId());ps.setString(3,blank(phone));ps.setString(4,blank(email));
                 ps.setBigDecimal(5,credit);ps.setBoolean(6,r.business());ps.setBoolean(7,r.active());ps.setString(8,blank(notes));
                 setInt(ps,9,since);ps.setString(10,blank(photo));ps.setBoolean(11,r.whatsappOptIn());ps.setString(12,r.whatsappOptIn()?blank(phone):null);ps.setObject(13,r.whatsappOptIn()?java.time.OffsetDateTime.now():null);if(r.whatsappOptIn())ps.setInt(14,userId);else ps.setNull(14,java.sql.Types.INTEGER);
-                ps.setBoolean(15,r.requireChargeAuthorization());ps.setBoolean(16,salesEnabled);ps.setBigDecimal(17,salesDiscount);ps.setBoolean(18,invoiceEnabled);ps.setBigDecimal(19,invoiceDiscount);ps.setBoolean(20,customOrderEnabled);ps.setBigDecimal(21,customOrderDiscount);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("Customer account could not be created.");id=rs.getInt(1);number=rs.getString(2);}}
+                ps.setBoolean(15,r.requireChargeAuthorization());ps.setBoolean(16,salesEnabled);ps.setBigDecimal(17,salesDiscount);ps.setBoolean(18,invoiceEnabled);ps.setBigDecimal(19,invoiceDiscount);ps.setBoolean(20,customOrderEnabled);ps.setBigDecimal(21,customOrderDiscount);ps.setBoolean(22,exempt);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("Customer account could not be created.");id=rs.getInt(1);number=rs.getString(2);}}
         }else{
             id=r.customerId();String accountNumber=clean(r.accountNumber(),100);
-            try(PreparedStatement lock=c.prepareStatement("SELECT account_number,credit_limit,COALESCE(customer_photo_url,''),sales_discount_enabled,sales_discount_percent,invoice_discount_enabled,invoice_discount_percent,custom_order_discount_enabled,custom_order_discount_percent FROM customer_accounts WHERE customer_id=? FOR UPDATE")){
+            try(PreparedStatement lock=c.prepareStatement("SELECT account_number,credit_limit,COALESCE(customer_photo_url,''),sales_discount_enabled,sales_discount_percent,invoice_discount_enabled,invoice_discount_percent,custom_order_discount_enabled,custom_order_discount_percent,custom_order_deposit_exempt FROM customer_accounts WHERE customer_id=? FOR UPDATE")){
                 lock.setInt(1,id);try(ResultSet rs=lock.executeQuery()){if(!rs.next())throw rule(404,"CUSTOMER_NOT_FOUND","Customer account was not found.");
+                    boolean existingExempt=rs.getBoolean(10);
+                    if(r.customOrderDepositExempt()!=null&&exempt!=existingExempt&&!canExempt)throw rule(403,"PERMISSION_DENIED","You do not have permission to waive custom-order deposits.");
+                    if(r.customOrderDepositExempt()==null)exempt=existingExempt;
                     String existingNumber=rs.getString(1);BigDecimal existingCredit=money(rs.getBigDecimal(2));
                     if(!has(c,userId,"EDIT_ACCOUNT_NUMBER"))accountNumber=existingNumber;
                     if(!has(c,userId,"SET_CREDIT_LIMIT"))credit=existingCredit;if(photo==null)photo=rs.getString(3);if(!canManageDiscounts){salesEnabled=rs.getBoolean(4);salesDiscount=rs.getBigDecimal(5);invoiceEnabled=rs.getBoolean(6);invoiceDiscount=rs.getBigDecimal(7);customOrderEnabled=rs.getBoolean(8);customOrderDiscount=rs.getBigDecimal(9);}}}
@@ -130,12 +139,12 @@ final class LanCustomerAccountService {
                       is_business=?,is_active=?,account_notes=?,customer_since=?,customer_photo_url=?,whatsapp_opt_in=?,
                       whatsapp_consent_phone=CASE WHEN ? THEN ? ELSE NULL END,whatsapp_consent_at=CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,
                       whatsapp_consent_by_user_id=CASE WHEN ? THEN ? ELSE NULL END,require_charge_authorization=?,
-                      sales_discount_enabled=?,sales_discount_percent=?,invoice_discount_enabled=?,invoice_discount_percent=?,custom_order_discount_enabled=?,custom_order_discount_percent=? WHERE customer_id=?
+                      sales_discount_enabled=?,sales_discount_percent=?,invoice_discount_enabled=?,invoice_discount_percent=?,custom_order_discount_enabled=?,custom_order_discount_percent=?,custom_order_deposit_exempt=? WHERE customer_id=?
                     """)){ps.setString(1,accountNumber);ps.setString(2,name);setInt(ps,3,r.customerTypeId());ps.setString(4,blank(phone));
                 ps.setString(5,blank(email));ps.setBigDecimal(6,credit);ps.setBoolean(7,r.business());ps.setBoolean(8,r.active());
-                ps.setString(9,blank(notes));setInt(ps,10,since);ps.setString(11,blank(photo));ps.setBoolean(12,r.whatsappOptIn());ps.setBoolean(13,r.whatsappOptIn());ps.setString(14,blank(phone));ps.setBoolean(15,r.whatsappOptIn());ps.setBoolean(16,r.whatsappOptIn());ps.setInt(17,userId);ps.setBoolean(18,r.requireChargeAuthorization());ps.setBoolean(19,salesEnabled);ps.setBigDecimal(20,salesDiscount);ps.setBoolean(21,invoiceEnabled);ps.setBigDecimal(22,invoiceDiscount);ps.setBoolean(23,customOrderEnabled);ps.setBigDecimal(24,customOrderDiscount);ps.setInt(25,id);ps.executeUpdate();number=accountNumber;}
+                ps.setString(9,blank(notes));setInt(ps,10,since);ps.setString(11,blank(photo));ps.setBoolean(12,r.whatsappOptIn());ps.setBoolean(13,r.whatsappOptIn());ps.setString(14,blank(phone));ps.setBoolean(15,r.whatsappOptIn());ps.setBoolean(16,r.whatsappOptIn());ps.setInt(17,userId);ps.setBoolean(18,r.requireChargeAuthorization());ps.setBoolean(19,salesEnabled);ps.setBigDecimal(20,salesDiscount);ps.setBoolean(21,invoiceEnabled);ps.setBigDecimal(22,invoiceDiscount);ps.setBoolean(23,customOrderEnabled);ps.setBigDecimal(24,customOrderDiscount);ps.setBoolean(25,exempt);ps.setInt(26,id);ps.executeUpdate();number=accountNumber;}
         }
-        audit(c,"LAN_CUSTOMER_ACCOUNT_SAVED",deviceId,userId,GSON.toJson(Map.of("customer_id",id,"account_number",number==null?"":number)));
+        audit(c,"LAN_CUSTOMER_ACCOUNT_SAVED",deviceId,userId,GSON.toJson(Map.of("customer_id",id,"account_number",number==null?"":number,"custom_order_deposit_exempt",exempt)));
         audit(c,r.whatsappOptIn()?"WHATSAPP_CUSTOMER_OPTED_IN":"WHATSAPP_CUSTOMER_OPTED_OUT",deviceId,userId,GSON.toJson(Map.of("customer_id",id)));
         return map("customerId",id,"accountNumber",number==null?"":number);
     }
@@ -214,7 +223,7 @@ final class LanCustomerAccountService {
             UNION ALL SELECT 'INVOICE',invoice_id,COALESCE(NULLIF(invoice_number,''),'Invoice '||invoice_id),created_at,COALESCE(total_amount,0),COALESCE(amount_paid,0),COALESCE(balance_due,0)
             FROM invoices WHERE customer_id=? AND COALESCE(payment_status,'UNPAID')<>'PAID' AND COALESCE(balance_due,0)>0
             UNION ALL SELECT 'CUSTOM_ORDER',custom_order_id,COALESCE(NULLIF(order_number,''),'Custom Order '||custom_order_id),created_at,COALESCE(total_amount,0),COALESCE(amount_paid,0),COALESCE(balance_due,0)
-            FROM custom_orders WHERE customer_id=? AND COALESCE(payment_status,'UNPAID')<>'PAID' AND COALESCE(balance_due,0)>0
+            FROM custom_orders WHERE customer_id=? AND order_type='CUSTOM' AND COALESCE(payment_status,'UNPAID')<>'PAID' AND COALESCE(balance_due,0)>0
           ) x WHERE balance>0 ORDER BY created_at,document_type,document_id
           """;
         BigDecimal documentedCredit=BigDecimal.ZERO;try(PreparedStatement ps=c.prepareStatement(sql)){for(int i=1;i<=3;i++)ps.setInt(i,customerId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){String type=rs.getString(1);BigDecimal due=money(rs.getBigDecimal(7));out.add(map("documentType",type,"documentId",rs.getLong(2),"documentNumber",rs.getString(3),"createdAtEpochMillis",epoch(rs.getTimestamp(4)),"total",money(rs.getBigDecimal(5)),"paid",money(rs.getBigDecimal(6)),"balanceDue",due));if(!"CUSTOM_ORDER".equals(type))documentedCredit=documentedCredit.add(due);}}}
@@ -246,8 +255,8 @@ final class LanCustomerAccountService {
                                                     CashDrawerContext drawer,UUID deviceId,String deviceName,int userId,String userName,StringBuilder applied)throws SQLException{
         try(PreparedStatement select=c.prepareStatement("""
                 SELECT custom_order_id,COALESCE(NULLIF(order_number,''),custom_order_id::text),COALESCE(total_amount,0),COALESCE(amount_paid,0),
-                  COALESCE(balance_due,COALESCE(total_amount,0)-COALESCE(amount_paid,0)) FROM custom_orders
-                WHERE customer_id=? AND COALESCE(payment_status,'PAID')<>'PAID' AND COALESCE(balance_due,COALESCE(total_amount,0)-COALESCE(amount_paid,0))>0
+                  COALESCE(balance_due,COALESCE(total_amount,0)-COALESCE(amount_paid,0)),location_id FROM custom_orders
+                WHERE customer_id=? AND order_type='CUSTOM' AND COALESCE(payment_status,'PAID')<>'PAID' AND COALESCE(balance_due,COALESCE(total_amount,0)-COALESCE(amount_paid,0))>0
                 ORDER BY created_at,custom_order_id FOR UPDATE
                 """);PreparedStatement update=c.prepareStatement("""
                 UPDATE custom_orders SET amount_paid=COALESCE(amount_paid,0)+?,balance_due=GREATEST(COALESCE(balance_due,COALESCE(total_amount,0)-COALESCE(amount_paid,0))-?,0),
@@ -262,6 +271,7 @@ final class LanCustomerAccountService {
                 BigDecimal used=remaining.min(due);for(int i=1;i<=3;i++)update.setBigDecimal(i,used);update.setLong(4,id);update.executeUpdate();
                 payment.setLong(1,id);payment.setBigDecimal(2,used);payment.setString(3,method);payment.setString(4,paymentReference(tx,reference));payment.setInt(5,userId);payment.setString(6,userName);
                 payment.setObject(7,deviceId);payment.setString(8,deviceName);setLong(payment,9,drawer.cashDrawerId());payment.setString(10,blank(drawer.drawerName()));setLong(payment,11,drawer.sessionId());payment.executeUpdate();
+                LanCustomOrderWorkflowService.reconcileSettledDelivery(c,id,rs.getInt(6),userId,userName,deviceId.toString(),deviceName);
                 allocation.setLong(1,tx);allocation.setInt(2,customerId);allocation.setLong(3,id);allocation.setBigDecimal(4,used);allocation.executeUpdate();append(applied,"custom order "+number+" "+used);remaining=remaining.subtract(used);}}}
         return remaining;
     }
@@ -297,7 +307,7 @@ final class LanCustomerAccountService {
         StringBuilder applied=new StringBuilder();for(PaymentAllocation request:requests){BigDecimal amount=money(request.amount());
             if(amount.signum()<=0||amount.stripTrailingZeros().scale()>0)throw rule(400,"VALIDATION_ERROR","Every allocation must be a positive whole-GYD amount.");
             String type=clean(request.documentType(),30).toUpperCase();if(!"ACCOUNT".equals(type)&&(request.documentId()==null||request.documentId()<=0))throw rule(400,"VALIDATION_ERROR","Every allocation must identify a document.");
-            long id=request.documentId();if("CUSTOM_ORDER".equals(type)){String number;BigDecimal due;try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(NULLIF(order_number,''),custom_order_id::text),COALESCE(balance_due,0) FROM custom_orders WHERE custom_order_id=? AND customer_id=? FOR UPDATE")){ps.setLong(1,id);ps.setInt(2,customerId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw rule(409,"BALANCE_CHANGED","A selected custom order is no longer available.");number=rs.getString(1);due=money(rs.getBigDecimal(2));}}
+            long id=request.documentId();if("CUSTOM_ORDER".equals(type)){String number;BigDecimal due;try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(NULLIF(order_number,''),custom_order_id::text),COALESCE(balance_due,0) FROM custom_orders WHERE custom_order_id=? AND customer_id=? AND order_type='CUSTOM' FOR UPDATE")){ps.setLong(1,id);ps.setInt(2,customerId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw rule(409,"BALANCE_CHANGED","A selected custom order is no longer available.");number=rs.getString(1);due=money(rs.getBigDecimal(2));}}
                 if(amount.compareTo(due)>0)throw rule(409,"BALANCE_CHANGED","A custom-order allocation exceeds its current balance.");
                 try(PreparedStatement ps=c.prepareStatement("UPDATE custom_orders SET amount_paid=COALESCE(amount_paid,0)+?,balance_due=GREATEST(COALESCE(balance_due,0)-?,0),payment_status=CASE WHEN COALESCE(balance_due,0)-?<=0 THEN 'PAID' ELSE 'PARTIAL' END,updated_at=CURRENT_TIMESTAMP WHERE custom_order_id=?")){ps.setBigDecimal(1,amount);ps.setBigDecimal(2,amount);ps.setBigDecimal(3,amount);ps.setLong(4,id);ps.executeUpdate();}
                 try(PreparedStatement ps=c.prepareStatement("INSERT INTO custom_order_payments(custom_order_id,payment_amount,payment_method,payment_reference,taken_by_user_id,taken_by_name,payment_action,device_id,device_name,cash_drawer_id,cash_drawer_name,cash_drawer_session_id) VALUES(?,?,?,?,?,?,'PAYMENT',?,?,?,?,?)")){ps.setLong(1,id);ps.setBigDecimal(2,amount);ps.setString(3,method);ps.setString(4,paymentReference(tx,reference));ps.setInt(5,userId);ps.setString(6,userName);ps.setObject(7,deviceId);ps.setString(8,deviceName);setLong(ps,9,drawer.cashDrawerId());ps.setString(10,blank(drawer.drawerName()));setLong(ps,11,drawer.sessionId());ps.executeUpdate();}
@@ -445,7 +455,7 @@ final class LanCustomerAccountService {
             "whatsappOptIn",rs.getBoolean(21),"whatsappConsentPhone",rs.getString(22),"requireChargeAuthorization",rs.getBoolean(23),
             "salesDiscountEnabled",rs.getBoolean(24),"salesDiscountPercent",rs.getBigDecimal(25),
             "invoiceDiscountEnabled",rs.getBoolean(26),"invoiceDiscountPercent",rs.getBigDecimal(27),
-            "customOrderDiscountEnabled",rs.getBoolean(28),"customOrderDiscountPercent",rs.getBigDecimal(29));}
+            "customOrderDiscountEnabled",rs.getBoolean(28),"customOrderDiscountPercent",rs.getBigDecimal(29),"customOrderDepositExempt",rs.getBoolean(30));}
     private static Request parsed(JsonObject b)throws RuleViolation{try{Request r=GSON.fromJson(b,Request.class);if(r==null)throw rule(400,"VALIDATION_ERROR","Customer details are required.");return r;}catch(RuleViolation e){throw e;}catch(Exception e){throw rule(400,"VALIDATION_ERROR","Customer details are invalid.");}}
     private static void requireReference(Connection c,String table,String column,int id,String label)throws Exception{try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM "+table+" WHERE "+column+"=?")){ps.setInt(1,id);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw rule(400,"VALIDATION_ERROR",label+" was not found.");}}}
     private static void require(Connection c,int u,String p)throws Exception{if(!has(c,u,p))throw rule(403,"PERMISSION_DENIED","You do not have permission to manage customer accounts.");}
@@ -466,7 +476,7 @@ final class LanCustomerAccountService {
     private record Request(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,
                            BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,boolean requireChargeAuthorization,
                            boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,
-                           boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent){}
+                           boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent,Boolean customOrderDepositExempt){}
     private record Adjustment(int customerId,BigDecimal amount,String action,String paymentMethod,String paymentReference,List<PaymentAllocation> allocations){}
     private record PaymentAllocation(String documentType,Long documentId,BigDecimal amount){}
     static final class RuleViolation extends Exception{private final int status;private final String code;private final String safeMessage;

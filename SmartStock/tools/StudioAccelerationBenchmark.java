@@ -16,13 +16,13 @@ public final class StudioAccelerationBenchmark {
         try(var enhancer=new StudioImageEnhancer(model)){cpu=enhancer.enhance(source,2,StudioImageEnhancer.Mode.CPU,(d,c,t,n)->{});}
         double cpuSeconds=(System.nanoTime()-begin)/1e9;begin=System.nanoTime();
         boolean[] actualGpu={false};
-        try(var enhancer=new StudioImageEnhancer(model)){gpu=enhancer.enhance(source,2,StudioImageEnhancer.Mode.GPU,(d,c,t,n)->{System.out.println(d+" "+c+"/"+t+" "+n);if(d.equals("GPU (DirectML)"))actualGpu[0]=true;});}
+        try(var enhancer=new StudioImageEnhancer(model)){gpu=enhancer.enhance(source,2,StudioImageEnhancer.Mode.GPU,(d,c,t,n)->{System.out.println(d+" "+c+"/"+t+" "+n);if(t>0&&c==t)actualGpu[0]=d.equals("GPU (DirectML)");});}
         double gpuSeconds=(System.nanoTime()-begin)/1e9;
         int max=0;long sum=0;for(int y=0;y<cpu.getHeight();y++)for(int x=0;x<cpu.getWidth();x++){
             int a=cpu.getRGB(x,y),b=gpu.getRGB(x,y);if((a>>>24)!=(b>>>24))throw new AssertionError("Alpha differs");
             for(int shift:new int[]{0,8,16}){int diff=Math.abs(((a>>>shift)&255)-((b>>>shift)&255));max=Math.max(max,diff);sum+=diff;}
         }
-        if(!actualGpu[0])throw new AssertionError("GPU not used");
+        if(!actualGpu[0])throw new AssertionError("GPU did not finish all tiles; CPU fallback timings are not a GPU benchmark");
         ImageIO.write(cpu,"png",folder.resolve("cpu.png").toFile());ImageIO.write(gpu,"png",folder.resolve("gpu.png").toFile());
         System.out.printf(java.util.Locale.ROOT,"CPU %.3fs GPU %.3fs max channel difference %d mean %.4f%n",cpuSeconds,gpuSeconds,max,sum/(double)(cpu.getWidth()*cpu.getHeight()*3));
         if(max>4)throw new AssertionError("GPU quality differs excessively");

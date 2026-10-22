@@ -1,0 +1,8 @@
+SmartStudio 0.1.47
+
+- Added Bring forward, Send backward, Bring to front and Send to back in the Labels and Business Cards Layers panel and right-click menus.
+- Layer ordering preserves multiple selections and supports undo/redo. Ctrl+[ and Ctrl+] move one step; Ctrl+Shift+[ and Ctrl+Shift+] move to back/front.
+- Improved Publisher imports so recovered label backgrounds preserve field frames, seals, pictures and editable barcodes above them.
+- Excludes PowerPoint master placeholder prompts from imported template artwork.
+
+Uses SmartStock 1.1.52 client libraries. AI models remain separate. Reopen shared templates to load the repaired saved label revisions.

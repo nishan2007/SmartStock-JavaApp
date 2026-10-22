@@ -1,0 +1,1 @@
+Fixes SmartStudio template sharing and automatic migration being rejected for Studio-only device credentials. Allows the specific authenticated template-library endpoint while retaining staff sign-in, device approval, store access and template-management permission checks. Update the server to enable card, label and badge library transfer between computers.

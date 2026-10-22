@@ -1,0 +1,9 @@
+SmartStock 1.1.65 (Windows build 101065)
+
+- Adds a visible Overseas Orders tile to the main dashboard Orders section.
+- Adds an Overseas Orders shortcut to the Orders Dashboard.
+- Keeps server-enforced overseas permissions and the existing top-menu entry.
+- Includes the sale-search fixes from 1.1.64 and all current cumulative application changes.
+- No AI model weights are included; existing profile models remain unchanged.
+
+Update the store server first, then registers. Physical receipt printing, cash-drawer behavior and installed upgrade/rollback require separate store verification.

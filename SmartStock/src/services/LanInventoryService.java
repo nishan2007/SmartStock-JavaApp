@@ -55,7 +55,7 @@ final class LanInventoryService {
 
     static List<Map<String, Object>> receivingSearch(Connection c, String search,
                                                       int userId, int locationId) throws Exception {
-        requirePermission(c, userId, "RECEIVING_INVENTORY");
+        requireAnyPermission(c, userId, "RECEIVING_INVENTORY", "RECORD_STOCK_EXPENSE");
         String query = text(search, 300);
         if (query.isBlank()) return List.of();
         String sql = """
@@ -302,6 +302,11 @@ final class LanInventoryService {
                 throw rule(400, "VALIDATION_ERROR", "Every receiving line needs a valid item, count, and quantity.");
             if (!unique.add(type + ":" + line.itemId())) throw rule(400, "VALIDATION_ERROR", "An item appears more than once.");
             LockedStock stock = lockStock(c, type, line.itemId(), locationId);
+            long correction=(long)line.countedStock()-stock.currentStock();
+            if(correction < -Integer.MAX_VALUE || correction > Integer.MAX_VALUE) throw rule(400,"VALIDATION_ERROR","Stock correction is too large.");
+            if (line.expectedSystemStock()!=null && line.expectedSystemStock()!=stock.currentStock()) throw rule(409,"STOCK_CHANGED","Stock changed while receiving. Refresh and recount before posting.");
+            if (line.countedStock() < stock.currentStock()) StockLedgerService.validateLoss(line.lossReason(),line.lossNotes());
+            if ((long)line.countedStock()+line.quantity()>Integer.MAX_VALUE) throw rule(400,"VALIDATION_ERROR","Resulting stock is too large.");
             locked.add(stock);
             needsOverride |= stock.currentStock() != line.countedStock();
         }
@@ -327,6 +332,7 @@ final class LanInventoryService {
         for (int i = 0; i < requested.size(); i++) {
             ReceiveLine line = requested.get(i); LockedStock stock = locked.get(i);
             int adjustment = line.countedStock() - stock.currentStock();
+            if (adjustment < 0) StockLedgerService.shortage(c,stock,line.countedStock(),line.lossReason(),line.lossNotes(),userId,userName,deviceId,locationId,receive.receiveId());
             if (adjustment != 0) {
                 applyStock(c, stock, adjustment, locationId);
                 movement(c, stock, adjustment, "RECEIVING_STOCK_OVERRIDE",
@@ -350,7 +356,7 @@ final class LanInventoryService {
         return map("receiveId", receive.receiveId(), "lineCount", requested.size());
     }
 
-    private static LockedStock lockStock(Connection c, String type, int itemId, int locationId) throws Exception {
+    static LockedStock lockStock(Connection c, String type, int itemId, int locationId) throws Exception {
         if ("PRODUCT".equals(type)) {
             try (PreparedStatement ensure = c.prepareStatement("INSERT INTO inventory(product_id,location_id,quantity_on_hand,reorder_level) SELECT product_id,?,0,0 FROM products WHERE product_id=? AND COALESCE(product_type,'INVENTORY')='INVENTORY' AND is_active=TRUE ON CONFLICT(product_id,location_id) DO NOTHING")) {
                 ensure.setInt(1, locationId); ensure.setInt(2, itemId); ensure.executeUpdate();
@@ -381,7 +387,7 @@ final class LanInventoryService {
         throw rule(400, "VALIDATION_ERROR", "Unsupported receiving item type.");
     }
 
-    private static void applyStock(Connection c, LockedStock stock, int change, int locationId) throws SQLException {
+    static void applyStock(Connection c, LockedStock stock, int change, int locationId) throws SQLException {
         String sql = switch (stock.type()) {
             case "PRODUCT" -> "UPDATE inventory SET quantity_on_hand=quantity_on_hand+? WHERE product_id=? AND location_id=?";
             case "CUSTOM_ITEM" -> "UPDATE custom_order_items SET quantity_on_hand=quantity_on_hand+?,updated_at=CURRENT_TIMESTAMP WHERE custom_item_id=?";
@@ -393,7 +399,7 @@ final class LanInventoryService {
         }
     }
 
-    private static void movement(Connection c, LockedStock stock, int change, String reason, String note,
+    static void movement(Connection c, LockedStock stock, int change, String reason, String note,
                                  int locationId, int actorId, String actorName, UUID deviceId,
                                  ServerReceiptNumberManager.ReceiveNumber receive) throws SQLException {
         if ("PRODUCT".equals(stock.type())) {
@@ -404,7 +410,7 @@ final class LanInventoryService {
                     """)) {
                 ps.setInt(1, stock.itemId()); ps.setInt(2, locationId); ps.setInt(3, change); ps.setString(4, reason);
                 ps.setString(5, note); ps.setString(6, actorName); ps.setInt(7, actorId); ps.setString(8, deviceId.toString());
-                ps.setString(9, receive.receiveId()); ps.setString(10, receive.deviceId()); ps.setInt(11, receive.sequence()); ps.executeUpdate();
+                ps.setString(9, receive == null ? null : receive.receiveId()); ps.setString(10, receive == null ? null : receive.deviceId()); if(receive==null)ps.setNull(11,Types.INTEGER);else ps.setInt(11, receive.sequence()); ps.executeUpdate();
             }
         } else {
             try (PreparedStatement ps = c.prepareStatement("""
@@ -417,7 +423,7 @@ final class LanInventoryService {
                 else { ps.setInt(2, stock.itemId()); ps.setString(3, stock.variantName()); }
                 ps.setInt(4, locationId); ps.setInt(5, change); ps.setString(6, reason); ps.setString(7, note);
                 ps.setString(8, actorName); ps.setInt(9, actorId); ps.setString(10, deviceId.toString());
-                ps.setString(11, receive.receiveId()); ps.setString(12, receive.deviceId()); ps.setInt(13, receive.sequence()); ps.executeUpdate();
+                ps.setString(11, receive == null ? null : receive.receiveId()); ps.setString(12, receive == null ? null : receive.deviceId()); if(receive==null)ps.setNull(13,Types.INTEGER);else ps.setInt(13, receive.sequence()); ps.executeUpdate();
             }
         }
     }
@@ -508,9 +514,9 @@ final class LanInventoryService {
     private static BigDecimal zero(BigDecimal value){return value==null?BigDecimal.ZERO:value;}
     private static ZoneId storeZone(Connection c,int id)throws SQLException{try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(timezone,'') FROM locations WHERE location_id=?")){ps.setInt(1,id);try(ResultSet rs=ps.executeQuery()){if(rs.next())try{return ZoneId.of(rs.getString(1));}catch(Exception ignored){}}}return ZoneId.systemDefault();}
     private static Instant dateBoundary(String value,ZoneId zone,boolean end)throws RuleViolation{if(value==null||value.isBlank())return null;try{LocalDate d=LocalDate.parse(value.trim());return(end?d.plusDays(1):d).atStartOfDay(zone).toInstant();}catch(DateTimeParseException ex){throw rule(400,"VALIDATION_ERROR","Dates must use yyyy-MM-dd format.");}}
-    private static boolean hasPermission(Connection c,int userId,String key)throws SQLException{try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM users u JOIN role_permissions rp ON rp.role_id=u.role_id JOIN permissions p ON p.permission_id=rp.permission_id WHERE u.user_id=? AND UPPER(p.permission_key)=? LIMIT 1")){ps.setInt(1,userId);ps.setString(2,key);try(ResultSet rs=ps.executeQuery()){return rs.next();}}}
+    static boolean hasPermission(Connection c,int userId,String key)throws SQLException{try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM users u JOIN role_permissions rp ON rp.role_id=u.role_id JOIN permissions p ON p.permission_id=rp.permission_id WHERE u.user_id=? AND UPPER(p.permission_key)=? LIMIT 1")){ps.setInt(1,userId);ps.setString(2,key);try(ResultSet rs=ps.executeQuery()){return rs.next();}}}
     private static boolean hasAnyPermission(Connection c,int userId,String...keys)throws SQLException{for(String key:keys)if(hasPermission(c,userId,key))return true;return false;}
-    private static void requirePermission(Connection c,int userId,String key)throws Exception{if(!hasPermission(c,userId,key))throw rule(403,"PERMISSION_DENIED","You do not have permission for this inventory operation.");}
+    static void requirePermission(Connection c,int userId,String key)throws Exception{if(!hasPermission(c,userId,key))throw rule(403,"PERMISSION_DENIED","You do not have permission for this inventory operation.");}
     private static void requireAnyPermission(Connection c,int userId,String...keys)throws Exception{if(!hasAnyPermission(c,userId,keys))throw rule(403,"PERMISSION_DENIED","You do not have permission for inventory lookups.");}
     private static Map<String,Object> map(Object...values){Map<String,Object>m=new LinkedHashMap<>();for(int i=0;i<values.length;i+=2)m.put((String)values[i],values[i+1]);return m;}
     private static RuleViolation rule(int status,String code,String message){return new RuleViolation(status,code,message);}
@@ -523,6 +529,6 @@ final class LanInventoryService {
     private record InventoryRequest(String search,String stockFilter,String department,String productType,String itemType,String brand,String shelf,String storageShelf,boolean includeArchived){}
     private record HistoryRequest(String search,String fromDate,String toDate){}
     private record ReceiveRequest(String overrideApprovalToken,String overrideReason,List<ReceiveLine> lines){}
-    private record ReceiveLine(String itemType,int itemId,int countedStock,int quantity){}
-    private record LockedStock(String type,int itemId,Integer parentItemId,String name,String variantName,int currentStock){}
+    private record ReceiveLine(String itemType,int itemId,int countedStock,int quantity,String lossReason,String lossNotes,Integer expectedSystemStock){}
+    record LockedStock(String type,int itemId,Integer parentItemId,String name,String variantName,int currentStock){}
 }

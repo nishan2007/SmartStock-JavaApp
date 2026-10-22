@@ -36,12 +36,14 @@ public final class CloudRowMirrorService {
             "roles", "permissions", "role_permissions", "mobile_permissions",
             "role_mobile_permissions", "company_info", "locations", "users", "customer_types",
             "customer_accounts", "categories", "item_types", "item_brands", "vendors",
+            "customer_account_merges", "customer_phone_ownership",
             "product_groups", "products", "product_lifecycle_audit", "product_barcodes", "custom_order_items",
             "custom_order_item_barcodes", "custom_order_item_variants", "custom_order_item_variant_barcodes",
             "custom_order_print_materials", "custom_order_print_size_presets",
             "custom_order_design_placements", "employee_payroll_settings",
             "employee_schedule_holidays", "time_clock_auto_close_settings",
-            "image_cloud_configuration", "image_assets", "image_asset_references", "maintenance_parts"
+            "image_cloud_configuration", "image_assets", "image_asset_references", "maintenance_parts",
+            "catalog_source_ids"
     );
     private static final Map<String, String> DEPENDENT_LOCATION_PREDICATES = Map.ofEntries(
             Map.entry("sale_items", "EXISTS (SELECT 1 FROM sales p WHERE p.sale_id=t.sale_id AND p.location_id=?)"),
@@ -54,6 +56,12 @@ public final class CloudRowMirrorService {
             Map.entry("custom_order_line_production_history", customOrderPredicate()),
             Map.entry("custom_order_line_returns", customOrderPredicate()),
             Map.entry("custom_order_lines", customOrderPredicate()),
+            Map.entry("overseas_orders", "t.location_id=?"),
+            Map.entry("overseas_cash_fund", "t.location_id=?"),
+            Map.entry("overseas_order_requests", "t.location_id=?"),
+            Map.entry("overseas_order_lines", "EXISTS(SELECT 1 FROM overseas_orders o WHERE o.overseas_order_id=t.overseas_order_id AND o.location_id=?)"),
+            Map.entry("overseas_order_images", "EXISTS(SELECT 1 FROM overseas_orders o WHERE o.overseas_order_id=t.overseas_order_id AND o.location_id=?)"),
+            Map.entry("overseas_order_events", "EXISTS(SELECT 1 FROM overseas_orders o WHERE o.overseas_order_id=t.overseas_order_id AND o.location_id=?)"),
             Map.entry("custom_order_design_documents", customOrderPredicate()),
             Map.entry("custom_order_design_document_revisions", "EXISTS (SELECT 1 FROM custom_order_design_documents d JOIN custom_orders p ON p.custom_order_id=d.custom_order_id WHERE d.document_id=t.document_id AND p.location_id=?)"),
             Map.entry("custom_order_payments", customOrderPredicate()),
@@ -75,6 +83,7 @@ public final class CloudRowMirrorService {
                     + " OR EXISTS (SELECT 1 FROM cash_drawer_sessions d WHERE d.device_id=t.device_id AND d.location_id=?)"
                     + " OR EXISTS (SELECT 1 FROM change_basket_updates c WHERE c.device_id=t.device_id AND c.location_id=?))"),
             Map.entry("email_outbox_events", "EXISTS (SELECT 1 FROM email_outbox p WHERE p.email_outbox_id=t.email_outbox_id AND p.location_id=?)"),
+            Map.entry("employee_daily_pay_days", "t.location_id=?"),
             Map.entry("employee_time_clock_adjustments", "EXISTS (SELECT 1 FROM employee_time_clock p WHERE p.clock_id=t.clock_id AND p.location_id=?)"),
             Map.entry("employee_wallet_credentials", "EXISTS (SELECT 1 FROM user_locations ul WHERE ul.user_id=t.user_id AND ul.location_id=?)"),
             Map.entry("held_cart_items", "EXISTS (SELECT 1 FROM held_carts p WHERE p.held_cart_id=t.held_cart_id AND p.location_id=?)"),
@@ -88,6 +97,7 @@ public final class CloudRowMirrorService {
             Map.entry("quotation_status_history", quotationPredicate()),
             Map.entry("maintenance_machine_parts", "EXISTS (SELECT 1 FROM maintenance_machines p WHERE p.machine_id=t.machine_id AND p.location_id=?)"),
             Map.entry("maintenance_tickets", "EXISTS (SELECT 1 FROM maintenance_machines p WHERE p.machine_id=t.machine_id AND p.location_id=?)"),
+            Map.entry("stock_ledger_entries", "t.location_id=?"),
             Map.entry("receiving_batches", "(t.location_id=? OR EXISTS (SELECT 1 FROM store_transfers x WHERE x.receive_id=t.receive_id AND (x.from_location_id=? OR x.to_location_id=?)))"),
             Map.entry("store_transfers", "(t.from_location_id=? OR t.to_location_id=?)"),
             Map.entry("store_transfer_items", "EXISTS (SELECT 1 FROM store_transfers p WHERE p.transfer_id=t.transfer_id AND (p.from_location_id=? OR p.to_location_id=?))"),

@@ -1,0 +1,15 @@
+# SmartStudio 0.1.27 / SmartStock 1.1.38: store folders
+
+All three template libraries default to the signed-in store. The picker offers named store folders and All accessible stores. Store ownership / sharing changes the owner and additional store folders without duplicating artwork. Creation-store history remains immutable. New designs default to the signed-in store regardless of which folder is being browsed.
+
+The server checks staff store assignments on reads and saves, owner/destination access for reassignment, and management permission for changes. Upload ownership and current template access are checked again during chunk transfer and finalization. Stale association changes are rejected. Offline caches hide designs removed from the accessible catalog after a successful refresh.
+
+New disk partitions include the configured store name; existing paths and historical revision locations remain stable. Changes to displayed ownership are carried by the verified recovery catalog. See [Shared template library](shared-template-library.md) for recovery and independent-server limitations.
+
+Validation: focused server tests and all 85 SmartStudio tests passed. Full server packaging validation, exact artifact verification and isolated launch acceptance are recorded with the prepared packages. Production LAN, database and two-client/OneDrive acceptance require deployment. No live SmartStock restart or release publication is authorized by building these packages.
+
+Final validation: full server Maven packaging completed with 1,046 tests, 61 skipped and no failures/errors. All 85 SmartStudio tests passed. Security and whitespace checks passed. The exact model-free server update passed verification and isolated native startup using the existing launcher. Server update SHA-256: 487a0a90714572fa2f34002dcd9b0b5ef6a832414cf0d0256bef3ee9ac954a89. SmartStudio portable ZIP SHA-256: e47adf74e25f084bc345c61ad3d87eb3f591ba8cae11dd796ffd0554e1a7c52e. Installer SHA-256: b0a68629e5ea02ccfd5ec92d92dc81a62537bc480783174ac467b5640977e68e. Packages are prepared, unpublished and not installed into the live store.
+
+Exact final SmartStudio installer extraction, main/dependency JAR identity, model-free inventory and native launcher acceptance passed. Production two-computer and OneDrive acceptance remain outstanding until deployment.
+
+Publication completed on 2026-10-16 at the user's explicit request: SmartStock Windows update 1.1.38 (build 101038) and SmartStudio Windows installer/update 0.1.27 (build 1027). Hosted artifacts were fully downloaded and verified before release rows were written; read-back matched version, build, object path, size and SHA-256. The public SmartStudio Windows installer selection was updated and its complete anonymous download also matched the accepted size and hash. All 18 installer portal tests passed. This supersedes the prepared/unpublished status above. No live application installation or restart was performed. Update the server before SmartStudio clients; production LAN, OneDrive revision and two-client acceptance remain outstanding.

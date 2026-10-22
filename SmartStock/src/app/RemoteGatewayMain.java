@@ -5,6 +5,7 @@ import data.DatabaseConfig;
 import data.DatabaseMode;
 import services.LanApiServer;
 import services.SchedulerWebRuntimeController;
+import services.EmployeeWebRuntimeController;
 
 import java.sql.Connection;
 import java.util.concurrent.CountDownLatch;
@@ -30,7 +31,8 @@ public final class RemoteGatewayMain {
         }
         LanApiServer api = LanApiServer.start();
         SchedulerWebRuntimeController scheduler = SchedulerWebRuntimeController.start();
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> { scheduler.close(); api.close(); }, "smartstock-remote-gateway-shutdown"));
+        EmployeeWebRuntimeController employees = EmployeeWebRuntimeController.start();
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> { employees.close(); scheduler.close(); api.close(); }, "smartstock-remote-gateway-shutdown"));
         System.out.println("SmartStock Remote Admin gateway and owner scheduler are ready.");
         new CountDownLatch(1).await();
     }

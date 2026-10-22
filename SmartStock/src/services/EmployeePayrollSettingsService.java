@@ -416,7 +416,7 @@ public final class EmployeePayrollSettingsService {
                 UPDATE employee_time_clock tc
                 SET total_earned = CASE ?
                     WHEN 'SALARY' THEN NULL
-                    WHEN 'DAILY' THEN CASE WHEN completed.daily_rank = 1 THEN ? ELSE NULL END
+                    WHEN 'DAILY' THEN CASE WHEN completed.daily_rank = 1 THEN ROUND(? * CASE WHEN EXISTS (SELECT 1 FROM employee_daily_pay_days d WHERE d.user_id=tc.user_id AND d.work_date=tc.work_date AND d.half_day) THEN 0.5 ELSE 1 END, 0) ELSE NULL END
                     ELSE ROUND(completed.total_hours_worked * ?, 2)
                 END, updated_at = CURRENT_TIMESTAMP
                 FROM completed WHERE tc.clock_id = completed.clock_id
@@ -428,6 +428,19 @@ public final class EmployeePayrollSettingsService {
             ps.setBigDecimal(5, normalizeRate(rate));
             ps.setBigDecimal(6, normalizeRate(rate));
             ps.executeUpdate();
+        }
+    }
+
+    public static void refreshCompletedEarningsForHalfDay(Connection c,int userId,LocalDate date)throws SQLException {
+        BigDecimal rate=payRateFor(c,userId,date).rate();
+        boolean half=DailyPayDayService.isHalfDay(c,userId,date);
+        try(PreparedStatement p=c.prepareStatement("""
+            WITH completed AS (SELECT clock_id,ROW_NUMBER() OVER(ORDER BY clock_in,clock_id) AS rank
+                FROM employee_time_clock WHERE user_id=? AND work_date=? AND clock_out IS NOT NULL AND total_hours_worked>0)
+            UPDATE employee_time_clock tc SET total_earned=CASE WHEN completed.rank=1 THEN ? ELSE NULL END,
+                updated_at=CURRENT_TIMESTAMP FROM completed WHERE tc.clock_id=completed.clock_id
+            """)) {
+            p.setInt(1,userId);p.setDate(2,Date.valueOf(date));p.setBigDecimal(3,DailyPayDayService.dailyPay(rate,half));p.executeUpdate();
         }
     }
 

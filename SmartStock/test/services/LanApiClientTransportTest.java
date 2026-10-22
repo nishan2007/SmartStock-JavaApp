@@ -17,6 +17,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LanApiClientTransportTest {
     @Test
+    void reconciliationWaitsForServerBatchWithoutSlowingOrdinaryRequests() {
+        assertTrue(LanApiClient.postTimeout("/v1/images/reconcile", false)
+                .compareTo(java.time.Duration.ofSeconds(120)) > 0);
+        assertEquals(java.time.Duration.ofSeconds(20),
+                LanApiClient.postTimeout("/v1/products/update", false));
+        assertEquals(java.time.Duration.ofSeconds(90),
+                LanApiClient.postTimeout("/v1/cloud/storage/upload", true));
+        assertEquals(java.time.Duration.ofMinutes(30),
+                LanApiClient.postTimeout("/v1/studio/remove-background", true));
+        assertEquals(java.time.Duration.ofSeconds(75),
+                LanApiClient.postTimeout("/v1/studio/models/refresh", false));
+    }
+
+    @Test
     void transientHealthFailureRecoversWithoutDeclaringAnOutage() {
         var attempts = new java.util.concurrent.atomic.AtomicInteger();
         var result = LanApiClient.confirmServerReachable(attempt -> {

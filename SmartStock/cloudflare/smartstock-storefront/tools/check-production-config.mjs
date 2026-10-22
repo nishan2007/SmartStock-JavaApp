@@ -13,7 +13,7 @@ try {
   if (config.name !== 'smartstock-storefront'
       || config.workers_dev !== false
       || config.preview_urls !== false
-      || JSON.stringify(domains) !== JSON.stringify(['deckers.gy', 'www.deckers.gy'])) {
+      || JSON.stringify(domains) !== JSON.stringify(config.vars?.PHOTO_HOST==='pic.deckers.gy'?['deckers.gy','pic.deckers.gy','www.deckers.gy']:['deckers.gy', 'www.deckers.gy'])) {
     throw new Error('Production Worker target or domains do not match the reviewed launch.');
   }
   if (config.vars?.BROWSE_ONLY !== 'true') {

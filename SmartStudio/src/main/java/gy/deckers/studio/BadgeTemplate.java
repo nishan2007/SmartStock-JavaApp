@@ -15,15 +15,41 @@ import java.util.List;
 public final class BadgeTemplate {
     private static final Gson JSON = new GsonBuilder().setPrettyPrinting().create();
     public static final int MAX_BYTES = 8 * 1024 * 1024;
+    static String portableJson(BadgeTemplate template){
+        var json=new Gson().toJsonTree(template).getAsJsonObject();
+        for(var value:json.getAsJsonArray("elements")){var element=value.getAsJsonObject();for(String name:new String[]{"italic","underline","strike","textOutline"})if(!element.get(name).getAsBoolean())element.remove(name);if(!element.has("textOutline")){element.remove("textOutlineColor");element.remove("textOutlineWidth");}}
+        return json.toString();
+    }
+    public boolean savePrintRecords;
     public int formatVersion = 1;
     public String name = "New badge";
     public double widthMm = 85.6, heightMm = 54;
     public List<Element> elements = new ArrayList<>();
 
     public static final class Element {
+        public int transparency;
+        public String photoId=UUID.randomUUID().toString();
+        transient BufferedImage personalPhoto;
+        transient PhotoFraming photoFraming;
+        public boolean photoBackgroundEnabled,photoOutlineEnabled;
+        public String photoBackgroundColor="#ffffff",photoOutlineColor="#000000";
+        PhotoFraming stylePhoto(PhotoFraming frame){return frame.styled(photoBackgroundEnabled?Color.decode(photoBackgroundColor):null,photoOutlineEnabled?Color.decode(photoOutlineColor):null);}
         public String label, type = "TEXT", text = "", field = "", font = "Arial", color = "#000000", image = "";
         public double x, y, width, height, fontMm = 3;
-        public boolean bold;
+        public boolean bold,italic,underline,strike,textOutline;
+        public String textOutlineColor="#000000";
+        public double textOutlineWidth=.2;
+        private transient String decodedSource;
+        private transient BufferedImage decodedArtwork;
+
+        BufferedImage artwork() throws IOException {
+            if (decodedArtwork == null || !Objects.equals(decodedSource, image)) {
+                BufferedImage decoded = decode(image);
+                decodedSource = image;
+                decodedArtwork = decoded;
+            }
+            return decodedArtwork;
+        }
     }
 
     public static BadgeTemplate builtin() throws IOException {
@@ -72,7 +98,7 @@ public final class BadgeTemplate {
         if (elements == null || elements.size() > 64) throw new IllegalArgumentException("A template supports up to 64 elements.");
         for (Element e : elements) {
             if (e == null || e.label == null || e.label.isBlank() || e.label.length() > 160
-                    || !Set.of("TEXT", "IMAGE", "PHOTO").contains(e.type == null ? "" : e.type)) throw new IllegalArgumentException("Invalid element.");
+                    || !Set.of("TEXT", "IMAGE", "PHOTO", "RECT", "ELLIPSE", "TRIANGLE", "LINE").contains(e.type == null ? "" : e.type)) throw new IllegalArgumentException("Invalid element.");
             if (!finite(e.x, -1000, 1000) || !finite(e.y, -1000, 1000) || !finite(e.width, .01, widthMm)
                     || !finite(e.height, .01, heightMm))
                 throw new IllegalArgumentException(e.label + " has invalid workspace coordinates or dimensions.");
@@ -80,8 +106,11 @@ public final class BadgeTemplate {
                 throw new IllegalArgumentException("Invalid text or field name.");
             if (e.font == null || e.font.length() > 100 || !finite(e.fontMm, .5, 50) || e.color == null || !e.color.matches("#[0-9a-fA-F]{6}"))
                 throw new IllegalArgumentException("Invalid font or colour.");
+            if(e.textOutlineColor==null||!e.textOutlineColor.matches("#[0-9a-fA-F]{6}")||!finite(e.textOutlineWidth,0,5))throw new IllegalArgumentException("Invalid text outline.");
+            if(e.transparency<0||e.transparency>100)throw new IllegalArgumentException("Invalid image transparency.");
             if (e.image == null) throw new IllegalArgumentException("Invalid image.");
-            if ("IMAGE".equals(e.type)) try { decode(e.image); } catch (IOException ex) { throw new IllegalArgumentException("Invalid artwork for " + e.label, ex); }
+            if(e.photoBackgroundColor==null||!e.photoBackgroundColor.matches("#[0-9a-fA-F]{6}")||e.photoOutlineColor==null||!e.photoOutlineColor.matches("#[0-9a-fA-F]{6}"))throw new IllegalArgumentException("Invalid photo background or outline colour.");
+            if ("IMAGE".equals(e.type)) try { e.artwork(); } catch (IOException ex) { throw new IllegalArgumentException("Invalid artwork for " + e.label, ex); }
             else if (!e.image.isEmpty()) throw new IllegalArgumentException("Only reusable artwork can be saved in a template.");
         }
     }
@@ -130,26 +159,39 @@ public final class BadgeTemplate {
                 Graphics2D layer=(Graphics2D)g.create();
                 try {
                     layer.clipRect(x,y,ew,eh);
-                    if ("IMAGE".equals(e.type)) layer.drawImage(decode(e.image),x,y,ew,eh,null);
+                    if(Set.of("IMAGE","PHOTO").contains(e.type))layer.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1-e.transparency/100f));
+                    if (Set.of("RECT","ELLIPSE","TRIANGLE","LINE").contains(e.type)) {
+                        layer.setColor(Color.decode(e.color));
+                        switch(e.type) {
+                            case "RECT" -> layer.fillRect(x,y,ew,eh);
+                            case "ELLIPSE" -> layer.fillOval(x,y,ew,eh);
+                            case "TRIANGLE" -> layer.fillPolygon(new int[]{x+ew/2,x+ew,x},new int[]{y,y+eh,y+eh},3);
+                            case "LINE" -> layer.fillRect(x,y,ew,Math.max(1,eh));
+                        }
+                    }
+                    else if ("IMAGE".equals(e.type)) layer.drawImage(e.artwork(),x,y,ew,eh,null);
                     else if ("PHOTO".equals(e.type)) {
-                        if (photo == null) {
+                        BufferedImage slotPhoto=e.personalPhoto!=null?e.personalPhoto:photo;
+                        if (slotPhoto == null) {
                             layer.setColor(new Color(235,237,240)); layer.fillRect(x,y,ew,eh);
                             layer.setColor(Color.GRAY); layer.setFont(new Font("SansSerif",Font.PLAIN,Math.max(10,ew/8)));
                             String label="Photo"; layer.drawString(label,x+(ew-layer.getFontMetrics().stringWidth(label))/2,y+eh/2);
                         } else {
-                            double ratio=Math.max(ew/(double)photo.getWidth(),eh/(double)photo.getHeight());
-                            int pw=(int)Math.ceil(photo.getWidth()*ratio),ph=(int)Math.ceil(photo.getHeight()*ratio);
-                            layer.drawImage(photo,x+(ew-pw)/2,y+(eh-ph)/2,pw,ph,null);
+                            PhotoFraming framing=e.photoFraming!=null&&e.photoFraming.source()==slotPhoto?e.photoFraming:PhotoFraming.initial(slotPhoto);
+                            e.stylePhoto(framing).paint(layer,x,y,ew,eh);
                         }
                     } else {
                         String text=e.field.isEmpty()?e.text:values.getOrDefault(e.field,e.text);
-                        Font font=new Font(e.font,e.bold?Font.BOLD:Font.PLAIN,1).deriveFont((float)(e.fontMm*scale));
+                        Font font=publishing.PublicationFonts.create(e.font,(e.bold?Font.BOLD:0)|(e.italic?Font.ITALIC:0),(float)(e.fontMm*scale));
                         layer.setFont(font);
                         int tw=layer.getFontMetrics().stringWidth(text);
                         if (tw > ew) layer.setFont(font.deriveFont((float)(font.getSize2D()*ew/tw)));
                         FontMetrics metrics=layer.getFontMetrics();
                         layer.setColor(Color.decode(e.color));
-                        layer.drawString(text,x+(ew-metrics.stringWidth(text))/2,y+(eh-metrics.getHeight())/2+metrics.getAscent());
+                        float tx=x+(ew-metrics.stringWidth(text))/2f,baseline=y+(eh-metrics.getHeight())/2f+metrics.getAscent();
+                        Shape glyph=layer.getFont().createGlyphVector(layer.getFontRenderContext(),text).getOutline(tx,baseline);layer.fill(glyph);
+                        if(e.textOutline&&e.textOutlineWidth>0){layer.setColor(Color.decode(e.textOutlineColor));layer.setStroke(new BasicStroke((float)(e.textOutlineWidth*scale),BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND));layer.draw(glyph);}
+                        layer.setColor(Color.decode(e.color));layer.setStroke(new BasicStroke(Math.max(1,layer.getFont().getSize2D()/18)));if(e.underline)layer.draw(new java.awt.geom.Line2D.Float(tx,baseline+layer.getFont().getSize2D()*.1f,tx+metrics.stringWidth(text),baseline+layer.getFont().getSize2D()*.1f));if(e.strike)layer.draw(new java.awt.geom.Line2D.Float(tx,baseline-layer.getFont().getSize2D()*.3f,tx+metrics.stringWidth(text),baseline-layer.getFont().getSize2D()*.3f));
                     }
                 } finally { layer.dispose(); }
             }

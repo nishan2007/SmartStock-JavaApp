@@ -34,7 +34,7 @@ final class StudioDeviceEnrollmentService {
             // Exact fingerprint + hostname + assigned store; never match a computer by name alone.
             if(!fingerprint.isBlank()&&!hostname.isBlank()) try(var p=c.prepareStatement("""
                     SELECT device_id FROM devices d WHERE device_fingerprint=? AND hostname=? AND (last_store_id=? OR last_store_id IS NULL)
-                      AND COALESCE(access_mode,'CLIENT')='CLIENT' AND installation_id<>?
+                      AND COALESCE(access_mode,'CLIENT') IN ('CLIENT','SERVER') AND installation_id<>?
                       AND NOT EXISTS(SELECT 1 FROM studio_device_clients sc WHERE sc.legacy_device_id=d.device_id)
                     ORDER BY first_seen LIMIT 2 FOR UPDATE
                     """)) {
@@ -113,7 +113,8 @@ final class StudioDeviceEnrollmentService {
         }}
     }
     static boolean allowedPath(String path) {
-        return Set.of("/v1/studio/branding","/v1/studio/remove-background","/v1/studio/device-status","/v1/sessions/login","/v1/sessions/logout",
+        return Set.of("/v1/studio/branding","/v1/studio/remove-background","/v1/studio/device-status","/v1/studio/templates","/v1/studio/phone-capture","/v1/studio/photo-queue","/v1/sessions/login","/v1/sessions/logout",
+                "/v1/sessions/badge-status","/v1/sessions/badge-pin-setup",
                 "/v1/cloud/update/latest","/v1/cloud/update/sign").contains(path);
     }
 

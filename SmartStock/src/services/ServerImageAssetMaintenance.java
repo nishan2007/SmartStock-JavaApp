@@ -32,8 +32,8 @@ public final class ServerImageAssetMaintenance {
             }
             if("probe".equals(command)){System.out.println(ServerImageAssetService.probeOneDrive(conn).message());return;}
             if("begin".equals(command))ServerImageAssetService.beginOneDriveMigration(conn);
-            if("activate".equals(command)){ServerImageAssetService.activateOneDrive(conn);System.out.println("OneDrive product image storage is active.");return;}
-            if("rollback".equals(command)){ServerImageAssetService.rollbackToSupabase(conn);System.out.println("Product image storage rolled back to Supabase.");return;}
+            if("activate".equals(command)){ServerImageAssetService.activateOneDrive(conn);System.out.println("OneDrive image storage is active.");return;}
+            if("rollback".equals(command)){ServerImageAssetService.rollbackToSupabase(conn);System.out.println("Image storage rolled back to Supabase.");return;}
             ServerImageAssetService.SyncResult result = ServerImageAssetService.synchronize(conn, true);
             ServerImageAssetService.Counts counts = ServerImageAssetService.counts(conn);
             int metadataRows = config.locationId() == null ? 0

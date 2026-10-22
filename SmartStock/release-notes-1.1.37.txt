@@ -1,0 +1,1 @@
+Extends the authenticated SmartStudio server library to business cards and labels. Stores editable archives with bounded chunked transfers, staff-owned uploads, category/store isolation and save conflicts. Queues immutable revisions and recovery catalogs for verified OneDrive backup. Requires SmartStudio 0.1.26 for publication template sharing.

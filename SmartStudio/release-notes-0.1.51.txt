@@ -1,0 +1,7 @@
+SmartStudio 0.1.51
+
+- Banner PNG/JPEG artwork now supports 100 MiB per image and preserves the original bytes and resolution. Pixel count remains capped at 100 megapixels.
+- Local banner templates support up to 5 GiB using streamed ZIP64 save/open and disk-backed original assets.
+- Undo and layer copy/paste keep file references instead of copying large image payloads. Canvas previews stay small.
+- PDF export uses disk-backed streams, source-resolution photos and vector gradients, preserving physical banner size.
+- Large templates need sufficient disk space for the asset cache and temporary files. Server-shared card/label libraries and AI background-processing limits remain separate.

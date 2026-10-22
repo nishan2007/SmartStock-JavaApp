@@ -22,6 +22,9 @@ class ServerCustomOrderCustomerPhoneTest {
                 (proxy, method, args) -> switch (method.getName()) {
                     case "setString", "setInt" -> { parameters.put((Integer) args[0], args[1]); yield null; }
                     case "executeUpdate" -> 1;
+                    case "executeQuery" -> Proxy.newProxyInstance(
+                            java.sql.ResultSet.class.getClassLoader(), new Class<?>[]{java.sql.ResultSet.class},
+                            (result, read, values) -> "next".equals(read.getName()) ? true : defaultValue(read.getReturnType()));
                     case "close" -> null;
                     default -> defaultValue(method.getReturnType());
                 });

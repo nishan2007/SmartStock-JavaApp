@@ -13,7 +13,7 @@ class CustomOrderItemSearchIntegrationTest {
         try(var c=DriverManager.getConnection(url,user,System.getProperty("smartstock.test.dbPassword", ""))){
             c.setAutoCommit(false);
             try(var s=c.createStatement()){
-                s.execute("CREATE TEMP TABLE custom_order_items(custom_item_id bigint,item_name text,size text,color text,sku text,barcode text,description text,product_type text,category_id bigint,item_type_id bigint,brand_id bigint,is_active boolean) ON COMMIT DROP");
+                s.execute("CREATE TEMP TABLE custom_order_items(custom_item_id bigint,item_name text,size text,color text,sku text,barcode text,description text,product_type text,category_id bigint,item_type_id bigint,brand_id bigint,is_active boolean,is_archived boolean DEFAULT false,is_shirt boolean DEFAULT false,shirt_designer_config jsonb DEFAULT '{}'::jsonb) ON COMMIT DROP");
                 s.execute("CREATE TEMP TABLE custom_order_item_variants(custom_item_id bigint,custom_variant_id bigint,variant_name text,size text,color text,sku text,barcode text,brand_id bigint,is_active boolean) ON COMMIT DROP");
                 s.execute("CREATE TEMP TABLE custom_order_item_barcodes(custom_item_id bigint,barcode text) ON COMMIT DROP");
                 s.execute("CREATE TEMP TABLE custom_order_item_variant_barcodes(custom_variant_id bigint,barcode text) ON COMMIT DROP");
@@ -36,6 +36,11 @@ class CustomOrderItemSearchIntegrationTest {
                 assertEquals(1,barcode.size());
                 assertEquals(11L,barcode.get(0).customVariantId());
                 assertEquals(11L,ServerCustomOrderDataService.lookupCustomItem(c,"123456789").customVariantId());
+                assertEquals(12L,ServerCustomOrderDataService.lookupCustomItem(c,"bluel").customVariantId());
+                assertEquals(11L,ServerCustomOrderDataService.lookupCustomItem(c,"123-456 789").customVariantId());
+                s.execute("INSERT INTO custom_order_item_variant_barcodes VALUES (12,'ALT123456'),(11,'036000291452')");
+                assertEquals(12L,ServerCustomOrderDataService.lookupCustomItem(c,"alt-123 456").customVariantId());
+                assertEquals(11L,ServerCustomOrderDataService.lookupCustomItem(c,"03600029145").customVariantId());
                 assertTrue(ServerCustomOrderDataService.searchCustomItems(c,"HIDDEN").isEmpty());
                 assertTrue(ServerCustomOrderDataService.searchCustomItems(c,"no such item").isEmpty());
                 assertTrue(ServerCustomOrderDataService.searchCustomItems(c," ").isEmpty());

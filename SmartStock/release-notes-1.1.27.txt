@@ -1,0 +1,7 @@
+SmartStock 1.1.27 (Windows build 101027)
+
+Custom orders now round the final order total once, after unit prices, quantities, add-ons and discounts are summed. A $30 item ordered 100 times totals $3,000; per-item rounding no longer accumulates. This applies to new orders, size sets, pending pricing, quotation conversion and shirt estimates. Existing finalized orders are not repriced.
+
+Includes mixed-size custom-order sets, individual-item editing within sets, held-draft support, shirt catalogue setup and the website shirt designer with print-area editing and store quote review. Includes the current publishing workspace and grouped order slips.
+
+Update the store server before registers. Website features require the updated store server. Validate physical printing and store workflows before production use.

@@ -1,0 +1,5 @@
+SmartStudio 0.1.13 (Windows build 1013)
+
+Uses the matching SmartStock 1.1.28 client. Retains template shapes, continuous dragging, precise arrow-key movement, manual front/back card printing, and current custom-order and publishing integrations. No model weights are bundled.
+
+Physical printing and installed-app upgrade remain separate verification steps.

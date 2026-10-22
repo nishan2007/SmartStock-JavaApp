@@ -1,0 +1,5 @@
+Windows store network reliability
+- Server setup, LAN firewall repair and server updates install a protected network maintenance task.
+- Every minute and after startup, restore missing or disabled SmartStock private-LAN firewall rules using the store's saved network scope.
+- Where verified CoreDNS is already installed, restore automatic startup and restart it after failure while preserving the store's DNS configuration.
+- Register updates do not install server maintenance tasks. Firewall profiles and administrator block policies remain unchanged.

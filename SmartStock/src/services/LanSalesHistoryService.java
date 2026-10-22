@@ -147,7 +147,7 @@ final class LanSalesHistoryService {
                   COALESCE(si.quantity,0),COALESCE(SUM(sri.quantity),0),
                   COALESCE(si.original_unit_price,si.unit_price,0),COALESCE(si.discount_percent,0),
                   COALESCE(si.discount_amount,0),COALESCE(si.unit_price,0),
-                  COALESCE(si.quantity,0)*COALESCE(si.unit_price,0)
+                  COALESCE(si.loyalty_net_amount,COALESCE(si.quantity,0)*COALESCE(si.unit_price,0))
                 FROM sale_items si LEFT JOIN products p ON p.product_id=si.product_id
                 LEFT JOIN sale_return_items sri ON sri.sale_item_id=si.sale_item_id
                 WHERE si.sale_id=?
@@ -186,7 +186,7 @@ final class LanSalesHistoryService {
         try (PreparedStatement ps = c.prepareStatement("""
                 SELECT sri.return_id,sri.product_id,COALESCE(p.name,'Deleted Item')||
                   CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END,
-                  sri.quantity,COALESCE(sri.unit_price,0),sri.quantity*COALESCE(sri.unit_price,0)
+                  sri.quantity,COALESCE(sri.unit_price,0),COALESCE(sri.loyalty_line_total,sri.quantity*COALESCE(sri.unit_price,0))
                 FROM sale_return_items sri LEFT JOIN products p ON p.product_id=sri.product_id
                 JOIN sale_returns sr ON sr.return_id=sri.return_id
                 WHERE sr.sale_id=? ORDER BY sr.created_at DESC,sri.return_item_id

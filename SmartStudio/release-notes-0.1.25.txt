@@ -1,0 +1,5 @@
+Automatically migrates existing local badge templates after the next update and
+online sign-in, using the previously configured template folder. Keeps original
+files, retries pending uploads, avoids duplicates and preserves newer server
+designs. Requires permission to save templates. Server imports join the existing
+OneDrive backup queue. Business-card and label libraries are not included.

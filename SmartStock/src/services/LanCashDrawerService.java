@@ -25,6 +25,7 @@ final class LanCashDrawerService {
         Map<String,Object>m=map("drawerId",drawer.cashDrawerId(),"drawerName",drawer.drawerName(),"session",session,
                 "expectedCash",session==null?BigDecimal.ZERO:CashDrawerService.calculateExpectedCash(c,session.sessionId()),
                 "floatMix",session==null?Map.of():CashDrawerService.getDrawerFloatMix(c,session.cashDrawerId()),
+                "overseasCash",session==null?null:OverseasCashService.drawer(c,session.sessionId()),
                 "pendingHandover",session==null?null:CashDrawerHandoverService.pending(c,session.sessionId()));return m;
     }
     static Map<String,Object> open(Connection c,UUID deviceId,int userId,String userName,int locationId)throws Exception{
@@ -34,9 +35,13 @@ final class LanCashDrawerService {
         require(c,userId,"BALANCE_DRAWER");long id=requiredLong(body,"sessionId");BigDecimal count=requiredMoney(body,"countedCash");
         return map("handover",CashDrawerHandoverService.confirm(c,body,userId,userName,deviceId,deviceName,locationId));
     }
-    static Map<String,Object> close(Connection c,JsonObject body,int userId,String userName,UUID deviceId,String deviceName)throws Exception{
+    static Map<String,Object> close(Connection c,JsonObject body,int userId,String userName,UUID deviceId,String deviceName,int locationId)throws Exception{
         require(c,userId,"BALANCE_DRAWER");long id=requiredLong(body,"sessionId");BigDecimal count=requiredMoney(body,"countedCash");
+        var assigned=CashDrawerService.resolveDrawerForDevice(c,locationId,deviceId.toString());
+        var target=CashDrawerService.getSessionForUpdate(c,id);
+        if(target==null||target.locationId()!=locationId||!java.util.Objects.equals(assigned.cashDrawerId(),target.cashDrawerId()))throw new SQLException("This draw is not assigned to this register and store.");
         if(CashDrawerHandoverService.pending(c,id)!=null)throw new SQLException("Accept the pending handover before closing the drawer.");
+        OverseasCashService.prepareClose(c,id,body);
         CashDrawerSession result=CashDrawerService.closeSession(c,id,count,text(body,"notes"),userId,userName);
         CashDrawerCountHistoryService.appendLifecycle(c,id,"CLOSE",body,userId,userName,deviceId,deviceName,text(body,"notes"));
         return map("session",result,"handlers",CashDrawerService.listCashHandlers(c,id),
@@ -99,7 +104,7 @@ final class LanCashDrawerService {
     }
     static Map<String,Object> saveDrawer(Connection c,JsonObject body,int userId)throws Exception{
         require(c,userId,"CASH_DRAWER_MANAGEMENT");DrawerRequest r=parse(body,DrawerRequest.class,"Cash drawer details are invalid.");
-        long id=CashDrawerService.saveDrawer(c,r.drawerId(),r.locationId(),r.drawerName(),r.description(),money(r.startingCashAmount()),r.floatMix(),r.active(),userId);return map("drawerId",id);
+        long id=CashDrawerService.saveDrawer(c,r.drawerId(),r.locationId(),r.drawerName(),r.description(),money(r.startingCashAmount()),r.floatMix(),r.active(),userId);if(body.has("handlesOverseasCash"))OverseasCashService.configure(c,id,r.handlesOverseasCash());return map("drawerId",id);
     }
     static Map<String,Object> assign(Connection c,JsonObject body,int userId)throws Exception{
         require(c,userId,"CASH_DRAWER_MANAGEMENT");CashDrawerService.assignDevice(c,requiredLong(body,"drawerId"),requiredInt(body,"locationId"),
@@ -129,6 +134,6 @@ final class LanCashDrawerService {
     private static <T>T parse(JsonObject b,Class<T>t,String message)throws RuleViolation{try{T r=GSON.fromJson(b,t);if(r==null)throw new IllegalArgumentException();return r;}catch(Exception e){throw rule(400,"VALIDATION_ERROR",message);}}
     private static Map<String,Object>map(Object...v){Map<String,Object>m=new LinkedHashMap<>();for(int i=0;i<v.length;i+=2)m.put((String)v[i],v[i+1]);return m;}
     private static RuleViolation rule(int s,String c,String m){return new RuleViolation(s,c,m);}
-    private record DrawerRequest(Long drawerId,int locationId,String drawerName,String description,BigDecimal startingCashAmount,Map<Integer,Integer>floatMix,boolean active){}
+    private record DrawerRequest(Long drawerId,int locationId,String drawerName,String description,BigDecimal startingCashAmount,Map<Integer,Integer>floatMix,boolean active,boolean handlesOverseasCash){}
     static final class RuleViolation extends Exception{private final int status;private final String code;private final String safeMessage;RuleViolation(int s,String c,String m){super(m);status=s;code=c;safeMessage=m;}int status(){return status;}String code(){return code;}String safeMessage(){return safeMessage;}}
 }

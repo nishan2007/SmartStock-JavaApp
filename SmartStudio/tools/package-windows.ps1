@@ -19,10 +19,22 @@ Copy-Item -LiteralPath $studioJar -Destination $studioInput
 $studioServerVersion = ($studioPom.project.dependencies.dependency | Where-Object { $_.artifactId -eq 'inventory-management' }).version
 $studioLibraries = Join-Path $studioInput 'lib'
 New-Item -ItemType Directory -Path $studioLibraries | Out-Null
-# Maven may retain dependencies from a previous build; package only the selected server client.
-Get-ChildItem -LiteralPath (Join-Path $studioTarget 'lib') -File | Where-Object {
-    $_.Name -notlike 'inventory-management-*.jar' -or $_.Name -eq "inventory-management-$studioServerVersion.jar"
-} | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $studioLibraries }
+# Maven retains obsolete JARs in target/lib. Copy only this build's resolved
+# manifest classpath, especially when the PDF engine changes dependency versions.
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$studioArchive=[IO.Compression.ZipFile]::OpenRead($studioJar)
+try {
+    $studioManifestReader=[IO.StreamReader]::new($studioArchive.GetEntry('META-INF/MANIFEST.MF').Open())
+    try {$studioManifest=$studioManifestReader.ReadToEnd() -replace '\r?\n ',''} finally {$studioManifestReader.Dispose()}
+} finally {$studioArchive.Dispose()}
+$studioClasspath=[regex]::Match($studioManifest,'(?m)^Class-Path: ([^\r\n]+)').Groups[1].Value
+if(!$studioClasspath){throw 'The packaged Studio JAR has no resolved dependency classpath.'}
+$studioResolved=@($studioClasspath.Split(' ',[StringSplitOptions]::RemoveEmptyEntries))
+if(@($studioResolved | Where-Object {$_ -like 'lib/inventory-management-*.jar'}).Count -ne 1 -or $studioResolved -notcontains "lib/inventory-management-$studioServerVersion.jar") {throw 'Manifest does not select the expected SmartStock client dependency.'}
+foreach($studioDependency in $studioResolved) {
+    if($studioDependency -notmatch '^lib/[A-Za-z0-9_.+-]+\.jar$'){throw 'Unsafe dependency path in Studio manifest.'}
+    Copy-Item -LiteralPath (Join-Path $studioTarget $studioDependency) -Destination $studioLibraries
+}
 # Use SmartStudio's own multi-size paintbrush icon for the executable and shortcuts.
 $studioIcon = Join-Path $studioRoot 'src/main/resources/gy/deckers/studio/icons/SmartStudio.ico'
 if (!(Test-Path -LiteralPath $studioIcon)) { throw 'Generate SmartStudio icons with tools/GenerateStudioIcons.java before packaging.' }

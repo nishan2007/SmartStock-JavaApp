@@ -1,0 +1,6 @@
+Editable WordArt for business cards and labels: curves, gradients, outlines,
+shadows, fonts and independently movable text layers.
+NFC employee badge login through the existing paired SmartStock server, with
+store PIN policy and first-use employee PIN setup.
+Physical NFC login requires a compatible connected PC/SC reader and encoded
+employee badge. Exact Publisher WordArt effect reconstruction is not guaranteed.

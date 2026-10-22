@@ -9,7 +9,7 @@ $taskCache=Join-Path $taskRoot 'target/directml-cache'
 $taskOutput=Join-Path $taskRoot 'target/native-resources/studio-directml'
 New-Item -ItemType Directory -Force -Path $taskCache,$taskOutput | Out-Null
 $packages=@(
-    @{id='microsoft.ml.onnxruntime.directml';version='1.23.0';hash='a33ec2382b3c440bab74042a135733bb6e5085f293b908d3997688a58fe307e7'},
+    @{id='microsoft.ml.onnxruntime.directml';version='1.24.4';hash='57e9f11b73437bef7a309496135d4c1f96b1a8e9ddba60013fa27bfc1d788681'},
     @{id='microsoft.ai.directml';version='1.15.4';hash='4e7cb7ddce8cf837a7a75dc029209b520ca0101470fcdf275c1f49736a3615b9'})
 foreach($package in $packages){
     $archive=Join-Path $taskCache ($package.id+'.zip')

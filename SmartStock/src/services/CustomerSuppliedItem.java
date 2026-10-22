@@ -29,7 +29,7 @@ public record CustomerSuppliedItem(String itemType, String color, String size, S
         if (line.customerItem() == null) return;
         if (line.customerItem().itemType() == null || line.customerItem().itemType().isBlank())
             throw new IllegalArgumentException("Enter an item type.");
-        if (line.customItemId() != null || line.customVariantId() != null)
+        if (line.customItemId() != null || line.customVariantId() != null || line.inventoryProductId() != null)
             throw new IllegalArgumentException("Customer items cannot reference store stock.");
         if (nonzero(line.baseItemPrice()) || nonzero(line.originalBasePrice()) || nonzero(line.areaPrice())
                 || line.priceOverridePrice() != null || (line.priceOverrideReason() != null && !line.priceOverrideReason().isBlank()))

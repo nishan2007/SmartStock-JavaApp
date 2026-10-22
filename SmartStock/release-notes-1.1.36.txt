@@ -1,0 +1,2 @@
+Adds filled editable cylinder rendering for Publisher imports and preserves
+external WordArt outline bounds. Supports SmartStudio 0.1.23 appearance fixes.

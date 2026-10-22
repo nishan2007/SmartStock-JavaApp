@@ -808,7 +808,13 @@ public class EnterInventory extends JFrame {
                     throw new IllegalArgumentException("Total to add cannot exceed 1,000,000 units for "
                             + inventoryModel.getValueAt(i, 2) + ".");
                 }
-                lines.add(new LanApiClient.ReceiveInventoryLine(itemType, itemId, countedStock, (int) totalToAdd));
+                String lossReason=null,lossNotes=null;
+                if(countedStock<parseInt(inventoryModel.getValueAt(i,6),0)){
+                    JComboBox<String> reasons=new JComboBox<>(new String[]{"Unexplained Shortage","Suspected Theft","Damage","Counting Error","Other"});
+                    if(JOptionPane.showConfirmDialog(this,reasons,"Loss reason — "+inventoryModel.getValueAt(i,2),JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE)!=JOptionPane.OK_OPTION)return;
+                    lossReason=(String)reasons.getSelectedItem();
+                }
+                lines.add(new LanApiClient.ReceiveInventoryLine(itemType,itemId,countedStock,(int)totalToAdd,lossReason,lossNotes,parseInt(inventoryModel.getValueAt(i,6),0)));
             }
 
             LanApiClient.ReceiveInventoryRequest request = new LanApiClient.ReceiveInventoryRequest(
@@ -852,47 +858,17 @@ public class EnterInventory extends JFrame {
             return null;
         }
 
-        String summary = stockOverrideSummary();
         if (currentUserHasPermission("RECEIVING_STOCK_OVERRIDE")) {
-            JTextArea reasonArea = new JTextArea(4, 32);
-            reasonArea.setLineWrap(true);
-            reasonArea.setWrapStyleWord(true);
-
-            JPanel panel = new JPanel(new BorderLayout(6, 6));
-            panel.add(new JLabel("<html>Confirm counted shelf/storage stock before receiving:<br>" + summary + "</html>"), BorderLayout.NORTH);
-            panel.add(new JScrollPane(reasonArea), BorderLayout.CENTER);
-
-            int result = JOptionPane.showConfirmDialog(
-                    this,
-                    panel,
-                    "Receiving Stock Override",
-                    JOptionPane.OK_CANCEL_OPTION,
-                    JOptionPane.WARNING_MESSAGE
-            );
-            if (result != JOptionPane.OK_OPTION) {
-                return null;
-            }
-
-            String reason = reasonArea.getText() == null ? "" : reasonArea.getText().trim();
-            if (reason.isBlank()) {
-                JOptionPane.showMessageDialog(this, "A stock override reason is required.", "Reason Required", JOptionPane.WARNING_MESSAGE);
-                return null;
-            }
-
-            return new StockOverrideAuthorization(
-                    SessionManager.getCurrentUserId(),
-                    SessionManager.getCurrentUserDisplayName(),
-                    reason,
-                    null
-            );
+            return new StockOverrideAuthorization(SessionManager.getCurrentUserId(),
+                    SessionManager.getCurrentUserDisplayName(), "Physical stock count correction", null);
         }
 
         try {
-            ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApproval(
+            ManagerApprovalService.ApprovalResult approval = ManagerApprovalService.requestApprovalWithReason(
                     this,
                     "RECEIVING_STOCK_OVERRIDE",
                     "Receiving Stock Override",
-                    "Reason for correcting counted shelf/storage stock:"
+                    "Physical stock count correction"
             );
             if (approval == null) {
                 return null;

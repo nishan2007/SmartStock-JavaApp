@@ -36,6 +36,12 @@ public final class CurrencyFormatter {
         return roundToIncrement(value, BigDecimal.valueOf(20));
     }
 
+    /** Apply custom-order rounding once, after summing discounted unit prices. */
+    public static BigDecimal customOrderTotal(BigDecimal subtotal, boolean round) {
+        BigDecimal amount = normalize(subtotal);
+        return round ? roundToNearestTwenty(amount) : amount;
+    }
+
     public static String format(BigDecimal value) {
         return create().format(normalize(value));
     }

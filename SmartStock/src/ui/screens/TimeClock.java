@@ -55,6 +55,8 @@ public class TimeClock extends JFrame {
     private JButton breakStartButton;
     private JButton breakEndButton;
     private JButton clockOutButton;
+    private JButton halfDayButton;
+    private TimeClockRow halfDayRow;
     private JButton refreshButton;
     private JButton autoClockOutReviewsButton;
     private JLabel autoClockOutNoticeLabel;
@@ -79,6 +81,9 @@ public class TimeClock extends JFrame {
     private JLabel monthDaysLabel;
     private javax.swing.Timer sessionTimer;
     private javax.swing.Timer pulseTimer;
+    private javax.swing.Timer dashboardRefreshTimer;
+    private final java.util.concurrent.atomic.AtomicBoolean dashboardLoading =
+            new java.util.concurrent.atomic.AtomicBoolean();
 
     private static final Color EMPLOYEE_ACCENT = DeckersPalette.YELLOW;
 
@@ -90,6 +95,7 @@ public class TimeClock extends JFrame {
     private YearMonth currentMonth;
     private List<TimeClockRow> allRows = new ArrayList<>();
     private Map<LocalDate, DayData> dayDataMap = new HashMap<>();
+    private LocalDate selectedDate;
     private Map<LocalDate, Holiday> holidays = Map.of();
     private LocalDateTime currentClockIn;
     private LocalDateTime currentLunchStart;
@@ -226,6 +232,9 @@ public class TimeClock extends JFrame {
         actionPanel.add(breakStartButton);
         actionPanel.add(breakEndButton);
         actionPanel.add(clockOutButton);
+        halfDayButton=createActionButton("Half Day", DeckersPalette.ORANGE);
+        halfDayButton.setVisible(false);
+        actionPanel.add(halfDayButton);
         actionPanel.add(refreshButton);
         if (PermissionManager.hasPermission("TIME_CLOCK_MANAGEMENT")) {
             autoClockOutReviewsButton = createStyledButton("Time Clock Reviews", DeckersPalette.ORANGE);
@@ -374,6 +383,20 @@ public class TimeClock extends JFrame {
         add(mainPanel, BorderLayout.CENTER);
 
         wireActions();
+        dashboardRefreshTimer = new javax.swing.Timer(30_000, e -> {
+            if (isShowing() && !dashboardLoading.get()) loadTimeClock();
+        });
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override public void windowOpened(java.awt.event.WindowEvent event) {
+                dashboardRefreshTimer.start();
+            }
+
+            @Override public void windowClosed(java.awt.event.WindowEvent event) {
+                dashboardRefreshTimer.stop();
+                stopSessionTimer();
+                stopPulseAnimation();
+            }
+        });
         loadTimeClock();
         WindowHelper.configurePosWindow(this);
     }
@@ -465,6 +488,19 @@ public class TimeClock extends JFrame {
         breakStartButton.addActionListener(e -> runPunch(TimeClockManager::breakStart, "Failed to start break."));
         breakEndButton.addActionListener(e -> runPunch(TimeClockManager::breakEnd, "Failed to end break."));
         clockOutButton.addActionListener(e -> runPunch(TimeClockManager::clockOut, "Failed to clock out."));
+        halfDayButton.addActionListener(e -> {
+            TimeClockRow row=halfDayRow;if(row==null)return;
+            halfDayButton.setEnabled(false);
+            new SwingWorker<Void,Void>() {
+                @Override protected Void doInBackground()throws Exception {
+                    services.LanApiClient.setDailyHalfDay(row.userId(),row.workDate(),true,false,java.util.UUID.randomUUID().toString());return null;
+                }
+                @Override protected void done(){
+                    try{get();}catch(Exception ex){JOptionPane.showMessageDialog(TimeClock.this,ex.getCause()==null?ex.getMessage():ex.getCause().getMessage(),"Unable to Mark Half Day",JOptionPane.ERROR_MESSAGE);}
+                    loadTimeClock();
+                }
+            }.execute();
+        });
         refreshButton.addActionListener(e -> loadTimeClock());
         if (autoClockOutReviewsButton != null) {
             autoClockOutReviewsButton.addActionListener(e -> showAutoClockOutReviews());
@@ -555,7 +591,14 @@ public class TimeClock extends JFrame {
         String cacheKey = timeClockCacheKey(SessionManager.getCurrentUserId(),
                 SessionManager.getCurrentLocationId(), month);
         CachedUiLoader.load(this, "time-clock.load", cacheKey, TimeClockSnapshot.class, SessionDataCache.SCREEN_TTL,
-                loadingState, () -> loadTimeClockSnapshot(month, loadReviews), this::applyTimeClockSnapshot);
+                loadingState, () -> {
+                    dashboardLoading.set(true);
+                    try {
+                        return loadTimeClockSnapshot(month, loadReviews);
+                    } finally {
+                        dashboardLoading.set(false);
+                    }
+                }, this::applyTimeClockSnapshot);
     }
 
     private TimeClockSnapshot loadTimeClockSnapshot(YearMonth month, boolean loadReviews) throws SQLException {
@@ -576,9 +619,21 @@ public class TimeClock extends JFrame {
                 .toList();
         holidays = snapshot.holidays();
         updateClockStatus(dashboard.status());
+        halfDayRow=allRows.stream().filter(row -> "DAILY".equalsIgnoreCase(row.compensationType())
+                && row.shiftClockOut()!=null && row.workDate().equals(LocalDate.now(java.time.ZoneId.of(
+                    java.util.Objects.requireNonNullElse(SessionManager.getCurrentLocationTimezone(),"America/Guyana"))))
+                && row.dailyHours().signum()>0).findFirst().orElse(null);
+        boolean completed=dashboard.status().state()==ClockState.CLOCKED_OUT
+                || dashboard.status().state()==ClockState.NOT_CLOCKED_IN;
+        halfDayButton.setVisible(completed && halfDayRow!=null);
+        halfDayButton.setText(halfDayRow!=null&&halfDayRow.halfDay()?"Half Day Marked":"Half Day");
+        halfDayButton.setEnabled(completed&&halfDayRow!=null&&!halfDayRow.halfDay());
         updateCurrentSession();
         processDayData();
         renderCalendar();
+        if (selectedDate != null) {
+            showDayDetails(selectedDate, dayDataMap.getOrDefault(selectedDate, new DayData()));
+        }
         applyAutoClockOutNotice(snapshot.notice(), snapshot.reviewCount());
         applyAutomaticBreakNotice();
     }
@@ -1063,6 +1118,7 @@ public class TimeClock extends JFrame {
     }
 
     private void showDayDetails(LocalDate date, DayData dayData) {
+        selectedDate = date;
         detailsModel.setRowCount(0);
 
         BigDecimal totalHours = BigDecimal.ZERO;

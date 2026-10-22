@@ -201,7 +201,7 @@ public final class ServerCustomOrderDataService {
                 SELECT customer_id, name, phone,
                        COALESCE(account_number,'') AS account_number,
                        COALESCE(email,'') AS email,COALESCE(require_charge_authorization,FALSE) AS require_charge_authorization,
-                       COALESCE(custom_order_discount_enabled,FALSE),COALESCE(custom_order_discount_percent,0)
+                       COALESCE(custom_order_discount_enabled,FALSE),COALESCE(custom_order_discount_percent,0),custom_order_deposit_exempt
                 FROM customer_accounts
                 WHERE is_active = TRUE
                   AND (? = '' OR name ILIKE ? OR COALESCE(phone, '') ILIKE ? OR COALESCE(email,'') ILIKE ? OR COALESCE(account_number,'') ILIKE ?)
@@ -222,7 +222,7 @@ public final class ServerCustomOrderDataService {
                             rs.getString("name"),
                             rs.getString("phone"),
                             rs.getString("account_number"),
-                            rs.getString("email"),rs.getBoolean("require_charge_authorization"),rs.getBoolean(7),rs.getBigDecimal(8)
+                            rs.getString("email"),rs.getBoolean("require_charge_authorization"),rs.getBoolean(7),rs.getBigDecimal(8),rs.getBoolean(9)
                     ));
                 }
             }
@@ -270,10 +270,14 @@ public final class ServerCustomOrderDataService {
             updateCustomerPhone(conn, selectedCustomer.customerId(), phone);
             return selectedCustomer.customerId();
         }
+        // A typed contact is not a selection of an existing financial account.
+        // Reject duplicates instead of silently creating (or charging) another account.
+        CustomerPhoneOwnership.requireAvailable(conn, phone, null);
         return createGeneralCustomerAccount(conn, name, phone);
     }
 
     private static void updateCustomerPhone(Connection conn, int customerId, String phone) throws SQLException {
+        CustomerPhoneOwnership.requireAvailable(conn, phone, customerId);
         String sql = "UPDATE customer_accounts SET phone = ? WHERE customer_id = ?";
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, phone);
@@ -325,9 +329,9 @@ public final class ServerCustomOrderDataService {
                     line_discount_by_user_id, line_discount_by_name, line_discount_reason,
                     minimum_deposit_percent, original_base_price, price_override_price,
                     price_override_reason, price_override_by_user_id, price_override_by_name,
-                    item_size, item_color
+                    item_size, item_color, inventory_product_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
         String addonSql = """
                 INSERT INTO custom_order_line_print_addons (
@@ -530,6 +534,7 @@ public final class ServerCustomOrderDataService {
                     linePs.setString(36, blankToNull(line.priceOverrideByName()));
                     linePs.setString(37, attributes.size());
                     linePs.setString(38, attributes.color());
+                    setNullableInteger(linePs,39,line.inventoryProductId());
                     linePs.executeUpdate();
 
                     long lineId;
@@ -540,6 +545,7 @@ public final class ServerCustomOrderDataService {
                         lineId = lineKeys.getLong(1);
                     }
                     insertReservationIfInventory(conn, orderId, lineId, line);
+                    CustomOrderInventoryService.consume(conn,orderId,lineId,line.inventoryProductId(),request.locationId(),request.takenByUserId(),request.takenByName(),request.deviceId(),request.deviceName());
 
                     int addonSortOrder = 1;
                     for (PrintAddonRequest addon : line.printAddons()) {
@@ -727,7 +733,7 @@ public final class ServerCustomOrderDataService {
                            20 AS rank
                     FROM custom_order_items coi
                     WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
-                      AND UPPER(COALESCE(coi.sku, '')) = UPPER(?)
+                      AND REGEXP_REPLACE(UPPER(COALESCE(coi.sku, '')), '[[:space:]-]+', '', 'g') = ANY (?::text[])
                     UNION ALL
                     SELECT coiv.custom_item_id,
                            coiv.custom_variant_id,
@@ -736,14 +742,14 @@ public final class ServerCustomOrderDataService {
                     JOIN custom_order_items coi ON coi.custom_item_id = coiv.custom_item_id
                     WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
                       AND coiv.is_active = TRUE
-                      AND UPPER(COALESCE(coiv.sku, '')) = UPPER(?)
+                      AND REGEXP_REPLACE(UPPER(COALESCE(coiv.sku, '')), '[[:space:]-]+', '', 'g') = ANY (?::text[])
                     UNION ALL
                     SELECT coi.custom_item_id,
                            NULL::BIGINT AS custom_variant_id,
                            30 AS rank
                     FROM custom_order_items coi
                     WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
-                      AND UPPER(COALESCE(coi.barcode, '')) = UPPER(?)
+                      AND REGEXP_REPLACE(UPPER(COALESCE(coi.barcode, '')), '[[:space:]-]+', '', 'g') = ANY (?::text[])
                     UNION ALL
                     SELECT coib.custom_item_id,
                            NULL::BIGINT AS custom_variant_id,
@@ -751,7 +757,7 @@ public final class ServerCustomOrderDataService {
                     FROM custom_order_item_barcodes coib
                     JOIN custom_order_items coi ON coi.custom_item_id = coib.custom_item_id
                     WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
-                      AND UPPER(coib.barcode) = UPPER(?)
+                      AND REGEXP_REPLACE(UPPER(coib.barcode), '[[:space:]-]+', '', 'g') = ANY (?::text[])
                     UNION ALL
                     SELECT coiv.custom_item_id,
                            coiv.custom_variant_id,
@@ -760,7 +766,7 @@ public final class ServerCustomOrderDataService {
                     JOIN custom_order_items coi ON coi.custom_item_id = coiv.custom_item_id
                     WHERE coi.is_active = TRUE AND coi.is_archived=FALSE
                       AND coiv.is_active = TRUE
-                      AND UPPER(COALESCE(coiv.barcode, '')) = UPPER(?)
+                      AND REGEXP_REPLACE(UPPER(COALESCE(coiv.barcode, '')), '[[:space:]-]+', '', 'g') = ANY (?::text[])
                     UNION ALL
                     SELECT coiv.custom_item_id,
                            coiv.custom_variant_id,
@@ -769,7 +775,7 @@ public final class ServerCustomOrderDataService {
                     JOIN custom_order_item_variants coiv ON coiv.custom_variant_id=coivb.custom_variant_id
                     JOIN custom_order_items coi ON coi.custom_item_id=coiv.custom_item_id
                     WHERE coi.is_active=TRUE AND coi.is_archived=FALSE AND coiv.is_active=TRUE
-                      AND UPPER(coivb.barcode)=UPPER(?)
+                      AND REGEXP_REPLACE(UPPER(coivb.barcode), '[[:space:]-]+', '', 'g') = ANY (?::text[])
                     UNION ALL
                     SELECT coi.custom_item_id,
                            NULL::BIGINT AS custom_variant_id,
@@ -804,7 +810,7 @@ public final class ServerCustomOrderDataService {
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setQueryTimeout(10);
             for (int i = 1; i <= 6; i++) {
-                ps.setString(i, value);
+                ps.setArray(i, conn.createArrayOf("text", (i<=2&&!BarcodeNormalizer.normalize(value).isEmpty()?List.of(BarcodeNormalizer.normalize(value)):BarcodeNormalizer.lookupCandidates(value)).toArray(String[]::new)));
             }
             int parameterIndex = ProductSearchHelper.bindTokens(ps, 7, value);
             ProductSearchHelper.bindTokens(ps, parameterIndex, value);
@@ -878,7 +884,8 @@ public final class ServerCustomOrderDataService {
         }
     }
 
-    public record CustomerOption(Integer customerId, String name, String phone, String accountNumber, String email,boolean requireChargeAuthorization,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent) {
+    public record CustomerOption(Integer customerId, String name, String phone, String accountNumber, String email,boolean requireChargeAuthorization,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent,boolean customOrderDepositExempt) {
+        public CustomerOption(Integer customerId,String name,String phone,String accountNumber,String email,boolean requireChargeAuthorization,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent){this(customerId,name,phone,accountNumber,email,requireChargeAuthorization,customOrderDiscountEnabled,customOrderDiscountPercent,false);}
         public CustomerOption(Integer customerId,String name,String phone,String accountNumber,String email){this(customerId,name,phone,accountNumber,email,false,false,BigDecimal.ZERO);}
         public CustomerOption(Integer customerId,String name,String phone,String accountNumber,String email,boolean requireChargeAuthorization){this(customerId,name,phone,accountNumber,email,requireChargeAuthorization,false,BigDecimal.ZERO);}
         @Override
@@ -995,7 +1002,47 @@ public final class ServerCustomOrderDataService {
             String priceOverrideApprovalToken,
             String itemSize,
             String itemColor
-    , CustomerSuppliedItem customerItem) {
+    , CustomerSuppliedItem customerItem, Integer inventoryProductId) {
+        public OrderLineRequest(
+            Long customItemId,
+            Long customVariantId,
+            String itemName,
+            String variantName,
+            String pricingType,
+            BigDecimal unitPrice,
+            String customizationDetails,
+            String orderInstructions,
+            BigDecimal widthValue,
+            BigDecimal lengthValue,
+            String dimensionUnit,
+            BigDecimal areaValue,
+            String areaUnit,
+            BigDecimal areaPrice,
+            BigDecimal baseItemPrice,
+            Long printMaterialId,
+            String printMaterialName,
+            Long printSizePresetId,
+            String printSizeName,
+            BigDecimal printCharge,
+            int printLineCount,
+            BigDecimal originalLineTotal,
+            BigDecimal lineDiscountPercent,
+            BigDecimal lineDiscountAmount,
+            Integer lineDiscountByUserId,
+            String lineDiscountByName,
+            String lineDiscountReason,
+            BigDecimal minimumDepositPercent,
+            BigDecimal originalBasePrice,
+            BigDecimal priceOverridePrice,
+            String priceOverrideReason,
+            Integer priceOverrideByUserId,
+            String priceOverrideByName,
+            List<PrintAddonRequest> printAddons,
+            String lineDiscountApprovalToken,
+            String priceOverrideApprovalToken,
+            String itemSize,
+            String itemColor
+    , CustomerSuppliedItem customerItem) { this(customItemId,customVariantId,itemName,variantName,pricingType,unitPrice,customizationDetails,orderInstructions,widthValue,lengthValue,dimensionUnit,areaValue,areaUnit,areaPrice,baseItemPrice,printMaterialId,printMaterialName,printSizePresetId,printSizeName,printCharge,printLineCount,originalLineTotal,lineDiscountPercent,lineDiscountAmount,lineDiscountByUserId,lineDiscountByName,lineDiscountReason,minimumDepositPercent,originalBasePrice,priceOverridePrice,priceOverrideReason,priceOverrideByUserId,priceOverrideByName,printAddons,lineDiscountApprovalToken,priceOverrideApprovalToken,itemSize,itemColor,customerItem,null); }
         public OrderLineRequest(
             Long customItemId,
             Long customVariantId,

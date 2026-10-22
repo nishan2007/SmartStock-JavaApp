@@ -1,0 +1,5 @@
+SmartStudio 0.1.66 — Combined Windows update
+
+Adds optional 2 mm passport photo bleed and trim marks in preview and print, preserving finished photo dimensions and face framing. Includes independent sheet margins, template-only printing, numbering direction and cut-and-stack, editable template repairs and all current Studio changes.
+
+Build 1066. Uses SmartStock shared client 1.1.74. Physical printing requires a proof.

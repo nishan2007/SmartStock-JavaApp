@@ -1,0 +1,8 @@
+SmartStock 1.1.56 (Windows build 101056)
+
+- Browser Image Studio now defaults to GPU preferred, retaining CPU fallback.
+- Includes the current cumulative store/server changes from 1.1.55: custom-item saved pricing and Called / Called - No Answer tracking, plus the existing shared template/submission, photo queue, account, synchronization and recovery features.
+- Companion PICS gateway update adds activation within home-screen apps, camera QR pairing, a PICS icon and standalone launch metadata.
+- AI model weights are unchanged and remain outside application updates and installers.
+
+Update the store server before registers and SmartStudio. Physical printers, phone cameras, live database migrations and installed upgrade/rollback require separate acceptance. No macOS artifact is included.

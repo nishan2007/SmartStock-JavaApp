@@ -87,6 +87,7 @@ public class ReceiptFormatter {
         if (receipt.getVatAmount().compareTo(BigDecimal.ZERO) > 0) {
             appendPair(builder, vatLabel(receipt), money(receipt.getVatAmount()), width);
         }
+        if(!receipt.getLoyaltySummary().isBlank())for(String line:receipt.getLoyaltySummary().split("\n")){while(line.length()>width){int cut=line.lastIndexOf(' ',width);if(cut<1)cut=width;appendCentered(builder,line.substring(0,cut),width);line=line.substring(cut).trim();}appendCentered(builder,line,width);}
         appendPair(builder, "Total", money(receipt.getTotalAmount()), width);
         if(settings.visibility().showPayment())appendPair(builder, "Payment", receipt.getPaymentMethod(), width);
         if (settings.showPaymentStatus()) {
@@ -103,6 +104,14 @@ public class ReceiptFormatter {
         builder.append(repeat("-", width)).append('\n');
         appendCentered(builder, settings.footerLine(), width);
         if(settings.visibility().showPoweredBy())appendCentered(builder, "Powered by SmartStock", width);
+        if("ACCOUNT".equalsIgnoreCase(receipt.getPaymentMethod())){
+            builder.append('\n');
+            appendPair(builder,"Account balance",receipt.getAccountBalance()==null?"Unavailable":money(receipt.getAccountBalance()),width);
+            if(!receipt.getRepresentativeName().isBlank()){
+                builder.append("\n\n\n").append(repeat("_",width)).append('\n');
+                appendCentered(builder,"Signature",width);
+            }
+        }
         return builder.toString();
     }
 

@@ -1,0 +1,3 @@
+# SmartStudio 0.1.32: resizable inspector
+
+Replaces the fixed-width right inspector with a continuously draggable split pane in the shared workspace shell. Keeps a minimum canvas and inspector width, remembers panel width across hide/reopen, and keeps hidden editor controls attached. The initial implementation detached hidden controls and exposed a test lookup failure; corrected before installation. All 90 tests passed, including resizing and hide/reopen width retention. Installed local main JAR with configuration backup; native launcher passed. Existing windows preserved and SmartStock not restarted. Not published.

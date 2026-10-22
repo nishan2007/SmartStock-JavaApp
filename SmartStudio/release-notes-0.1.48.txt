@@ -1,0 +1,2 @@
+SmartStudio 0.1.48
+Add text field and Bind selected text support Full name, ID number and custom entry fields. Choosing a photo clears previous entries and opens the details form. Optional per-template print records save details and original photos; admin history loads them into the current template format. Add shared badge template deletion; includes prepared Labels and Business Cards deletion controls. Requires SmartStock server 1.1.53 for record history.

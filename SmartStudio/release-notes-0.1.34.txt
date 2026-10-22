@@ -1,0 +1,1 @@
+Fixes Publisher/Draw/PowerPoint image-layer export silently falling back to 96 DPI. Passes typed LibreOffice export settings so new imports use the requested 300 DPI resolution. Original source files and editable text/layout are preserved.

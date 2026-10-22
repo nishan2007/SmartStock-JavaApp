@@ -1,0 +1,9 @@
+SmartStock 1.1.46
+
+Adds Server Handoff under Company Preferences > Backups. An authorized local administrator can save a baseline, compare the replacement server's database counts and selected asset hashes, and share a read-only diagnostic snapshot over a temporary internet connection. Links expire after 30 minutes and can be revoked. Automated matches are partial evidence; physical hardware, record contents, credentials and startup still need verification.
+
+Includes content-preservation checks for open drawer sessions, cash activity, register authorization and permissions. Reports flag missing continuity evidence, changed server identity and register credentials needing recovery before the handoff is accepted.
+
+Improves SmartStudio background-removal processing on the server with reusable model sessions, DirectML GPU acceleration with CPU fallback, and memory-aware Best-quality queue preparation. Original photos remain available. Actual Best-model speed depends on hardware and free memory; no fixed processing-time target is claimed.
+
+AI models remain outside the application installer and updater. This update does not rename computers, transfer the database, or perform the server handoff automatically.

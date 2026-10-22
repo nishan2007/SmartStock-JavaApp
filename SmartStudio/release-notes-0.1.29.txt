@@ -1,0 +1,1 @@
+Makes Letter the default sheet for business cards, labels and badge print dialogs. Imported template sheet metadata no longer switches the workspace back to A4. Card artwork dimensions stay unchanged; other sheet sizes remain manually selectable.

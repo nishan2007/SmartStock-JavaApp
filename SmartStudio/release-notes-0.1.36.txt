@@ -1,0 +1,10 @@
+SmartStudio 0.1.36 includes the editor and printing improvements since 0.1.28:
+- Letter paper defaults for cards, labels and badges.
+- Working design undo/redo shortcuts and buttons.
+- Scalable, scrollable page thumbnails for multipage templates.
+- Resizable Details/Properties/Insert/Layers panel.
+- Text formatting toolbar: font, size, bold, italic, underline, strike, colour and outline.
+- Publisher image-layer imports retain the requested 300 DPI resolution.
+- Automatic NFC badge listening on the login screen, with PIN-policy enforcement and held-card suppression.
+- Select all, current or individual template pages to print. Every job defaults to single-sided; optional front/back pairing supports long- or short-edge flipping and previews the backs.
+Update the store server to SmartStock 1.1.40 first for the badge-login credential fix and sharing badges with the new text styles. Physical reader and printer checks remain necessary. Template image improvements already saved to the shared server are independent of the application installer. OneDrive backup configuration still needs attention.

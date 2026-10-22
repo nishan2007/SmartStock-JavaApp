@@ -1,0 +1,1 @@
+Adds an optional per-object raster effect hook to the shared publication renderer for SmartStudio's job-only Risograph image-to-ink assignments. The normal canvas, printing and publication data remain unchanged when no raster effect is requested. SmartStudio 0.1.42 uses this matching client library; this feature does not require a new store-server API or database migration.

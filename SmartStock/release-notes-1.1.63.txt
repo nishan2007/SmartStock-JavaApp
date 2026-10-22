@@ -1,0 +1,12 @@
+SmartStock 1.1.63 (Windows build 101063)
+
+- Adds Overseas Orders on desktop and authenticated phones: customer lookup, screenshots, saved sellers, item pricing, a guided quote/cart workflow and store destinations.
+- Supports instalments, receipts, ordered/arrival tracking, partial collections, audited corrections and refunds. Final collection requires full payment.
+- Adds optional separate overseas cash per drawer, closing counts with variance reasons, receipt reprints, and a separate store cash fund with its own receipts, withdrawals and balances.
+- Reuses unique customer phone ownership and adds automatic existing-account lookup to custom orders.
+- Adds the overseas-only phone entry point at https://overseasshipping.deckers.gy using the existing employee activation/login gateway and local store authority.
+- Retains the cumulative current application changes, including employee-web timestamp corrections from 1.1.62.
+- AI weights remain outside updates/installers. Runtime and notices remain included.
+
+Update the store server first, then registers. Phone quoting needs the updated server and employee browser activation. Enable separate overseas cash only on the desired drawers after closing their current session.
+Live database/service upgrades, real-phone activation, receipt printers, drawer hardware and installed upgrade/rollback require separate store acceptance.

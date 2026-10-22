@@ -1,0 +1,5 @@
+SmartStock 1.1.74 — Combined Windows update
+
+Includes all current application changes: Photo Studio approved-photo filter and hidden count, shared print-engine position ordering and cut-and-stack, plus the receiving-loss ledger and other features from preceding releases.
+
+Build 101074. Update the store server before registers. AI models remain separate.

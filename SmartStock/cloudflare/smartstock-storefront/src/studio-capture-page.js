@@ -1,0 +1,19 @@
+export const capturePage=String.raw`<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SmartStudio · Take photo</title>
+<style>body{margin:0;background:#f4f3f8;color:#242035;font:17px system-ui}main{max-width:480px;margin:32px auto;padding:24px}h1{font-size:30px}p{line-height:1.5}section{background:white;border-radius:20px;padding:24px;box-shadow:0 8px 32px #24153612}button,label{display:block;border:0;border-radius:12px;background:#7133a8;color:white;padding:15px;margin:14px 0;text-align:center;font:inherit;cursor:pointer}label.secondary{background:#ece5f4;color:#53237e}button{width:100%}button:disabled{opacity:.5}img{width:100%;max-height:420px;object-fit:contain;border-radius:12px}[hidden]{display:none!important}small{color:#625b70}</style>
+<main><small>DECKERS · SMARTSTUDIO</small><h1>Take a passport photo</h1><section><p id="status" role="status" aria-live="polite">Take a clear photo against a plain background. It will appear in the open template on the computer.</p><div id="controls"><img id="preview" alt="Photo preview" hidden><label>Take photo<input id="camera" type="file" accept="image/*" capture="environment" hidden></label><label class="secondary">Choose from Photos<input id="library" type="file" accept="image/*" hidden></label><button id="send" disabled>Use photo</button></div></section><p><small>This private link expires after 15 minutes. The photo is removed from the relay after the computer receives it, or when the link expires.</small></p></main>
+<script>
+const params=new URLSearchParams(location.hash.slice(1)),id=params.get('id'),instance=params.get('instance'),token=params.get('token');
+history.replaceState(null,'',location.pathname);
+const status=document.getElementById('status'),preview=document.getElementById('preview'),send=document.getElementById('send'),controls=document.getElementById('controls');let file,url;
+if(!id||!instance||!token){status.textContent='This photo link is incomplete. Scan a new QR code on the computer.';controls.hidden=true;}
+function choose(e){file=e.target.files[0];if(!file)return;if(url)URL.revokeObjectURL(url);url=URL.createObjectURL(file);preview.src=url;preview.hidden=false;send.disabled=false;status.textContent='Review the photo, then tap Use photo to send it to the computer.';}
+document.getElementById('camera').onchange=choose;document.getElementById('library').onchange=choose;
+send.onclick=async()=>{if(!file)return;send.disabled=true;status.textContent='Sending photo…';try{
+ const image=new Image();image.src=url;await image.decode();const scale=Math.min(1,1600/Math.max(image.naturalWidth,image.naturalHeight));
+ const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));const g=canvas.getContext('2d');g.fillStyle='white';g.fillRect(0,0,canvas.width,canvas.height);g.drawImage(image,0,0,canvas.width,canvas.height);
+ let blob=await new Promise(ok=>canvas.toBlob(ok,'image/jpeg',.92));if(!blob||blob.size>2097152)blob=await new Promise(ok=>canvas.toBlob(ok,'image/jpeg',.78));if(!blob||blob.size>2097152)throw Error('Choose a smaller photo.');
+ const response=await fetch('/shop/studio-capture/upload?id='+encodeURIComponent(id)+'&instance='+encodeURIComponent(instance),{method:'POST',headers:{'Content-Type':'image/jpeg',Authorization:'Bearer '+token},body:blob,signal:AbortSignal.timeout(45000)});
+ const result=await response.json();if(!response.ok)throw Error(result.message||'Could not send photo.');controls.hidden=true;status.textContent='Photo sent. Return to the computer to adjust the crop and print.';
+}catch(e){status.textContent=e.name==='TimeoutError'?'The connection timed out. Check the computer before trying again.':e.message;send.disabled=false;}};
+</script></html>`;

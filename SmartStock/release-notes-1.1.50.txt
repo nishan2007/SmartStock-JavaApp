@@ -1,0 +1,7 @@
+SmartStock 1.1.50
+
+- Photo queue uploads offer a Remove background after upload checkbox, enabled by default. Selected photos start preparation as soon as they reach the store; unchecked photos keep their original background. Originals remain available.
+- Custom-order attachments accept copied images and files with Paste or Ctrl+V, including images copied from WhatsApp Web.
+- Customer phone numbers cannot be reused for another account. Administrators can preview and merge accounts with matching names and phone numbers, updating their orders, payments and other references together.
+
+Update the store server first, then registers. AI models remain separate from this update.

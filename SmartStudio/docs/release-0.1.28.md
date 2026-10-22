@@ -1,0 +1,11 @@
+# SmartStudio 0.1.28: local library visibility during server rollout
+
+SmartStudio 0.1.27 switched the business-card/label picker to the shared cache while the installed SmartStock server remained 1.1.35. This hid existing local designs before the server update and migration could run.
+
+The picker now retains cached shared designs and adds explicitly labeled local designs when the server is offline/older or the shared cache is empty. Local files remain editable. Shared saves and store sharing still require the updated server. Successful migration returns the picker to the shared store views.
+
+Validation: all 86 SmartStudio tests passed, including the old-server/offline/empty-cache regression. An isolated probe using the exact 1.1.38 dependency found 72 business cards (104 pages, 554 objects) and 42 labels (298 pages, 7,448 objects), verified every archive opens, and confirmed all 114 are selectable with a failed server connection. A first probe accidentally loaded an older retained Maven dependency; rerunning with the selected dependency explicitly first passed. No source templates were modified.
+
+Installed the exact 0.1.28 main JAR and updated launcher configuration in the existing local SmartStudio installation, preserving the prior JAR and backing up the configuration. The installed native launcher check passed. The existing running SmartStudio window was left open to protect unsaved work; reopening SmartStudio loads the fix. SmartStock was not changed or restarted. No 0.1.28 release was published.
+
+Published on 2026-10-16 at the user's request. Exact installer SHA-256: 71aaf06402cbbc5b7a908b1bc46cb2fcd1856d658c1ab86dd83a61739b5ab045; 225170593 bytes. Release metadata read-back and the complete public download verified. Public Windows installer selection now points to 0.1.28. Exact packaged app opened all 114 local designs and rendered all 402 pages in the library preview. The initial render probe mistakenly called the print-sheet renderer and encountered a sheet-fit check; the corrected picker-preview probe passed. Server 1.1.38 is now running on HTTPS 8443 (updated outside this agent's actions). No server template partitions or saved Studio employee session were found during migration diagnosis. Employee sign-in and real LAN migration/two-client verification remain required; local availability does not prove upload.

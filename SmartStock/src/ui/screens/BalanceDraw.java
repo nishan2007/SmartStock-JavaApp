@@ -184,6 +184,11 @@ public class BalanceDraw extends JFrame {
         return panel;
     }
 
+    private final JPanel overseasCashPanel=new JPanel(new GridLayout(2,3,8,8));
+    private final JLabel overseasExpectedLabel=new JLabel();
+    private final JTextField overseasCountField=new JTextField();
+    private final JTextField overseasReasonField=new JTextField();
+    private services.OverseasCashService.DrawerCash overseasCash;
     private JPanel buildCenterPanel() {
         JPanel panel = new JPanel(new BorderLayout(14, 14));
         panel.setOpaque(false);
@@ -192,6 +197,10 @@ public class BalanceDraw extends JFrame {
         JScrollPane tableScroll = new JScrollPane(denominationTable);
         tableScroll.setBorder(BorderFactory.createTitledBorder("Cash Count"));
         panel.add(tableScroll, BorderLayout.CENTER);
+        overseasCashPanel.setBorder(BorderFactory.createTitledBorder("Overseas-order cash - count separately; no float or change"));
+        overseasCashPanel.add(new JLabel("Expected overseas cash"));overseasCashPanel.add(new JLabel("Counted / hand over to store fund"));overseasCashPanel.add(new JLabel("Shortage / overage reason"));
+        overseasCashPanel.add(overseasExpectedLabel);overseasCashPanel.add(overseasCountField);overseasCashPanel.add(overseasReasonField);
+        overseasCashPanel.setVisible(false);panel.add(overseasCashPanel,BorderLayout.SOUTH);
 
         return panel;
     }
@@ -259,6 +268,10 @@ public class BalanceDraw extends JFrame {
     }
 
     private void applyState(LanApiClient.CashDrawerRegisterState state) {
+            Long previousSession=activeSession==null?null:activeSession.sessionId();
+            overseasCash=state.overseasCash();overseasCashPanel.setVisible(overseasCash!=null&&overseasCash.enabled());
+            overseasExpectedLabel.setText(overseasCash==null?"":CURRENCY.format(overseasCash.expected()));
+            if(state.session()==null||!java.util.Objects.equals(previousSession,state.session().sessionId())){overseasCountField.setText("");overseasReasonField.setText("");}
             activeSession=state.session();pendingHandover=state.pendingHandover();drawerLabel.setText(state.drawerName()==null?"Unassigned":state.drawerName());
             handoverButton.setText(pendingHandover==null?"Confirm Handover":"Confirm Handover / Resume Draw");
             if (state.drawerId()==null) {
@@ -427,13 +440,20 @@ public class BalanceDraw extends JFrame {
         if (confirm != JOptionPane.OK_OPTION) {
             return;
         }
-        long sessionId=activeSession.sessionId();String key=mutationKey("close|"+sessionId+"|"+countedCash);
+        BigDecimal overseasCount=null;String overseasReason=overseasReasonField.getText().trim();
+        if(overseasCash!=null&&overseasCash.enabled()){
+            try{overseasCount=new BigDecimal(overseasCountField.getText().trim());if(overseasCount.signum()<0||overseasCount.scale()>2)throw new IllegalArgumentException();}
+            catch(Exception e){JOptionPane.showMessageDialog(this,"Enter the separately counted overseas cash (zero if none).");return;}
+            if(overseasCount.compareTo(overseasCash.expected())!=0&&overseasReason.isBlank()){JOptionPane.showMessageDialog(this,"Enter a reason for the overseas cash shortage or overage.");return;}
+        }
+        final BigDecimal finalOverseasCount=overseasCount;
+        long sessionId=activeSession.sessionId();String key=mutationKey("close|"+sessionId+"|"+countedCash+"|"+overseasCount+"|"+overseasReason);
         BigDecimal closingCih=currentCihTotal;BigDecimal closingFloat=currentFloatTotal;
         List<CashDrawerCloseReceiptPrinter.BreakdownLine> closingBreakdown=closingCashBreakdown();
         draftTimer.stop();
         Map<String,Integer> finalQuantities=quantitySnapshot(),finalFloats=floatSnapshot();
         UiTaskRunner.submit(this,"cash-drawer.close",()->{
-            LanApiClient.CashDrawerCloseResult result=LanApiClient.closeCashDrawer(sessionId,countedCash,null,finalQuantities,finalFloats,closingFloat,closingCih,key);
+            LanApiClient.CashDrawerCloseResult result=LanApiClient.closeCashDrawer(sessionId,countedCash,null,finalQuantities,finalFloats,closingFloat,closingCih,finalOverseasCount,overseasReason,key);
             String printError=null;
             try {
                 CashDrawerCloseReceiptPrinter.print(result.session(),closingCih,closingFloat,closingBreakdown,

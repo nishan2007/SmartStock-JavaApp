@@ -77,7 +77,7 @@ class CloudRowMirrorServiceTest {
                 "held_carts", "inventory", "inventory_movements",
                 "invoice_delivery_events", "invoice_payments", "invoices",
                 "maintenance_machines", "other_income_entries", "payroll_payments",
-                "product_shelf_assignments", "quotations", "receiving_batches",
+                "product_shelf_assignments", "publication_projects", "quotations", "receiving_batches",
                 "sale_audit_log", "sale_returns", "sales", "shelf_locations",
                 "user_locations"
         );

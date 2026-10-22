@@ -14,7 +14,7 @@ class CustomOrderPendingPricingTest {
     @Test void finalPriceUsesChargesAndTheHigherDiscountBeforeRounding() {
         var addon=new PrintAddonRequest(1L,"Print",null,"Custom","FIXED_PRESET","Logo",1,n("40"));
         var price=CustomOrderPricingService.calculate(fixed(),input("100","10",List.of(addon)),n("20"),true);
-        assertEquals(n("140"),price.original());assertEquals(n("28.00"),price.discountAmount());assertEquals(n("120"),price.total());
+        assertEquals(n("140"),price.original());assertEquals(n("28.00"),price.discountAmount());assertEquals(n("112"),price.total());
         assertEquals(n("112"),CustomOrderPricingService.calculate(fixed(),input("100","10",List.of(addon)),n("20"),false).total());
     }
     @Test void areaPriceUsesConfiguredMaterialWidthAndConvertsUnits() {

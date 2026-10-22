@@ -725,7 +725,7 @@ public final class PostgresRuntimeService {
                   exit 1
                 }
                 """.formatted(powerShellSingleQuoted(logPath.toString()), powerShellSingleQuoted(lanSubnet.trim()),
-                        windowsLanFirewallVerification(lanSubnet));
+                        windowsLanFirewallVerification(lanSubnet) + WindowsNetworkMaintenance.installationScriptUnchecked(lanSubnet));
     }
 
     /**
@@ -989,7 +989,8 @@ public final class PostgresRuntimeService {
                 powerShellSingleQuoted(serviceExecutable.toString()),
                 powerShellSingleQuoted(serviceArguments),
                 powerShellSingleQuoted(lanSubnet)
-        ).replace("# VERIFY_SMARTSTOCK_FIREWALL", windowsLanFirewallVerification(lanSubnet));
+        ).replace("# VERIFY_SMARTSTOCK_FIREWALL", windowsLanFirewallVerification(lanSubnet)
+                + WindowsNetworkMaintenance.installationScriptUnchecked(lanSubnet));
     }
 
     static String windowsProductionInstallScript(

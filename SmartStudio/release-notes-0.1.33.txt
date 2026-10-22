@@ -1,0 +1,1 @@
+Adds a selection-aware text-formatting toolbar to badges, business cards and labels: font family, point size, increase/decrease size, bold, italic, underline, strikethrough, colour and outline colour/width. Styles save and render and integrate with design undo/redo. Requires server 1.1.40 to share badges using new styles. Includes prior local editor improvements.

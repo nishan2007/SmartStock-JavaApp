@@ -1,0 +1,5 @@
+SmartStudio 0.1.10 (Windows build 1010)
+
+Badge Cards can pair a saved back template with the front design and submit single-sided front/back jobs for manual flipping on Magicard 300 printers. Matching fields and photos use the current front's data. Preview both sides and test the printer's feed orientation and actual dimensions before production printing.
+
+Includes current image-processing and badge workspace changes and uses SmartStock client 1.1.24. No model weights are bundled.

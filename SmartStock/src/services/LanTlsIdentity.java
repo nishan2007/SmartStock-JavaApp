@@ -80,6 +80,22 @@ public final class LanTlsIdentity {
         return new LanTlsIdentity(context, fingerprint);
     }
 
+    /** Diagnostics must not create or replace a production server identity. */
+    public static LanTlsIdentity loadExisting() throws Exception {
+        String password = SecureCredentialStore.read(PASSWORD_SECRET);
+        if (password == null || !Files.isRegularFile(KEYSTORE))
+            throw new IllegalStateException("An existing usable LAN HTTPS identity is required.");
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        try (InputStream input = Files.newInputStream(KEYSTORE)) { keyStore.load(input, password.toCharArray()); }
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(keyStore, password.toCharArray());
+        SSLContext context = SSLContext.getInstance("TLSv1.3");
+        context.init(kmf.getKeyManagers(), null, null);
+        Certificate certificate = keyStore.getCertificate(ALIAS);
+        String fingerprint = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded()));
+        return new LanTlsIdentity(context, fingerprint);
+    }
+
     public SSLContext sslContext() {
         return sslContext;
     }

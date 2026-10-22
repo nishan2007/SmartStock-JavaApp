@@ -47,9 +47,9 @@ public final class CustomOrderPricingService {
         try(var p=c.prepareStatement("""
                 SELECT l.custom_order_line_id,l.custom_item_id,l.custom_variant_id,l.item_name,l.variant_name,
                        l.pricing_type,COALESCE(i.dimension_unit,l.dimension_unit),COALESCE(i.area_price_unit,l.area_unit),
-                       i.max_width,CASE WHEN l.pricing_type='AREA' THEN i.area_price ELSE COALESCE(v.fixed_price,i.fixed_price) END,
+                       i.max_width,CASE WHEN l.pricing_type='AREA' THEN i.area_price ELSE COALESCE(p.price,v.fixed_price,i.fixed_price) END,
                        COALESCE(l.area_price,l.base_item_price,0),l.width_value,l.length_value,(l.custom_item_id IS NULL AND l.customization_details LIKE 'Customer-supplied item |%')
-                FROM custom_order_lines l LEFT JOIN custom_order_items i ON i.custom_item_id=l.custom_item_id
+                FROM custom_order_lines l LEFT JOIN products p ON p.product_id=l.inventory_product_id LEFT JOIN custom_order_items i ON i.custom_item_id=l.custom_item_id
                 LEFT JOIN custom_order_item_variants v ON v.custom_variant_id=l.custom_variant_id
                 WHERE l.custom_order_id=? ORDER BY l.sort_order,l.custom_order_line_id
                 """)) {
@@ -88,7 +88,7 @@ public final class CustomOrderPricingService {
         BigDecimal percent=manual.max(customerRate==null?BigDecimal.ZERO:customerRate),original=CurrencyFormatter.normalize(base.add(addons));
         BigDecimal reduction=original.multiply(percent).divide(BigDecimal.valueOf(100),2,RoundingMode.HALF_UP);
         BigDecimal total=CurrencyFormatter.normalize(original.subtract(reduction));
-        return new Calculated(area,base,addons,original,percent,reduction,round?CurrencyFormatter.roundToNearestTwenty(total):total);
+        return new Calculated(area,base,addons,original,percent,reduction,total);
     }
     public static BigDecimal billableArea(BigDecimal width,BigDecimal length,BigDecimal maximumWidth,String dimensionUnit,String areaUnit) {
         if(width==null||length==null||width.signum()<=0||length.signum()<=0)throw new IllegalArgumentException("Enter positive width and length for area pricing.");
@@ -108,7 +108,7 @@ public final class CustomOrderPricingService {
     public static void finalizePrice(Connection c,long id,int location,PricingDetails details,List<AuthorizedLine> lines,
             CustomerChargeAuthorizationService.Authorization authorization,int actor,String actorName,String device,String deviceName)throws SQLException {
         if(!pending(c,id,location))throw new SQLException("This order already has a final price.");
-        BigDecimal total=CurrencyFormatter.normalize(lines.stream().map(l->l.price().total()).reduce(BigDecimal.ZERO,BigDecimal::add));
+        BigDecimal total=CurrencyFormatter.customOrderTotal(lines.stream().map(l->l.price().total()).reduce(BigDecimal.ZERO,BigDecimal::add),details.roundToNearestTwenty());
         BigDecimal balance=finalBalance(total,details.paid());int customer;
         try(var p=c.prepareStatement("SELECT customer_id FROM custom_orders WHERE custom_order_id=? AND location_id=? FOR UPDATE")){p.setLong(1,id);p.setInt(2,location);try(var r=p.executeQuery()){if(!r.next())throw new SQLException("Order was not found.");customer=r.getInt(1);}}
         if(balance.signum()>0)CustomerChargeAuthorizationService.validateRequired(c,customer,authorization);
@@ -135,6 +135,7 @@ public final class CustomOrderPricingService {
         }
         BigDecimal required=BigDecimal.ZERO;
         try(var p=c.prepareStatement("SELECT COALESCE(custom_order_minimum_deposit_percent,0) FROM company_customization WHERE location_id=?")){p.setInt(1,location);try(var r=p.executeQuery()){if(r.next())required=CurrencyFormatter.normalize(total.multiply(r.getBigDecimal(1)).divide(BigDecimal.valueOf(100),6,RoundingMode.HALF_UP));}}
+        try(var p=c.prepareStatement("SELECT custom_order_deposit_exempt FROM customer_accounts WHERE customer_id=? AND is_active=TRUE")){p.setInt(1,customer);try(var r=p.executeQuery()){if(r.next()&&r.getBoolean(1))required=BigDecimal.ZERO;}}
         try(var p=c.prepareStatement("UPDATE custom_orders SET pricing_state='FINAL',total_amount=?,balance_due=?,payment_status=?,pricing_finalized_at=now(),pricing_finalized_by_user_id=?,pricing_finalized_by_name=?,minimum_deposit_required=?,customer_discount_percent=?,customer_discount_applied=?,customer_discount_amount=?,updated_at=now() WHERE custom_order_id=? AND location_id=? AND pricing_state='PENDING'")) {
             p.setBigDecimal(1,total);p.setBigDecimal(2,balance);p.setString(3,balance.signum()==0?"PAID":details.paid().signum()==0?"UNPAID":"PARTIAL");p.setInt(4,actor);p.setString(5,actorName);p.setBigDecimal(6,required);p.setBigDecimal(7,details.customerDiscountPercent());p.setBoolean(8,details.customerDiscountPercent().signum()>0);p.setBigDecimal(9,lines.stream().map(l->l.price().discountAmount().subtract(calculate(l.saved(),l.input(),BigDecimal.ZERO,details.roundToNearestTwenty()).discountAmount()).max(BigDecimal.ZERO)).reduce(BigDecimal.ZERO,BigDecimal::add));p.setLong(10,id);p.setInt(11,location);if(p.executeUpdate()!=1)throw new SQLException("The price was already finalized. Reload the order.");
         }
@@ -142,6 +143,7 @@ public final class CustomOrderPricingService {
             p.setInt(1,customer);p.setLong(2,id);p.setInt(3,location);p.setBigDecimal(4,balance);p.setString(5,actorName);p.setString(6,device);p.setString(7,deviceName);try(var r=p.executeQuery()){r.next();CustomerChargeAuthorizationService.insert(c,r.getLong(1),customer,location,"CUSTOM_ORDER",id,authorization,actor,actorName,UUID.fromString(device),deviceName);}
         }
         audit(c,id,"FINALIZE_PRICE","pricing_state","PENDING","FINAL","Final total: "+total+"; deposits: "+details.paid()+"; balance: "+balance,actor,actorName,device,deviceName);
+        LanCustomOrderWorkflowService.reconcileSettledDelivery(c,id,location,actor,actorName,device,deviceName);
     }
     public static void audit(Connection c,long id,String action,String field,Object oldValue,Object value,String reason,int actor,String actorName,String device,String deviceName)throws SQLException {
         try(var p=c.prepareStatement("INSERT INTO custom_order_audit_log(custom_order_id,action_type,field_name,old_value,new_value,reason,user_id,user_name,device_id,device_name) VALUES(?,?,?,?,?,?,?,?,?,?)")) {

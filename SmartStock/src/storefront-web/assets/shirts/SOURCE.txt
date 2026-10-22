@@ -1,0 +1,4 @@
+Upstream model: https://github.com/pmndrs/examples/blob/abdf07703f83e294cecf9495f93fd63e12703db1/examples/t-shirt-configurator/src/shirt_baked_collapsed.glb
+Crew SHA-256: 4c020995f86593348909fc6da64c390d60ef2a22f8a4d421f70aced70acc3725
+V-neck and polo: locally adapted from crew.glb using website/tools/shirt-model-variants.mjs.
+License and attribution: LICENSE.txt

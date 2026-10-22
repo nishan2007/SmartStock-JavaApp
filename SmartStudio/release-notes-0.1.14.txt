@@ -1,0 +1,11 @@
+SmartStudio 0.1.14
+
+Business Cards tab with exact 3.5 x 2 inch cards and Publisher-compatible templates.
+Mail merge from an editable table or Excel XLS/XLSX worksheet, with reload support.
+Fill number series using a starting number, step, row count and leading zeros.
+Multiple template pages with independent numbering columns.
+Print mixed pages on the same sheet or each template page on separate sheets.
+Complete sheet previews, including a larger preview before printing and sheet navigation.
+Letter, Legal, A4, 11 x 17 and custom sheet dimensions, with automatic card packing.
+PDF export uses the selected sheet size and layout. Print at actual size / 100 percent.
+Current SmartStock 1.1.30 client dependency. Application packages exclude AI model weights.

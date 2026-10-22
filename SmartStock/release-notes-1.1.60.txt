@@ -1,0 +1,9 @@
+SmartStock 1.1.60 (Windows build 101060)
+
+- Expands customer account signing to nearly the entire monitor, with a much larger white signature area and compact name and action controls.
+- Shows the unsigned-reason field only when needed. Company Preferences > Sale > Signature Pad uses the same larger signing dialog.
+- Scales signatures from large screens to the existing server image limits before submission.
+- Clarifies that driver acceptance of box mapping still requires checking the physical pen behavior.
+- Includes cumulative application changes from 1.1.59. AI model weights remain outside application updates.
+
+Windows update ZIP only. Physical G430S confinement/signing, installed upgrade/rollback, and live store flows require separate acceptance.

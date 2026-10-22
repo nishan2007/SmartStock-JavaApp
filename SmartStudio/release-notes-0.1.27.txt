@@ -1,0 +1,1 @@
+Template libraries default to your store and can browse other accessible named store folders. Add ownership/sharing controls for badges, business cards and labels. New files belong to the signed-in store; creation history is retained after transfer. Requires SmartStock server 1.1.38.

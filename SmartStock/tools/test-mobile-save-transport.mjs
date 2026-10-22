@@ -1,0 +1,36 @@
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const source=readFileSync(new URL('../src/mobile-web/app.js',import.meta.url),'utf8');
+const helper=source.slice(source.indexOf('const pendingSaves='),source.indexOf('function can'));
+const calls=[],timeouts=[];
+let replies=[];
+const context=vm.createContext({API:'https://register/api/v1',csrf:'csrf',AbortController,
+ setTimeout:(_fn,ms)=>{timeouts.push(ms);return 1},clearTimeout:()=>{},
+ fetch:async(_url,options)=>{calls.push(options);const reply=replies.shift();if(reply instanceof Error)throw reply;return reply}});
+vm.runInContext(helper,context);
+const ok={ok:true,status:200,json:async()=>({ok:true,data:{productId:7}})};
+const save=(key='first')=>context.request('/products/save',{name:'Item'},true,key);
+replies=[new Error('lost response'),ok];
+assert.equal((await save()).productId,7);
+assert.equal(calls[0].headers['Idempotency-Key'],calls[1].headers['Idempotency-Key']);
+assert.equal(timeouts[0],60000);
+replies=[new Error('offline'),new Error('offline')];
+await assert.rejects(save('uncertain'),/connection.*interrupted/i);
+replies=[ok];
+await save('new tap');
+assert.equal(calls.at(-1).headers['Idempotency-Key'],'uncertain');
+replies=[ok];await save('next item');
+assert.equal(calls.at(-1).headers['Idempotency-Key'],'next item');
+const before=calls.length;
+replies=[{ok:false,status:400,json:async()=>({ok:false,error:{code:'VALIDATION_ERROR',message:'Invalid'}})}];
+await assert.rejects(save('invalid'),e=>e.code==='VALIDATION_ERROR');
+assert.equal(calls.length,before+1);
+replies=[ok];await save('corrected');
+assert.equal(calls.at(-1).headers['Idempotency-Key'],'corrected');
+replies=[new Error('offline')];
+const uploadBefore=calls.length;
+await assert.rejects(context.request('/images/upload',{},true,null));
+assert.equal(calls.length,uploadBefore+1);
+assert.equal(timeouts.at(-1),90000);
+console.log('Mobile save transport checks passed.');

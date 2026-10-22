@@ -8,7 +8,7 @@ import java.util.Set;
 /** Shared deny-by-default policy for operations that require physical store presence. */
 public final class RemoteAdminPolicy {
     private static final Set<String> BLOCKED_PREFIXES = Set.of(
-            "/v1/cash/", "/v1/cash-drawers/", "/v1/held-carts/",
+            "/v1/loyalty/", "/v1/cash/", "/v1/cash-drawers/", "/v1/held-carts/",
             "/v1/time-clock/punch", "/v1/employees/badge-",
             "/v1/workstation/", "/v1/sync/run", "/v1/sync/resolve", "/v1/sync/billing-period"
     );

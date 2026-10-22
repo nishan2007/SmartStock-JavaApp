@@ -27,8 +27,16 @@ public final class CatalogStudioImageProcessor implements AutoCloseable {
     public static final String BEST_MODEL_SHA256 = "58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c";
     private static final int MODEL_SIZE = 1024;
     private final OrtEnvironment environment;
-    private final OrtSession session;
+    private OrtSession session;
     private final StudioQuality quality;
+    private final Path model;
+    private final StudioImageEnhancer.Mode mode;
+    private final StudioImageEnhancer.GpuFactory gpuFactory;
+    private StudioImageEnhancer.GpuBackend gpu;
+    private boolean gpuAttempted;
+    private String device="CPU";
+    private StudioImageEnhancer.Progress progress=(d,c,t,n)->{};
+    void progress(StudioImageEnhancer.Progress value){progress=value==null?(d,c,t,n)->{}:value;}
 
     public static Path packagedModel() throws Exception {
         return packagedModel(StudioQuality.FAST);
@@ -55,7 +63,14 @@ public final class CatalogStudioImageProcessor implements AutoCloseable {
     }
 
     private CatalogStudioImageProcessor(Path model, StudioQuality quality, boolean managed) throws Exception {
+        this(model,quality,managed,StudioImageEnhancer.Mode.CPU);
+    }
+    CatalogStudioImageProcessor(Path model,StudioQuality quality,boolean managed,StudioImageEnhancer.Mode mode)throws Exception{
+        this(model,quality,managed,mode,(path,cancelled)->new StudioGpuProcess(path,cancelled,true));
+    }
+    CatalogStudioImageProcessor(Path model,StudioQuality quality,boolean managed,StudioImageEnhancer.Mode mode,StudioImageEnhancer.GpuFactory gpuFactory)throws Exception{
         this.quality = java.util.Objects.requireNonNull(quality);
+        this.model=model;this.mode=mode;this.gpuFactory=gpuFactory;
         if (!Files.isRegularFile(model)) throw new ModelUnavailableException(quality == StudioQuality.BEST
                 ? "Best quality is not installed. Ask an administrator to open Status > AI Models."
                 : "The photo model is missing. Ask an administrator to open Status > AI Models.");
@@ -70,10 +85,39 @@ public final class CatalogStudioImageProcessor implements AutoCloseable {
         if (!expectedHash.equals(hash))
             throw new ModelUnavailableException("The photo model failed its integrity check. Ask an administrator to repair it in Status > AI Models.");
         environment = OrtEnvironment.getEnvironment();
+    }
+    private void cpu()throws Exception{
+        if(session!=null)return;
+        long start=System.nanoTime();
         try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
-            options.setIntraOpNumThreads(Math.min(4, Runtime.getRuntime().availableProcessors()));
+            options.setIntraOpNumThreads(StudioImageEnhancer.cpuThreads(StudioImageEnhancer.availableMemory(),Runtime.getRuntime().availableProcessors()));
+            options.setInterOpNumThreads(1);
             session = environment.createSession(model.toString(), options);
         }
+        System.out.printf(java.util.Locale.ROOT,"SmartStudio removal device=CPU sessionInitMs=%d%n",(System.nanoTime()-start)/1_000_000);
+    }
+    private void checkCancelled(){if(progress.cancelled()||Thread.currentThread().isInterrupted())throw new java.util.concurrent.CancellationException("Image processing cancelled");}
+    void warmUp()throws Exception{infer(new float[MODEL_SIZE*MODEL_SIZE*3]);}
+    private float[] infer(float[] pixels)throws Exception{
+        checkCancelled();
+        if(mode!=StudioImageEnhancer.Mode.CPU&&!gpuAttempted&&System.getProperty("os.name","").startsWith("Windows")){
+            gpuAttempted=true;
+            try{long start=System.nanoTime();progress.update("GPU (DirectML)",0,1,"Loading background removal model");gpu=gpuFactory.open(model,progress::cancelled);System.out.printf(java.util.Locale.ROOT,"SmartStudio removal device=DirectML sessionInitMs=%d%n",(System.nanoTime()-start)/1_000_000);}
+            catch(java.util.concurrent.CancellationException ex){gpuAttempted=false;throw ex;}
+            catch(Exception|LinkageError ex){System.err.println("Background removal GPU unavailable; using CPU ("+ex.getClass().getSimpleName()+")");}
+        }
+        float[] mask=new float[MODEL_SIZE*MODEL_SIZE];
+        if(gpu!=null){
+            try{device="GPU (DirectML)";progress.update(device,0,1,"Removing background");gpu.run(pixels,MODEL_SIZE,MODEL_SIZE,progress::cancelled).get(mask);checkCancelled();progress.update(device,1,1,"Background removed on GPU");return mask;}
+            catch(java.util.concurrent.CancellationException ex){gpu.close();gpu=null;gpuAttempted=false;throw ex;}
+            catch(Exception|LinkageError ex){gpu.close();gpu=null;System.err.println("Background removal GPU failed; continuing on CPU ("+ex.getClass().getSimpleName()+")");}
+        }
+        checkCancelled();cpu();device="CPU";progress.update(device,0,1,"Removing background on CPU");
+        String inputName=quality==StudioQuality.BEST?session.getInputNames().iterator().next():"input_image";
+        String outputName=quality==StudioQuality.BEST?session.getOutputNames().iterator().next():"output_image";
+        try(OnnxTensor tensor=OnnxTensor.createTensor(environment,FloatBuffer.wrap(pixels),new long[]{1,3,MODEL_SIZE,MODEL_SIZE});
+            OrtSession.Result result=session.run(Map.of(inputName,tensor),Set.of(outputName))){((OnnxTensor)result.get(outputName).orElseThrow()).getFloatBuffer().get(mask);}
+        checkCancelled();progress.update(device,1,1,"Background removed on CPU");return mask;
     }
 
     private BufferedImage cutout(byte[] input, boolean cleanEdges) throws Exception {
@@ -106,14 +150,8 @@ public final class CatalogStudioImageProcessor implements AutoCloseable {
                 pixels[2 * plane + index] = ((color & 255) / 255f - .406f) / .225f;
             }
         }
-        float[] mask = new float[plane];
-        String inputName = quality == StudioQuality.BEST ? session.getInputNames().iterator().next() : "input_image";
-        String outputName = quality == StudioQuality.BEST ? session.getOutputNames().iterator().next() : "output_image";
-        try (OnnxTensor tensor = OnnxTensor.createTensor(environment, FloatBuffer.wrap(pixels),
-                new long[]{1, 3, MODEL_SIZE, MODEL_SIZE});
-             OrtSession.Result result = session.run(Map.of(inputName, tensor), Set.of(outputName))) {
-            ((OnnxTensor) result.get(outputName).orElseThrow()).getFloatBuffer().get(mask);
-        }
+        long inferenceStart=System.nanoTime();float[] mask=infer(pixels);
+        System.out.printf(java.util.Locale.ROOT,"SmartStudio removal quality=%s device=%s maskMs=%d%n",quality,device,(System.nanoTime()-inferenceStart)/1_000_000);
         if (quality == StudioQuality.BEST)
             for (int i = 0; i < mask.length; i++) mask[i] = (float) (1.0 / (1 + Math.exp(-mask[i])));
         float min = Float.POSITIVE_INFINITY, maxValue = Float.NEGATIVE_INFINITY;
@@ -140,7 +178,8 @@ public final class CatalogStudioImageProcessor implements AutoCloseable {
 
     public byte[] removeBackgroundPng(byte[] input, boolean cleanEdges) throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        ImageIO.write(cutout(input, cleanEdges), "png", output);
+        BufferedImage image=cutout(input,cleanEdges);checkCancelled();progress.update(device,0,0,"Saving PNG");
+        ImageIO.write(image, "png", output);checkCancelled();progress.update(device,1,1,"Background removed");
         return output.toByteArray();
     }
 
@@ -184,7 +223,7 @@ public final class CatalogStudioImageProcessor implements AutoCloseable {
         return output.toByteArray();
     }
 
-    @Override public void close() throws Exception { session.close(); }
+    @Override public void close() throws Exception {if(gpu!=null){gpu.close();gpu=null;}if(session!=null){session.close();session=null;}}
 
     public static final class ModelUnavailableException extends Exception {
         public ModelUnavailableException(String message) { super(message); }

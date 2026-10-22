@@ -87,6 +87,7 @@ public class CompanyCustomization extends JFrame {
     private static final String NAV_SALE = "Sale";
     private static final String NAV_SALE_RECEIPT_FORMATTING = "Sale Receipt & Formatting";
     private static final String NAV_SALE_ITEM_TYPE_BUTTONS = "Sale Item-Type Buttons";
+    private static final String NAV_SIGNATURE_PAD = "Signature Pad";
     private static final String NAV_ACCOUNT_PAYMENT_RECEIPTS = "Account Payment Receipts";
     private static final String NAV_CUSTOM_ORDERS = "Custom Orders";
     private static final String NAV_CUSTOM_ORDER_DEPOSIT_REFUND = "Order Deposit & Refund Approval";
@@ -96,6 +97,7 @@ public class CompanyCustomization extends JFrame {
     private static final String NAV_IMAGE_STORAGE = "Image Storage";
     private static final String NAV_EMPLOYMENT_PORTAL = "Employment Portal";
     private static final String NAV_STOREFRONT = "Online Store";
+    private static final String NAV_LOYALTY = "Loyalty";
     private static final int BADGE_CARD_WIDTH = 638;
     private static final int BADGE_CARD_HEIGHT = 1013;
 
@@ -173,7 +175,7 @@ public class CompanyCustomization extends JFrame {
     private final JTextField customOrderMinimumDepositPercentField = new JTextField("0", 8);
     private final JTextField customOrderRefundApprovalLimitField = new JTextField("0", 8);
     private final JTextField customOrderFileLimitMbField = new JTextField("100", 8);
-    private final JCheckBox roundCustomOrdersToNearestTwentyBox = new JCheckBox("Round custom-order line prices to nearest $20", true);
+    private final JCheckBox roundCustomOrdersToNearestTwentyBox = new JCheckBox("Round custom-order total to nearest $20", true);
     private final JCheckBox slipEnabledBox = new JCheckBox("Enable custom order slips");
     private final JCheckBox slipAutoPrintBox = new JCheckBox("Always print order slip");
     private final JTextField slipTitleField = new JTextField("CUSTOMER'S ORDER SLIP");
@@ -414,6 +416,7 @@ public class CompanyCustomization extends JFrame {
         addNodeIfPermitted(root, NAV_IMAGE_STORAGE);
         addNodeIfPermitted(root, NAV_EMPLOYMENT_PORTAL);
         addNodeIfPermitted(root,NAV_STOREFRONT);
+        addNodeIfPermitted(root,NAV_LOYALTY);
         addNodeIfPermitted(root, NAV_TIME_CLOCK_SAFETY);
         addNodeIfPermitted(root, NAV_SCHEDULER_LINK_EMAIL);
 
@@ -421,6 +424,7 @@ public class CompanyCustomization extends JFrame {
         addNodeIfPermitted(saleNode, NAV_SALE_RECEIPT_FORMATTING);
         addNodeIfPermitted(saleNode, NAV_SALE_ITEM_TYPE_BUTTONS);
         addNodeIfPermitted(saleNode, NAV_ACCOUNT_PAYMENT_RECEIPTS);
+        addNodeIfPermitted(saleNode, NAV_SIGNATURE_PAD);
         if (saleNode.getChildCount() > 0 || canAccessPreferenceSection(NAV_SALE)) {
             root.add(saleNode);
         }
@@ -539,10 +543,12 @@ public class CompanyCustomization extends JFrame {
             case NAV_IMAGE_STORAGE -> new ImageStoragePanel();
             case NAV_EMPLOYMENT_PORTAL -> new EmploymentPortalPanel();
             case NAV_STOREFRONT -> new ui.screens.companyprefs.StorefrontPanel();
+            case NAV_LOYALTY -> new ui.screens.companyprefs.LoyaltyPanel();
             case NAV_TIME_CLOCK_SAFETY -> buildTimeClockSafetyScreen();
             case NAV_SCHEDULER_LINK_EMAIL -> buildSchedulerLinkEmailScreen();
             case NAV_SALE_RECEIPT_FORMATTING -> buildSaleReceiptPreferencesScreen();
             case NAV_SALE_ITEM_TYPE_BUTTONS -> buildSaleItemTypeButtonsScreen();
+            case NAV_SIGNATURE_PAD -> new ui.screens.companyprefs.SignaturePadPanel();
             case NAV_ACCOUNT_PAYMENT_RECEIPTS -> buildAccountPaymentReceiptPreferencesScreen();
             case NAV_CUSTOM_ORDER_DEPOSIT_REFUND -> buildCustomOrderDepositRefundScreen();
             case NAV_CUSTOM_ORDER_SLIP_FORMATTING -> buildCustomOrderSlipPreferencesScreen();
@@ -622,6 +628,7 @@ public class CompanyCustomization extends JFrame {
             case NAV_SCHEDULER_LINK_EMAIL -> "Automatically notify a designated address when the public employee scheduler link changes.";
             case NAV_SALE_RECEIPT_FORMATTING -> "Sales rules and the information printed on receipts.";
             case NAV_SALE_ITEM_TYPE_BUTTONS -> "Choose and order the item-type buttons shown beside the sale cart for this store.";
+            case NAV_SIGNATURE_PAD -> "Set up and test customer account signing on this register.";
             case NAV_ACCOUNT_PAYMENT_RECEIPTS -> "Fields and layout used for account-payment receipts.";
             case NAV_CUSTOM_ORDER_DEPOSIT_REFUND -> "Deposit requirements and manager refund approval limits.";
             case NAV_CUSTOM_ORDER_SLIP_FORMATTING -> "Custom-order receipt behavior, fields, and appearance.";
@@ -707,8 +714,8 @@ public class CompanyCustomization extends JFrame {
                 NAV_LOCATIONS, NAV_CASH_DRAWER_MANAGER, NAV_BACKUPS, NAV_TIME_CLOCK_SAFETY,
                 NAV_SCHEDULER_LINK_EMAIL,
                 NAV_IMAGE_STORAGE,
-                NAV_EMPLOYMENT_PORTAL, NAV_STOREFRONT,
-                NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_SALE_ITEM_TYPE_BUTTONS, NAV_ACCOUNT_PAYMENT_RECEIPTS,
+                NAV_EMPLOYMENT_PORTAL, NAV_STOREFRONT, NAV_LOYALTY,
+                NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_SALE_ITEM_TYPE_BUTTONS, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_SIGNATURE_PAD,
                 NAV_CUSTOM_ORDERS, NAV_CUSTOM_ORDER_DEPOSIT_REFUND,
                 NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING
         };
@@ -736,8 +743,8 @@ public class CompanyCustomization extends JFrame {
             case NAV_LOCATIONS -> PermissionManager.hasPermission("LOCATION_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_CASH_DRAWER_MANAGER -> PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_BACKUPS -> isPhysicalServerMode() && canEditCompanyPreferences();
-            case NAV_IMAGE_STORAGE, NAV_EMPLOYMENT_PORTAL, NAV_STOREFRONT -> canEditCompanyPreferences();
-            case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE, NAV_TIME_CLOCK_SAFETY, NAV_SCHEDULER_LINK_EMAIL, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_SALE_ITEM_TYPE_BUTTONS, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_CUSTOM_ORDERS,
+            case NAV_IMAGE_STORAGE, NAV_EMPLOYMENT_PORTAL, NAV_STOREFRONT, NAV_LOYALTY -> canEditCompanyPreferences();
+            case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE, NAV_TIME_CLOCK_SAFETY, NAV_SCHEDULER_LINK_EMAIL, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_SALE_ITEM_TYPE_BUTTONS, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_SIGNATURE_PAD, NAV_CUSTOM_ORDERS,
                  NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING -> canEditCompanyPreferences();
             default -> false;
         };
@@ -1159,6 +1166,12 @@ public class CompanyCustomization extends JFrame {
         buttons.add(refreshButton);
         buttons.add(runNowButton);
         buttons.add(saveButton);
+        if (DatabaseConfig.load().mode() == DatabaseMode.SERVER) {
+            JButton handoffButton = new JButton("Server Handoff");
+            DeckersSwing.styleUtilityButton(handoffButton, DeckersPalette.PURPLE);
+            handoffButton.addActionListener(e -> new ui.screens.companyprefs.ServerHandoffDialog(this).setVisible(true));
+            buttons.add(handoffButton);
+        }
 
         panel.add(title, BorderLayout.NORTH);
         panel.add(form, BorderLayout.CENTER);

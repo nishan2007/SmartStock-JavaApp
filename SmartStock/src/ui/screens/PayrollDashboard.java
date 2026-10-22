@@ -492,18 +492,59 @@ public class PayrollDashboard extends JFrame {
         }
     }
 
-    private void showSelectedEmployeeSessions(){
-        int viewRow=summaryTable.getSelectedRow();if(viewRow<0)return;int modelRow=summaryTable.convertRowIndexToModel(viewRow);
-        if(modelRow<0||modelRow>=renderedSummaries.size())return;PayrollSummary summary=renderedSummaries.get(modelRow);
-        DefaultTableModel model=new DefaultTableModel(new Object[]{"Session","Work Date","Clock In","Lunch Start","Lunch End","Break Start","Break End","Clock Out","Hours","Regular","Overtime","Location","Review"},0){@Override public boolean isCellEditable(int r,int c){return false;}};
-        for(TimeClockRow row:allRows){if(row.userId()!=summary.userId()||!row.payPeriodStart().equals(summary.payPeriodStart())||!row.payPeriodEnd().equals(summary.payPeriodEnd()))continue;
-            model.addRow(new Object[]{row.clockId(),row.workDate().format(DATE_FORMAT),formatDateTime(row.clockIn()),formatDateTime(row.lunchStart()),formatDateTime(row.lunchEnd()),formatDateTime(row.breakStart()),formatDateTime(row.breakEnd()),formatDateTime(row.clockOut()),formatHours(row.dailyHours()),formatHours(row.regularHours()),formatHours(row.overtimeHours()),row.locationName(),clockReview(row)});}
+    private void showSelectedEmployeeSessions() {
+        int viewRow=summaryTable.getSelectedRow();if(viewRow<0)return;
+        int modelRow=summaryTable.convertRowIndexToModel(viewRow);
+        if(modelRow<0||modelRow>=renderedSummaries.size())return;
+        PayrollSummary summary=renderedSummaries.get(modelRow);
+        List<TimeClockRow> sessions=new ArrayList<>();
+        boolean[] updating={false}, saving={false};
+        DefaultTableModel model=new DefaultTableModel(new Object[]{"Session","Work Date","Clock In","Lunch Start","Lunch End","Break Start","Break End","Clock Out","Hours","Regular","Overtime","Location","Review","Half Day","Pay"},0) {
+            @Override public Class<?> getColumnClass(int c){return c==13?Boolean.class:Object.class;}
+            @Override public boolean isCellEditable(int row,int col){
+                return col==13&&!saving[0]&&row<sessions.size()
+                    &&"DAILY".equalsIgnoreCase(sessions.get(row).compensationType())
+                    &&sessions.get(row).shiftClockOut()!=null;
+            }
+        };
+        JLabel pay=new JLabel();
+        Runnable populate=()->{
+            updating[0]=true;
+            try {
+                sessions.clear();model.setRowCount(0);
+                BigDecimal total=BigDecimal.ZERO;
+                for(TimeClockRow row:allRows){
+                    if(row.userId()!=summary.userId()||!row.payPeriodStart().equals(summary.payPeriodStart())||!row.payPeriodEnd().equals(summary.payPeriodEnd()))continue;
+                    sessions.add(row);total=total.add(row.totalPay());
+                    model.addRow(new Object[]{row.clockId(),row.workDate().format(DATE_FORMAT),formatDateTime(row.clockIn()),formatDateTime(row.lunchStart()),formatDateTime(row.lunchEnd()),formatDateTime(row.breakStart()),formatDateTime(row.breakEnd()),formatDateTime(row.clockOut()),formatHours(row.dailyHours()),formatHours(row.regularHours()),formatHours(row.overtimeHours()),row.locationName(),clockReview(row),row.halfDay(),CURRENCY_FORMAT.format(row.totalPay())});
+                }
+                pay.setText("Session Pay: "+CURRENCY_FORMAT.format(total)+"   |   Half Day applies to every session on that work date.");
+            } finally {updating[0]=false;}
+        };
+        populate.run();
         JTable table=new JTable(model);table.setRowHeight(28);table.setAutoCreateRowSorter(true);DeckersSwing.styleTable(table,DeckersPalette.MAGENTA);
         JPanel overview=new JPanel(new GridLayout(2,4,12,6));overview.setBorder(new EmptyBorder(10,10,10,10));
         overview.add(detailMetric("Employee",summary.employeeName()));overview.add(detailMetric("Role",formatRole(summary.employeeRole())));overview.add(detailMetric("Pay Period",formatPayPeriod(summary.payPeriodStart(),summary.payPeriodEnd())));overview.add(detailMetric("Pay Date",summary.payDate().format(DATE_FORMAT)));
         overview.add(detailMetric("Sessions",String.valueOf(summary.recordCount())));overview.add(detailMetric("Total Hours",formatHours(summary.totalHours())));overview.add(detailMetric("Regular Hours",formatHours(summary.regularHours())));overview.add(detailMetric("OT Hours",formatHours(summary.overtimeHours())));
-        JPanel content=new JPanel(new BorderLayout(0,10));content.add(overview,BorderLayout.NORTH);content.add(createTableScrollPane(table),BorderLayout.CENTER);
-        JDialog dialog=new JDialog(this,"Work Sessions — "+summary.employeeName(),true);dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);dialog.setContentPane(content);dialog.setSize(1320,520);dialog.setLocationRelativeTo(this);dialog.setVisible(true);
+        JPanel content=new JPanel(new BorderLayout(0,10));content.add(overview,BorderLayout.NORTH);content.add(createTableScrollPane(table),BorderLayout.CENTER);content.add(pay,BorderLayout.SOUTH);
+        JDialog dialog=new JDialog(this,"Work Sessions — "+summary.employeeName(),true);dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        model.addTableModelListener(event->{
+            if(updating[0]||saving[0]||event.getColumn()!=13||event.getFirstRow()<0)return;
+            TimeClockRow row=sessions.get(event.getFirstRow());
+            boolean half=Boolean.TRUE.equals(model.getValueAt(event.getFirstRow(),13));
+            saving[0]=true;table.setEnabled(false);
+            new SwingWorker<TimeClockManager.PayrollDashboard,Void>() {
+                @Override protected TimeClockManager.PayrollDashboard doInBackground()throws Exception {
+                    services.LanApiClient.setDailyHalfDay(row.userId(),row.workDate(),half,true,java.util.UUID.randomUUID().toString());
+                    return TimeClockManager.loadPayrollDashboard();
+                }
+                @Override protected void done(){
+                    try{applyPayroll(get());}catch(Exception ex){JOptionPane.showMessageDialog(dialog,manualHoursError(ex),"Unable to Change Day Pay",JOptionPane.ERROR_MESSAGE);loadPayroll();}
+                    finally{saving[0]=false;table.setEnabled(true);populate.run();}
+                }
+            }.execute();
+        });
+        dialog.setContentPane(content);dialog.setSize(1420,520);dialog.setLocationRelativeTo(this);dialog.setVisible(true);
     }
 
     private static JLabel detailMetric(String label,String value){JLabel result=new JLabel("<html><b>"+label+"</b><br>"+(value==null?"":value)+"</html>");result.setBorder(new EmptyBorder(4,6,4,6));return result;}

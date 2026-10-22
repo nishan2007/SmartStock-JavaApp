@@ -1,0 +1,7 @@
+SmartStock 1.1.48
+
+Fixes Best-quality AI background removal falling back to CPU on Windows. Updates the isolated DirectML runtime and avoids oversized fused GPU allocations while retaining the same model, full 1024-square inference, original photo pixels and CPU fallback.
+
+Verified on the GEEKOM A7 / Radeon 780M with a queued portrait: repeat GPU processing averaged 5.2 seconds versus 19.7 seconds on CPU. First processing took 15.0 seconds on GPU. CPU/GPU alpha differed by at most one level out of 255. Timings depend on hardware, photo and available memory.
+
+Includes the existing SmartStock 1.1.47 functionality. AI models remain separate from application installers and updates. Update the store server first, then registers. Publication does not install updates or restart running applications. SmartStudio retains its separate release channel.

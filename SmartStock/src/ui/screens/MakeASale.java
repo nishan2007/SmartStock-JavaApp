@@ -93,6 +93,10 @@ public class MakeASale extends JFrame {
     private JTextField paymentReferenceField;
     private String selectedPaymentMethod;
     private JComboBox<CustomerAccountOption> customerAccountBox;
+    private long loyaltyPoints;
+    private BigDecimal loyaltyPreviewTotal;
+    private BigDecimal loyaltyPreviewDiscount=BigDecimal.ZERO;
+    private String loyaltyFingerprint;
     private JButton addCustomerAccountButton;
     private JButton checkoutBtn;
     private JButton checkoutPrintBtn;
@@ -399,6 +403,9 @@ public class MakeASale extends JFrame {
        customerControlsPanel.setOpaque(false);
        customerControlsPanel.add(customerAccountBox);
        customerControlsPanel.add(addCustomerAccountButton);
+       JButton loyaltyButton=new JButton("Loyalty points");
+       loyaltyButton.addActionListener(e->chooseLoyalty());
+       customerControlsPanel.add(loyaltyButton);
        searchRow.add(customerControlsPanel, BorderLayout.EAST);
 
        JPanel bottomPanel = new JPanel(new BorderLayout(14, 10));
@@ -1985,7 +1992,7 @@ public class MakeASale extends JFrame {
         warmProductSearchCacheInBackground();
         UiTaskRunner.submit(this,"make-sale.search",()->{
                 java.util.List<Object[]> cachedRows = tryFilterCachedProducts(locationId, searchText);
-                if (cachedRows != null) {
+                if (cachedRows != null && !cachedRows.isEmpty()) {
                     return cachedRows;
                 }
                 java.util.List<Object[]> rows = new java.util.ArrayList<>();
@@ -2007,7 +2014,18 @@ public class MakeASale extends JFrame {
                         return;
                     }
                     showSearchResultsPopup(rows, searchText);
-            },failure->{if(showMessages)JOptionPane.showMessageDialog(MakeASale.this,"Database error: "+failure.getMessage());});
+            }, failure -> {
+                if (searchGeneration != productSearchGeneration
+                        || !searchText.equals(searchField.getText().trim())) {
+                    return;
+                }
+                closeSearchPopup();
+                loadingState.failed("Product search: " + failure.getMessage(), false,
+                        () -> searchProducts(false));
+                if (showMessages) {
+                    JOptionPane.showMessageDialog(MakeASale.this, "Product search failed: " + failure.getMessage());
+                }
+            });
     }
 
     private java.util.List<Object[]> tryFilterCachedProducts(int locationId, String searchText) {
@@ -2015,10 +2033,21 @@ public class MakeASale extends JFrame {
         if (cached.isEmpty() || !java.util.Objects.equals(cached.get().scope().locationId(), locationId)) {
             return null;
         }
+        return filterCachedProducts(cached.get().products(), searchText);
+    }
+
+    static java.util.List<Object[]> filterCachedProducts(
+            java.util.List<LanApiClient.CatalogProduct> products, String searchText) {
         java.util.List<Object[]> rows = new java.util.ArrayList<>();
-        for (LanApiClient.CatalogProduct product : cached.get().products()) {
+        for (LanApiClient.CatalogProduct product : products) {
             if (rows.size() >= 250) {
                 break;
+            }
+            // Older servers may omit the search index. Ask the store instead of
+            // treating an incomplete cache as an authoritative no-match result.
+            if (!searchText.isBlank()
+                    && (product.searchableText() == null || product.searchableText().isBlank())) {
+                return null;
             }
             Object[] row = catalogRow(product);
             if (ProductSearchHelper.textMatches(product.searchableText(), searchText)) {
@@ -2901,6 +2930,7 @@ public class MakeASale extends JFrame {
     }
 
     private BigDecimal getFinalTotalAmount() {
+        if(loyaltyPoints>0&&loyaltyPreviewTotal!=null&&java.util.Objects.equals(loyaltyFingerprint,loyaltyCartFingerprint()))return loyaltyPreviewTotal;
         BigDecimal discountPercent = getDiscountPercent();
         BigDecimal preVatTotal = getPreVatSaleTotal(discountPercent);
         BigDecimal total = utils.CurrencyFormatter.normalize(
@@ -3303,6 +3333,7 @@ public class MakeASale extends JFrame {
     }
 
     private void checkout(boolean showReceiptPreview) {
+        if(loyaltyPoints>0&&!java.util.Objects.equals(loyaltyFingerprint,loyaltyCartFingerprint())){loyaltyPoints=0;loyaltyPreviewTotal=null;loyaltyFingerprint=null;updateOverallTotal();}
         if (!commitCurrentCartEdit()) {
             return;
         }
@@ -3389,11 +3420,7 @@ public class MakeASale extends JFrame {
                 discountPercent, cashCollected, saleDiscountApprovalToken, saleDiscountOverrideReason,authorization);
     }
 
-    private void checkoutThroughLanApi(boolean showReceiptPreview, String paymentMethod,
-                                       String paymentReference, CustomerAccountOption customer,
-                                       BigDecimal saleDiscountPercent, BigDecimal cashCollected,
-                                       String saleApprovalToken, String saleApprovalReason,
-                                       LanApiClient.ChargeAuthorization authorization) {
+    private java.util.List<LanApiClient.CheckoutLine> buildCheckoutLines(){
         java.util.List<LanApiClient.CheckoutLine> lines = new java.util.ArrayList<>();
         for (int row = 0; row < cartModel.getRowCount(); row++) {
             int productId = parseIntOrDefault(cartModel.getValueAt(row, CART_COL_ID), -1);
@@ -3412,10 +3439,33 @@ public class MakeASale extends JFrame {
                     isMiscRow(row)
             ));
         }
+        return lines;
+    }
+    private String loyaltyCartFingerprint(){var customer=getSelectedCustomerAccount();return (customer==null?"":customer.customerId)+":"+getDiscountPercent()+":"+(applyCustomerDiscountBox!=null&&applyCustomerDiscountBox.isSelected())+":"+buildCheckoutLines();}
+    private void chooseLoyalty(){
+        if(!commitCurrentCartEdit())return;var customer=getSelectedCustomerAccount();if(customer==null){JOptionPane.showMessageDialog(this,"Select a customer account first.");return;}
+        ui.helpers.LoyaltyDialog.open(this,customer.customerId,points->{
+            var current=getSelectedCustomerAccount();if(current==null||current.customerId!=customer.customerId)return;
+            if(points==0){loyaltyPoints=0;loyaltyPreviewTotal=null;loyaltyFingerprint=null;updateOverallTotal();return;}
+            String fingerprint=loyaltyCartFingerprint();
+            var request=new LanApiClient.CheckoutRequest("CARD","PREVIEW",customer.customerId,getDiscountPercent(),BigDecimal.ZERO,pendingSaleDiscountApproval==null?null:pendingSaleDiscountApproval.approval().lanApprovalToken(),pendingSaleDiscountApproval==null?null:pendingSaleDiscountApproval.approval().reason(),buildCheckoutLines(),null,applyCustomerDiscountBox!=null&&applyCustomerDiscountBox.isSelected(),points);
+            new javax.swing.SwingWorker<com.google.gson.JsonObject,Void>(){
+                protected com.google.gson.JsonObject doInBackground()throws Exception{return LanApiClient.loyaltySalePreview(request);}
+                protected void done(){try{var result=get();if(!fingerprint.equals(loyaltyCartFingerprint()))return;loyaltyPoints=points;loyaltyFingerprint=fingerprint;loyaltyPreviewTotal=result.get("total").getAsBigDecimal();loyaltyPreviewDiscount=result.get("discount").getAsBigDecimal();updateOverallTotal();JOptionPane.showMessageDialog(MakeASale.this,points+" points = "+utils.CurrencyFormatter.format(loyaltyPreviewDiscount)+" off. New total: "+utils.CurrencyFormatter.format(loyaltyPreviewTotal));}catch(Exception e){ui.helpers.LoyaltyDialog.error(MakeASale.this,e);}}
+            }.execute();
+        });
+    }
+
+    private void checkoutThroughLanApi(boolean showReceiptPreview, String paymentMethod,
+                                       String paymentReference, CustomerAccountOption customer,
+                                       BigDecimal saleDiscountPercent, BigDecimal cashCollected,
+                                       String saleApprovalToken, String saleApprovalReason,
+                                       LanApiClient.ChargeAuthorization authorization) {
+        var lines=buildCheckoutLines();
         LanApiClient.CheckoutRequest request = new LanApiClient.CheckoutRequest(
                 paymentMethod, paymentReference, customer == null ? null : customer.customerId,
                 saleDiscountPercent, cashCollected, saleApprovalToken, saleApprovalReason, lines,authorization,
-                applyCustomerDiscountBox!=null&&applyCustomerDiscountBox.isSelected());
+                applyCustomerDiscountBox!=null&&applyCustomerDiscountBox.isSelected(),loyaltyPoints);
         String requestFingerprint = request.toString();
         if (pendingCheckoutKey == null || !requestFingerprint.equals(pendingCheckoutFingerprint)) {
             pendingCheckoutKey = UUID.randomUUID().toString();
@@ -3751,6 +3801,7 @@ public class MakeASale extends JFrame {
     }
 
     private void updateOverallTotal() {
+        if(loyaltyPoints>0&&!java.util.Objects.equals(loyaltyFingerprint,loyaltyCartFingerprint())){loyaltyPoints=0;loyaltyPreviewTotal=null;loyaltyFingerprint=null;}
         BigDecimal subtotal = getCartGrossSubtotal();
         BigDecimal afterItemDiscounts = utils.CurrencyFormatter.normalize(BigDecimal.valueOf(getCartSubtotal()));
         BigDecimal itemDiscountAmount = getItemDiscountTotal();
@@ -3773,7 +3824,9 @@ public class MakeASale extends JFrame {
         if (vatAmountLabel != null) {
             vatAmountLabel.setText("VAT: " + utils.CurrencyFormatter.format(vatAmount));
         }
+        if(loyaltyPoints>0&&loyaltyPreviewTotal!=null)total=loyaltyPreviewTotal;
         totalLabel.setText("Overall Total: " + utils.CurrencyFormatter.format(total));
+        if(loyaltyPoints>0)discountAmountLabel.setText("Discount: "+utils.CurrencyFormatter.format(discountAmount)+" + loyalty "+utils.CurrencyFormatter.format(loyaltyPreviewDiscount));
     }
 
     private BigDecimal promptForCashCollected(BigDecimal amountDue) {

@@ -1,0 +1,10 @@
+SmartStudio 0.1.17
+
+Search badge templates by name with filtered results, previews, and template-folder selection.
+Delete the selected layer using Delete on the canvas or in Layers.
+Resize selected layers using side handles; corner handles preserve aspect ratio.
+Double-click text to edit directly on the canvas. Ctrl+Enter applies and Escape cancels.
+Each badge photo field now holds its own personal photo. Replace or clear the selected photo independently.
+Replace selected image / photo supports both permanent template artwork and personal photo fields.
+Personal photos remain excluded from saved templates. Existing badge undo/redo and print dimensions are preserved.
+Uses the SmartStock 1.1.31 client. AI model weights remain outside application packages.

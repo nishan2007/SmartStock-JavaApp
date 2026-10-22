@@ -30,10 +30,10 @@ public final class LanOrdersDashboardService {
     }
 
     private static int count(Connection c,int locationId,String predicate)throws SQLException {
-        try(PreparedStatement ps=c.prepareStatement("SELECT COUNT(*) FROM custom_orders WHERE ("+predicate+") AND location_id=?")){ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){return rs.next()?rs.getInt(1):0;}}
+        try(PreparedStatement ps=c.prepareStatement("SELECT COUNT(*) FROM custom_orders WHERE order_type='CUSTOM' AND ("+predicate+") AND location_id=?")){ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){return rs.next()?rs.getInt(1):0;}}
     }
     private static BigDecimal sum(Connection c,int locationId,String expression,String predicate)throws SQLException {
-        try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(SUM("+expression+"),0) FROM custom_orders WHERE ("+predicate+") AND location_id=?")){ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){return rs.next()?zero(rs.getBigDecimal(1)):BigDecimal.ZERO;}}
+        try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(SUM("+expression+"),0) FROM custom_orders WHERE order_type='CUSTOM' AND ("+predicate+") AND location_id=?")){ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){return rs.next()?zero(rs.getBigDecimal(1)):BigDecimal.ZERO;}}
     }
     private static BigDecimal refundsToday(Connection c,int locationId,ZoneId zone)throws SQLException {
         String sql="""
@@ -49,12 +49,12 @@ SELECT COUNT(*) FROM (SELECT 1 FROM custom_order_items WHERE is_archived=FALSE A
     }
     private static List<ActionRow> actions(Connection c,int locationId)throws SQLException {
         String sql="""
-SELECT custom_order_id,order_number,status,due_date,customer_name,customer_phone,COALESCE(location_name,'') location_name,COALESCE(assigned_to_name,'') assigned_to_name,COALESCE(balance_due,0) balance_due,pricing_state FROM custom_orders WHERE status NOT IN ('DELIVERED','CANCELLED') AND location_id=? ORDER BY CASE WHEN due_date<CURRENT_DATE THEN 0 WHEN due_date=CURRENT_DATE THEN 1 ELSE 2 END,due_date NULLS LAST,created_at DESC,custom_order_id DESC
+SELECT custom_order_id,order_number,status,due_date,customer_name,customer_phone,COALESCE(location_name,'') location_name,COALESCE(assigned_to_name,'') assigned_to_name,COALESCE(balance_due,0) balance_due,pricing_state FROM custom_orders WHERE order_type='CUSTOM' AND status NOT IN ('DELIVERED','CANCELLED') AND location_id=? ORDER BY CASE WHEN due_date<CURRENT_DATE THEN 0 WHEN due_date=CURRENT_DATE THEN 1 ELSE 2 END,due_date NULLS LAST,created_at DESC,custom_order_id DESC
 """;
         List<ActionRow>out=new ArrayList<>();try(PreparedStatement ps=c.prepareStatement(sql)){ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){Date due=rs.getDate("due_date");out.add(new ActionRow(rs.getLong("custom_order_id"),rs.getString("order_number"),rs.getString("status"),due==null?null:due.toLocalDate(),rs.getString("customer_name"),rs.getString("customer_phone"),rs.getString("location_name"),rs.getString("assigned_to_name"),zero(rs.getBigDecimal("balance_due")),rs.getString("pricing_state")));}}}return out;
     }
     public static List<DeliveredRow> delivered(Connection c,int locationId,boolean all)throws SQLException {
-        String sql="SELECT custom_order_id,order_number,customer_name,COALESCE(customer_phone,''),delivered_at,COALESCE(balance_due,0),pricing_state FROM custom_orders WHERE location_id=? AND status='DELIVERED'"
+        String sql="SELECT custom_order_id,order_number,customer_name,COALESCE(customer_phone,''),delivered_at,COALESCE(balance_due,0),pricing_state FROM custom_orders WHERE location_id=? AND order_type='CUSTOM' AND status='DELIVERED'"
                 +(all?"":" AND delivered_at>=CURRENT_TIMESTAMP-INTERVAL '7 days'")
                 +" ORDER BY delivered_at DESC NULLS LAST,custom_order_id DESC";
         List<DeliveredRow> result=new ArrayList<>();
@@ -95,6 +95,7 @@ SELECT a.created_at,co.order_number,a.action_type,COALESCE(a.field_name,''),COAL
         String oldStatus,oldAssigned;BigDecimal balance;
         try(PreparedStatement ps=c.prepareStatement("SELECT status,assigned_to_name,COALESCE(balance_due,0) FROM custom_orders WHERE custom_order_id=? AND location_id=? FOR UPDATE")){ps.setLong(1,orderId);ps.setInt(2,locationId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("Order was not found for the selected store.");oldStatus=rs.getString(1);oldAssigned=rs.getString(2);balance=zero(rs.getBigDecimal(3));}}
         if("CANCELLED".equals(oldStatus))throw new SQLException("Cancelled orders cannot be reassigned or reopened.");
+        if("DELIVERED".equals(oldStatus))throw new SQLException("Delivered orders cannot be reopened from the production dashboard. Use the return workflow.");
         if("DELIVERED".equals(status)&&CustomOrderPricingService.pending(c,orderId,locationId))throw new SQLException("Use Deliver Lines in order lookup for manager approval before pricing.");
         if("DELIVERED".equals(status)&&balance.signum()>0)throw new SQLException("This order still has a balance due. Complete payment before marking it delivered.");
         String employeeName=null;if(employeeId!=null){try(PreparedStatement ps=c.prepareStatement("SELECT COALESCE(NULLIF(full_name,''),username) FROM users WHERE user_id=? AND COALESCE(is_active,TRUE)=TRUE AND (EXISTS(SELECT 1 FROM user_locations WHERE user_id=? AND location_id=?) OR NOT EXISTS(SELECT 1 FROM user_locations WHERE user_id=?))")){ps.setInt(1,employeeId);ps.setInt(2,employeeId);ps.setInt(3,locationId);ps.setInt(4,employeeId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("The selected employee is not active at this store.");employeeName=rs.getString(1);}}}

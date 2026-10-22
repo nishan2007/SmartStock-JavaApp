@@ -1,0 +1,8 @@
+SmartStock 1.1.33
+
+Daily-rate payroll now supports an explicit Half Day selection for each employee work date.
+Double-click an employee's payroll summary and tick or clear Half Day in Work Sessions; pay recalculates to 50% or the full daily rate.
+Daily-rate employees can mark their own completed day using the Half Day button after clock-out.
+Multiple sessions on a date share one setting, and payroll periods with recorded payments are protected from classification changes.
+Includes the LAN HTTPS transport fix that avoids the Windows reverse-DNS stall before TLS negotiation.
+Application packages retain inference runtimes and licences and exclude AI model weights.

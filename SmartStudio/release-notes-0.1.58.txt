@@ -1,0 +1,3 @@
+SmartStudio 0.1.58
+- Double-click a photo field on the badge canvas to choose or replace its photo, then crop it and enter person details.
+- Retains support for photo-field sources up to 20 MiB and 100 megapixels, including JPG/JPEG.

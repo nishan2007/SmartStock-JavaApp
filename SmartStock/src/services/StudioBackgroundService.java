@@ -10,6 +10,7 @@ import javax.imageio.ImageIO;
 /** Shared local studio processing; both clients use the same bounded worker. */
 public final class StudioBackgroundService {
     private static final Semaphore WORKER = new Semaphore(1);
+    private static volatile boolean prewarmed;
     private StudioBackgroundService() { }
 
     public static void validate(byte[] bytes) throws Exception {
@@ -61,7 +62,7 @@ public final class StudioBackgroundService {
     private static byte[] transform(byte[] bytes,StudioQuality quality,boolean cleanEdges,boolean removeBackground,int scale,
                                    java.nio.file.Path removalModel,java.nio.file.Path enhancementModel,
                                    StudioImageEnhancer.Mode mode,StudioImageEnhancer.Progress progress)throws Exception {
-        if (scale == 1 && removeBackground) return remove(bytes, quality, cleanEdges);
+        if (scale == 1 && removeBackground) return process(bytes,quality,cleanEdges,false,mode,progress,removalModel);
         StudioImageEnhancer.validateScale(scale);
         validate(bytes);
         if (!WORKER.tryAcquire()) throw new BusyException();
@@ -73,10 +74,8 @@ public final class StudioBackgroundService {
             StudioEnhancementModel.verify(model);
             if (removeBackground) {
                 if(progress!=null){if(progress.cancelled())throw new java.util.concurrent.CancellationException("Image processing cancelled");progress.update("CPU",0,0,"Removing background");}
-                try (var remover = removalModel == null ? new CatalogStudioImageProcessor(quality)
-                        : new CatalogStudioImageProcessor(removalModel, quality)) {
-                    original = ImageIO.read(new ByteArrayInputStream(remover.removeBackgroundPng(bytes, cleanEdges)));
-                }
+                byte[] cutout=StudioRemovalRuntime.use(quality,mode,removalModel,progress,remover->remover.removeBackgroundPng(bytes,cleanEdges));
+                original=ImageIO.read(new ByteArrayInputStream(cutout));
             }
             try (var enhancer = new StudioImageEnhancer(model)) {
                 var output = new java.io.ByteArrayOutputStream();
@@ -89,11 +88,31 @@ public final class StudioBackgroundService {
     }
 
     private static byte[] process(byte[] bytes, StudioQuality quality, boolean cleanEdges, boolean review) throws Exception {
+        return process(bytes,quality,cleanEdges,review,StudioImageEnhancer.Mode.AUTO,null);
+    }
+    private static byte[] process(byte[] bytes,StudioQuality quality,boolean cleanEdges,boolean review,StudioImageEnhancer.Mode mode,StudioImageEnhancer.Progress progress)throws Exception{
+        return process(bytes,quality,cleanEdges,review,mode,progress,null);
+    }
+    private static byte[] process(byte[] bytes,StudioQuality quality,boolean cleanEdges,boolean review,StudioImageEnhancer.Mode mode,StudioImageEnhancer.Progress progress,java.nio.file.Path model)throws Exception{
         validate(bytes);
         if (!WORKER.tryAcquire()) throw new BusyException();
-        try (var processor = new CatalogStudioImageProcessor(quality)) {
-            return review ? processor.makeStudioJpeg(bytes) : processor.removeBackgroundPng(bytes, cleanEdges);
+        try {
+            byte[] result=StudioRemovalRuntime.use(quality,mode,model,progress,processor->review?processor.makeStudioJpeg(bytes):processor.removeBackgroundPng(bytes,cleanEdges));
+            return result;
         } finally { WORKER.release(); }
+    }
+
+    static byte[] prepareQueuedPhoto(byte[] bytes)throws Exception{
+        // No waiting behind an interactive operation, and no cold model loads under RAM pressure.
+        if(!StudioRemovalRuntime.canPrepare())throw new BusyException();
+        return process(bytes,StudioQuality.BEST,false,false,StudioImageEnhancer.Mode.AUTO,null);
+    }
+    static void prewarmBest()throws Exception{
+        if(prewarmed)return;
+        if(StudioRemovalRuntime.hasSession()){prewarmed=true;return;}
+        if(!StudioRemovalRuntime.canPrepare()||!StudioModelService.current().available(StudioQuality.BEST)||!WORKER.tryAcquire())return;
+        try{StudioRemovalRuntime.use(StudioQuality.BEST,StudioImageEnhancer.Mode.AUTO,null,null,processor->{processor.warmUp();return null;});prewarmed=true;}
+        finally{WORKER.release();}
     }
 
     public static final class BusyException extends Exception {

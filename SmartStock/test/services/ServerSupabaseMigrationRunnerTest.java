@@ -52,7 +52,15 @@ class ServerSupabaseMigrationRunnerTest {
 
     @Test
     void v1ManifestContainsOnlyTheCanonicalBaselineAndImmutablePostV1Chain() {
-        assertEquals(29, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertEquals(36, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261022180000_custom_order_inventory_products.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261021190100_loyalty_refund_metadata_cloud.sql"));
+        assertFalse(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261021190000_customer_loyalty.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261021120000_overseas_orders.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261020120100_employee_web_permissions.sql"));
+        assertFalse(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261020120000_employee_web.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261019150100_studio_submission_permissions.sql"));
+        assertFalse(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261019150000_studio_template_submissions.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261011120100_custom_order_pending_pricing_permissions.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261008190000_manual_custom_order_entry.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261003173203_cross_store_egress_cloud.sql"));

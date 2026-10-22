@@ -50,7 +50,7 @@ public final class CatalogPhotoStudioDialog extends JDialog {
     private final JButton reject = new JButton("Reject photo");
     private final JButton importPhotos = new JButton("Retry approved uploads");
     private final JButton reload = new JButton("Refresh shared reviews");
-    private final JCheckBox showCompleted = new JCheckBox("Show completed photos");
+    private final JCheckBox showApproved = new JCheckBox("Show approved photos");
     private State state;
     private boolean busy;
     private final Map<Long,Long> loadedPhotos = new HashMap<>();
@@ -64,7 +64,7 @@ public final class CatalogPhotoStudioDialog extends JDialog {
         JPanel root=new JPanel(new BorderLayout(12,12));root.setBorder(BorderFactory.createEmptyBorder(14,14,14,14));
         JLabel heading=new JLabel("Review shared previews from any connected computer. Approval makes the preview the main photo and keeps the original as a secondary photo.");
         JPanel header=new JPanel(new BorderLayout());header.add(heading,BorderLayout.NORTH);
-        header.add(showCompleted,BorderLayout.SOUTH);root.add(header,BorderLayout.NORTH);
+        header.add(showApproved,BorderLayout.SOUTH);root.add(header,BorderLayout.NORTH);
         list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         list.addListSelectionListener(e->{if(!e.getValueIsAdjusting())showSelected();});
         JScrollPane products=new JScrollPane(list);products.setPreferredSize(new Dimension(310,500));
@@ -79,7 +79,7 @@ public final class CatalogPhotoStudioDialog extends JDialog {
         root.add(footer,BorderLayout.SOUTH);setContentPane(root);
         generate.addActionListener(e->generate());retry.addActionListener(e->retryFailed());approve.addActionListener(e->approveSelected());
         reject.addActionListener(e->decide("rejected"));importPhotos.addActionListener(e->importApproved(null));
-        showCompleted.addActionListener(e->refresh());reload.addActionListener(e->loadSharedReviews());
+        showApproved.addActionListener(e->refresh());reload.addActionListener(e->loadSharedReviews());
         refresh();
         loadSharedReviews();
     }
@@ -98,7 +98,7 @@ public final class CatalogPhotoStudioDialog extends JDialog {
         Review selected=list.getSelectedValue();model.clear();
         int selectedIndex=-1;
         for(Review review:state.items){
-            if(!showCompleted.isSelected()&&("approved".equals(review.decision)||"imported".equals(review.decision)))continue;
+            if(!showApproved.isSelected()&&("approved".equals(review.decision)||"imported".equals(review.decision)))continue;
             if(review==selected)selectedIndex=model.size();
             model.addElement(review);
         }
@@ -107,7 +107,8 @@ public final class CatalogPhotoStudioDialog extends JDialog {
         else showSelected();
         int approved=0,imported=0,rejected=0,failed=0;
         for(Review row:state.items){if("approved".equals(row.decision))approved++;if("imported".equals(row.decision))imported++;if("rejected".equals(row.decision))rejected++;if("failed".equals(row.decision)||"import_failed".equals(row.decision))failed++;}
-        status.setText(state.items.size()+" previews  ·  "+approved+" approved  ·  "+imported+" added  ·  "+rejected+" rejected  ·  "+failed+" failed");
+        int hidden=showApproved.isSelected()?0:approved+imported;
+        status.setText(model.size()+" shown  ·  "+hidden+" approved hidden  ·  "+rejected+" rejected  ·  "+failed+" failed");
     }
 
     private void showSelected(){

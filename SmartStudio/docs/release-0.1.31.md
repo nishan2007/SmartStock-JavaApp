@@ -1,0 +1,3 @@
+# SmartStudio 0.1.31: page previews
+
+Adds a left page strip beside the canvas in cards and labels. Multi-page documents show numbered previews; selection stays synchronized with the page dropdown. Single-page documents hide the strip. Divider and preview slider adjust size; viewport scrolls long lists. Visible-page rendering runs in a background worker, generation checks reject stale results, and the cache is bounded to 64 thumbnails. Edits debounce preview refreshes. All 89 tests passed, including 120-page navigation and single-page hiding. Inspected a rendered eight-page Swing strip proof; native installed launcher passed. Local main JAR updated with launcher backup, existing windows preserved. Not published. SmartStock not restarted.

@@ -14,6 +14,7 @@ public class CashDrawer {
     private final BigDecimal startingCashAmount;
     private final Map<Integer, Integer> floatMix;
     private final boolean active;
+    private boolean handlesOverseasCash;
     private final int activeDeviceCount;
 
     public CashDrawer(
@@ -38,6 +39,10 @@ public class CashDrawer {
         this.activeDeviceCount = activeDeviceCount;
     }
 
+    public CashDrawer(long id,int location,String locationName,String name,String description,BigDecimal starting,Map<Integer,Integer>mix,boolean active,int count,boolean overseas) {
+        this(id,location,locationName,name,description,starting,mix,active,count);this.handlesOverseasCash=overseas;
+    }
+    public boolean handlesOverseasCash(){return handlesOverseasCash;}
     public long getCashDrawerId() { return cashDrawerId; }
     public int getLocationId() { return locationId; }
     public String getLocationName() { return locationName; }

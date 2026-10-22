@@ -109,7 +109,7 @@ try {
         "main-class=app.Main",
         "arguments=--sync-service",
         "description=SmartStock LAN API and synchronization server",
-        "icon=$WindowsIcon"
+        "icon=$($WindowsIcon.Replace('\', '/'))"
     )
 
     New-Item -ItemType Directory -Force -Path $Release | Out-Null

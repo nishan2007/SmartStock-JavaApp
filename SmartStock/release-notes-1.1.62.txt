@@ -1,0 +1,10 @@
+SmartStock 1.1.62 (Windows build 101062)
+
+- Adds Edit to employee-web session entries for users with the existing Time Clock Management permission and employee-web access.
+- Correct clock-in, lunch, break and clock-out timestamps in the store timezone. Blank correction reasons save as N/A.
+- Recalculates worked hours and earnings through the existing correction service, preserves before/after audit records and rejects stale edits.
+- Includes all completed cumulative SmartStock application changes from prior chats, including employee-web activation and Admin-only default access permissions.
+- Unfinished Overseas Orders work is excluded from this release.
+- AI model weights remain outside app updates and installers; runtime and licences remain included.
+
+Live service/database upgrade, production proxy and real-phone workflows, installed upgrade/rollback, and physical hardware checks require separate acceptance.

@@ -1,0 +1,11 @@
+SmartStock 1.1.61 (Windows build 101061)
+
+- Adds the Employee Web App with administrator-issued, single-use browser activation QR codes and revocable browser access.
+- Adds dedicated Access Employee Web App and View All Employees in Web App permissions. Both are assigned to Admin only by default; administrators can grant them to other roles later.
+- Employees can view their own time-clock history. Authorized managers can search employees across all stores and optionally include deactivated employees.
+- Shows session clock-in, lunch, break and clock-out timestamps, worked hours and calculated earnings using existing payroll rules. Overnight sessions remain one history entry; salary remains a pay-period amount.
+- Adds date filtering, paginated history, responsive phone/desktop screens, and clear open-session, missing-timestamp and automatic-closure states.
+- Adds Status > Employee Web App controls on the active server. The dedicated gateway uses HTTPS loopback port 8450 and supports a configured public origin or a temporary tunnel.
+- Includes cumulative application changes from 1.1.60. AI model weights remain outside application updates and installers.
+
+Windows update ZIP and all-in-one installer. Live server/proxy setup, real-phone activation and login, store payroll comparison, installed upgrade/rollback, and physical hardware flows require separate deployment acceptance.

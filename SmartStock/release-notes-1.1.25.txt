@@ -1,0 +1,5 @@
+SmartStock 1.1.25 (Windows build 101025)
+
+Publishing Workspace supports precise movement after selecting an object on the canvas: arrow keys move 0.1 mm; Shift + arrow moves 1 mm. Locked objects remain fixed, and movements can be undone. Text-entry fields retain their normal arrow-key behavior.
+
+Update the store server before registers.

@@ -1,0 +1,1 @@
+Adds missing business-card and label design undo/redo history. Ctrl+Z undoes, Ctrl+Y or Ctrl+Shift+Z redoes. Adds toolbar buttons, groups each drag into one undo step, restores separate artwork/assets and clears history when opening a different template. Includes Letter defaults from 0.1.29.

@@ -18,7 +18,7 @@ final class StorefrontAdminService {
     static Map<String,Object> run(Connection c,JsonObject body,int user,int location,String name,UUID device,LanSalesService.ApprovalConsumer approvals)throws Exception{
         if("WEBSITE_STATUS".equals(text(body,"action"))){require(c,user,"VIEW_SALES");return websiteStatus(c,location);}
         if(ServerRoleGuard.state()!=ServerRoleGuard.State.PRIMARY)throw new IllegalArgumentException("Use the active store server.");
-        String action=text(body,"action");require(c,user,switch(action){case "SETTINGS","CAMPAIGN","PUBLISH","PUBLISH_ALL_ACTIVE","SET_ENABLED","PROJECT_DRAFT","PROJECT_SAVE","PROJECT_COVER","PROJECT_MEDIA_UPLOAD","PROJECT_MEDIA_DELETE","PROJECT_STATUS","PROJECT_STATE","PROJECT_SHARE","SERVICE_STATE","SERVICE_AVAILABILITY"->"COMPANY_PREFERENCES";case "QUOTE_STATE","QUOTE_STATUS","QUOTE_FILES","QUOTE_PROOF","QUOTE_LINK_ORDER"->"MANAGE_CUSTOM_ORDERS";case "LINK","LINK_SEARCH"->"CUSTOMER_ACCOUNTS";case "STATE","WEBSITE_STATUS"->"VIEW_SALES";default->"MAKE_SALE";});
+        String action=text(body,"action");require(c,user,switch(action){case "SETTINGS","CAMPAIGN","PUBLISH","PUBLISH_ALL_ACTIVE","SET_ENABLED","PROJECT_DRAFT","PROJECT_SAVE","PROJECT_COVER","PROJECT_MEDIA_UPLOAD","PROJECT_MEDIA_DELETE","PROJECT_STATUS","PROJECT_STATE","PROJECT_SHARE","SERVICE_STATE","SERVICE_AVAILABILITY"->"COMPANY_PREFERENCES";case "QUOTE_STATE","QUOTE_STATUS","QUOTE_FILES","QUOTE_PROOF","QUOTE_LINK_ORDER","QUOTE_SHIRT_IMPORT"->"MANAGE_CUSTOM_ORDERS";case "LINK","LINK_SEARCH"->"CUSTOMER_ACCOUNTS";case "STATE","WEBSITE_STATUS"->"VIEW_SALES";default->"MAKE_SALE";});
         if(action.equals("LINK_SEARCH")){
             String email=StorefrontIdentityDirectory.email(text(body,"email"));
             JsonObject identity=StorefrontIdentityDirectory.byEmail(email);
@@ -28,6 +28,7 @@ final class StorefrontAdminService {
         StorefrontRuntime.requirePrimary();
         lock(c,location);
         if(action.equals("QUOTE_STATE"))return Map.of("quotes",StorefrontQuoteRequests.staff(c,location));
+        if(action.equals("QUOTE_SHIRT_IMPORT"))return Map.of("quote",StorefrontQuoteRequests.shirtImport(c,location,UUID.fromString(text(body,"requestId"))));
         if(action.equals("QUOTE_FILES"))return Map.of("files",StorefrontQuoteRequests.files(c,location,UUID.fromString(text(body,"requestId"))));
         if(action.equals("QUOTE_LINK_ORDER")){
             JsonObject result=StorefrontQuoteRequests.linkOrder(c,location,user,body);StorefrontRuntime.requirePrimary();

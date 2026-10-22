@@ -2,7 +2,7 @@
   "name": "smartstock-storefront",
   "main": "src/index.js",
   "compatibility_date": "2026-09-24",
-  "durable_objects": {"bindings": [{"name":"STORES","class_name":"StoreCoordinator"}]},
-  "migrations": [{"tag":"v1","new_sqlite_classes":["StoreCoordinator"]}],
+  "durable_objects": {"bindings": [{"name":"STORES","class_name":"StoreCoordinator"},{"name":"CAPTURES","class_name":"StudioCapture"}]},
+  "migrations": [{"tag":"v1","new_sqlite_classes":["StoreCoordinator"]},{"tag":"v2-studio-capture","new_sqlite_classes":["StudioCapture"]}],
   "vars": {"ORIGINS_JSON":"[]"}
 }

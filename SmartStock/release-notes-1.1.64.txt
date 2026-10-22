@@ -1,0 +1,7 @@
+SmartStock 1.1.64 - Sale search hotfix
+
+Fixes the server error preventing Make a Sale product searches and inventory searches from loading. Shirt-designer search fields now apply only to custom items, preserving shirt search without referencing nonexistent regular-product columns.
+
+Sale search now retries the store when its cached catalog has no matches or lacks a search index, and shows a visible error with Retry when a search request fails.
+
+Update POS-SERVER first, then registers. This update contains no AI model weights and preserves installed models.

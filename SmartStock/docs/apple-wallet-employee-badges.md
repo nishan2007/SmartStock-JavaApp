@@ -30,9 +30,88 @@ The enrollment handler records sanitized local failures in
 or signing password. A secondary audit-write failure is logged locally but does
 not discard an otherwise successfully signed pass response.
 
-True NFC is disabled by default. Enable it only after a certified Apple VAS provider and reader have been validated. The additional settings are `SMARTSTOCK_WALLET_NFC_ENABLED`, `SMARTSTOCK_WALLET_NFC_PROVIDER`, `SMARTSTOCK_WALLET_NFC_PUBLIC_KEY`, and `SMARTSTOCK_WALLET_TRUSTED_READERS`. The ACR122U remains for physical SmartStock NFC cards and cannot read Apple Wallet VAS passes.
+True NFC is disabled by default. Enable it only after a certified Apple VAS provider and reader have been validated. The additional settings are `SMARTSTOCK_WALLET_NFC_ENABLED`, `SMARTSTOCK_WALLET_NFC_PROVIDER`, `SMARTSTOCK_WALLET_NFC_PUBLIC_KEY`, and `SMARTSTOCK_WALLET_TRUSTED_READERS`. The supported ACR122U integration is for physical SmartStock NFC cards; Apple Wallet VAS badge reading has not been validated on this reader.
 
 Before production use, verify the exact pass on an iPhone, scan it with the deployed barcode scanner, test required-PIN and badge-only policies, revoke it, and confirm that the revoked pass can no longer sign in.
+
+## Read-only reader diagnostics
+
+Compile the standalone presence diagnostic with Java 17 or later. Run it on the
+computer physically connected to the reader, using its installed Java runtime:
+
+```powershell
+javac -d "$env:TEMP" tools/NfcReaderDiagnostics.java
+java -cp "$env:TEMP" NfcReaderDiagnostics 60
+```
+
+The optional duration is 0 through 120 seconds; omit it for a single snapshot.
+The tool lists all PC/SC readers and reports contactless-device presence changes.
+For ACR122 readers it also queries the firmware and polling configuration using
+the read-only reader escape commands documented in the
+[ACS API manual](https://downloads.acs.com.hk/drivers/en/API-ACR122U-2.02.pdf),
+sections 6.3/6.4 and Appendix A. If the driver blocks these commands, the tool
+reports the limitation without changing registry entries or reader configuration.
+It sends no card commands, writes no cards, and reads no UID, badge credential or
+payment data. A phone waking Wallet or appearing as a contactless device does not
+verify VAS support or authenticate an employee. A missing presence event does not
+prove that the hardware cannot communicate with a phone through another protocol.
+
+Keep NFC issuance disabled until an Apple-issued NFC pass certificate, a validated
+reader/provider integration and server-side presentation verification are in
+place. The provider adapter is currently a disabled boundary, not an implemented
+VAS transport. Setting environment variables alone cannot enable it.
+
+Reference requirements: [Apple contactless passes](https://developer.apple.com/wallet/loyalty-passes/)
+and [ACS WalletMate specifications and VAS tooling](https://www.acs.com.hk/en/products/548/walletmate-mobile-wallet-nfc-reader-apple-vas-google-smart-tap-certified/).
+
+## Experimental ACR122U VAS discovery
+
+`services.ExperimentalWalletVasProbe` is a separate command-line experiment, not
+the production `WalletNfcReaderAdapter`. Compile it with Java 17:
+
+```powershell
+javac -d "$env:TEMP\wallet-probe" src/services/ExperimentalWalletVasProbe.java
+java -cp "$env:TEMP\wallet-probe" services.ExperimentalWalletVasProbe 60
+java -cp "$env:TEMP\wallet-probe" services.ExperimentalWalletVasProbe 60 --raw
+```
+
+Run one command at a time with exactly one ACR122 reader connected. The first uses
+PC/SC ISO7816 exchange; `--raw` wraps the same SELECT in the ACS direct-transmit
+command and PN532 InDataExchange. Both rely on normal reader polling to establish
+target 1 before exchanging commands. Neither implements Apple ECP polling or
+automatic pass presentation. Unlock the phone, hold it against the reader, and
+remove it between attempts. A session with zero attempts means PC/SC never
+reported a device; it says nothing about VAS SELECT acceptance.
+
+The only phone command is SELECT for `OSE.VAS.01`. Response status and a bounded
+BER-TLV application-label check are logged; raw phone responses, UIDs and
+credentials are not. A successful SELECT with an `ApplePay` label establishes
+discovery only. There is no GET DATA, pass decryption, replay verification or
+employee authentication. No production NFC gate is enabled by this tool, and it
+does not change reader settings, drivers, registry entries or store data.
+
+Transport commands are documented in the ACS API manual. The VAS discovery
+command and example response are based on the original
+[kormax Apple VAS protocol research](https://github.com/kormax/apple-vas), not an
+Apple-certified implementation or proof that this reader is VAS-certified.
+
+## Manager overrides with Wallet QR badges
+
+The shared manager approval dialog accepts a Wallet QR scan in the
+**Manager Username / Email / Wallet Badge** field. Keyboard-wedge scanner framing
+is normalized the same way as register login. The prompt switches to an employee
+PIN label; supply the manager's employee PIN when company badge security requires
+it, or leave it blank when the company permits badge-only authentication. A scan
+does not submit the approval automatically. Enter the required override reason
+and choose OK.
+
+The server authenticates the active Wallet credential at the requesting
+register's store using the same revocation, active-employee, store-membership and
+PIN checks as Wallet login. It then enforces the requested override permission
+and issues the existing device/requester/action/resource-bound five-minute
+approval token. A Wallet badge never grants permissions by itself. Physical NFC
+badge and username/password approval remain available. This adds barcode
+approval, not Apple Wallet NFC approval.
 
 ## Wallet template editor
 

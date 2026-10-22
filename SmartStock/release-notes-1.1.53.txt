@@ -1,0 +1,2 @@
+SmartStock 1.1.53
+Adds private store-local badge print records with opt-in per-template retention, original photos and crop settings, and server-enforced admin history access. Reprints use the current template format. Includes shared template deletion with owner-store permissions and revision/assignment conflict checks. Update the store server before SmartStudio.

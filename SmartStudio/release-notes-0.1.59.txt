@@ -1,0 +1,4 @@
+SmartStudio 0.1.59
+- Add image/photo transparency controls, retained in saved designs, exports and print rendering.
+- Add background removal inside the photo framing editor, available when choosing or editing an existing photo.
+- Add an Edit photo / crop / background button beside photo replacement. Preserve framing, position, rotation and corrections during background removal.

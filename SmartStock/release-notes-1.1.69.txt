@@ -1,0 +1,5 @@
+SmartStock 1.1.69
+- Include cumulative changes from the shared SmartStock workspace, including account-charge receipt balances and signature lines, saved photo print records, overseas orders, shirt designer improvements and store website updates.
+- Add the Sublimation product flag, inventory filter and dedicated website product section, with its ordered local schema migration.
+- Retain authenticated shared bill book templates and existing local-first server authority.
+- Update the store server before registers and SmartStudio 0.1.62. Publishing does not install the update or repair a disconnected website origin.

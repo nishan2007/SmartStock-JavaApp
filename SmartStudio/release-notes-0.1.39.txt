@@ -1,0 +1,1 @@
+Adds mouse-wheel zoom to the photo framing editor. Scroll up over the photo preview or zoom slider to zoom in, and down to zoom out. The zoom percentage and slider stay synchronized, with fractional scrolling supported for smooth trackpads. Applies to passport pictures and other workspaces using the shared photo framing editor.

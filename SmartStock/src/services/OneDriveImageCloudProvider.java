@@ -179,10 +179,17 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
         String folder=switch(category==null?"":category.toUpperCase(Locale.ROOT)){
             case "CUSTOM_ITEM"->"custom-items"; case "CUSTOM_VARIANT"->"custom-variants";
             case "CUSTOMER_PHOTO"->"customer-photos";
+            case "EMPLOYEE_PHOTO"->"employee-photos";
+            case "COMPANY_LOGO"->"company-logos";
+            case "BADGE_LOGO"->"badge-logos";
+            case "IMAGE"->"images";
             case "PROJECT"->"project-artwork";
             case "QUOTE_ARTWORK"->"quote-artwork";
+            case "OVERSEAS_ORDER"->"overseas-orders";
             default->"products";};
-        if("PROJECT".equalsIgnoreCase(category)||"QUOTE_ARTWORK".equalsIgnoreCase(category))
+        if("OVERSEAS_ORDER".equalsIgnoreCase(category)||"PROJECT".equalsIgnoreCase(category)||"QUOTE_ARTWORK".equalsIgnoreCase(category)
+                ||"EMPLOYEE_PHOTO".equalsIgnoreCase(category)||"COMPANY_LOGO".equalsIgnoreCase(category)
+                ||"BADGE_LOGO".equalsIgnoreCase(category)||"IMAGE".equalsIgnoreCase(category))
             return folder+"-"+id+"-"+filename(sourcePath);
         return folder+"/"+filename(sourcePath);
     }
@@ -228,12 +235,27 @@ final class OneDriveImageCloudProvider implements ImageCloudProvider {
     private static <T> HttpResponse<T> sendAllowNotFound(HttpRequest request,HttpResponse.BodyHandler<T> handler,String operation)throws Exception{
         HttpResponse<T> response=null;
         for(int attempt=0;attempt<3;attempt++){
-            response=HTTP.send(request,handler);
+            response=awaitResponse(HTTP.sendAsync(request,handler),
+                    request.timeout().orElse(Duration.ofSeconds(90)));
             if(!isRetryableStatus(response.statusCode())||attempt==2)return response;
             long delay=response.headers().firstValue("Retry-After").flatMap(OneDriveImageCloudProvider::seconds).orElse(1L);
             Thread.sleep(Math.min(5L,Math.max(1L,delay))*1000L);
         }
         throw new IOException("OneDrive image "+operation+" did not return a response.");
+    }
+    // HttpRequest.timeout may expire before the response body finishes. Bound the
+    // complete transfer so a stalled image body cannot hold the store sync lock.
+    static <T> T awaitResponse(java.util.concurrent.CompletableFuture<T> pending,Duration timeout)throws Exception{
+        try{return pending.get(timeout.toMillis(),java.util.concurrent.TimeUnit.MILLISECONDS);}
+        catch(java.util.concurrent.TimeoutException ex){
+            pending.cancel(true);
+            throw new java.net.http.HttpTimeoutException("OneDrive response body timed out.");
+        }catch(InterruptedException ex){
+            pending.cancel(true);Thread.currentThread().interrupt();throw ex;
+        }catch(java.util.concurrent.ExecutionException ex){
+            if(ex.getCause() instanceof Exception cause)throw cause;
+            throw ex;
+        }
     }
     static boolean isRetryableStatus(int status){return status==429||status==408||status>=500;}
     private static java.util.Optional<Long> seconds(String value){try{return java.util.Optional.of(Long.parseLong(value));}catch(Exception ex){return java.util.Optional.empty();}}

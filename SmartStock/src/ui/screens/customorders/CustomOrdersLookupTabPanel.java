@@ -66,7 +66,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         JButton refundButton = new JButton("Refund");
         JButton productionButton = new JButton("Production");
         JButton mediaButton = new JButton("Files & Design Approval");
-        JButton deliveredButton = new JButton("Deliver Lines");
+        JButton deliveredButton = new JButton("Delivery / Calls");
         JButton previewSlipButton = new JButton("Preview Slip");
         JButton printSlipButton = new JButton("Print Slip");
         JButton reprintLabelButton = new JButton("Reprint Order Label(s)");
@@ -269,7 +269,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
                     deliveredButton.setEnabled(true);
                     return;
                 }
-                handler.markLookupLinesDelivered(orderId, deliveryRequest.lineIds(), deliveryRequest.notes(), this,
+                handler.updateLookupLineDelivery(orderId, deliveryRequest.lineIds(), deliveryRequest.status(), deliveryRequest.notes(), this,
                         success -> {
                             deliveredButton.setEnabled(true);
                             if (success) refreshAfterMutation(handler, orderId);
@@ -479,7 +479,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
 
     private LineDeliveryRequest promptLineDelivery(List<LineDeliveryOption> lines) {
         DefaultTableModel deliveryModel = new DefaultTableModel(
-                new Object[]{"Deliver", "Line ID", "Item", "Variant", "Status", "Return"},
+                new Object[]{"Select", "Line ID", "Item", "Variant", "Status", "Return"},
                 0
         ) {
             @Override
@@ -513,15 +513,18 @@ class CustomOrdersLookupTabPanel extends JPanel {
         notesArea.setLineWrap(true);
         notesArea.setWrapStyleWord(true);
         JPanel panel = new JPanel(new BorderLayout(8, 8));
-        JButton deliverAllButton = new JButton("Deliver All");
+        JComboBox<String> deliveryStatusBox = new JComboBox<>(new String[]{"Delivered", "Called", "Called - No Answer"});
+        JButton deliverAllButton = new JButton("Select All");
         styleDialogButton(deliverAllButton);
-        deliverAllButton.setToolTipText("Select all pending lines. Press OK to record delivery.");
+        deliverAllButton.setToolTipText("Select all pending lines, then choose the delivery or call status.");
         deliverAllButton.addActionListener(e -> {
             if(deliveryTable.isEditing())deliveryTable.getCellEditor().stopCellEditing();
             for(int row=0;row<deliveryModel.getRowCount();row++)
                 deliveryModel.setValueAt(deliveryModel.isCellEditable(row,0),row,0);
         });
         JPanel deliveryActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        deliveryActions.add(new JLabel("Set Status: "));
+        deliveryActions.add(deliveryStatusBox);
         deliveryActions.add(deliverAllButton);
         panel.add(deliveryActions, BorderLayout.NORTH);
         panel.add(new JScrollPane(deliveryTable), BorderLayout.CENTER);
@@ -531,7 +534,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         panel.add(notesPanel, BorderLayout.SOUTH);
         panel.setPreferredSize(new Dimension(780, 360));
 
-        int choice = JOptionPane.showConfirmDialog(this, panel, "Deliver Order Lines", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int choice = JOptionPane.showConfirmDialog(this, panel, "Delivery / Call Status", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (choice != JOptionPane.OK_OPTION) {
             return null;
         }
@@ -543,10 +546,11 @@ class CustomOrdersLookupTabPanel extends JPanel {
             }
         }
         if (lineIds.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Select at least one order line to deliver.");
+            JOptionPane.showMessageDialog(this, "Select at least one order line to update.");
             return null;
         }
-        return new LineDeliveryRequest(lineIds, notesArea.getText() == null ? "" : notesArea.getText().trim());
+        String status = switch (deliveryStatusBox.getSelectedIndex()) { case 1 -> "CALLED"; case 2 -> "CALLED_NO_ANSWER"; default -> "DELIVERED"; };
+        return new LineDeliveryRequest(lineIds, status, notesArea.getText() == null ? "" : notesArea.getText().trim());
     }
 
     private ProductionUpdateRequest promptProductionUpdate(List<ProductionLineOption> lines) {
@@ -581,6 +585,8 @@ class CustomOrdersLookupTabPanel extends JPanel {
         productionTable.getColumnModel().getColumn(1).setPreferredWidth(0);
 
         JComboBox<String> statusBox = new JComboBox<>(new String[]{
+                "Started",
+                "Waiting for approval",
                 "Design Approved",
                 "Printed",
                 "Finished",
@@ -699,6 +705,11 @@ class CustomOrdersLookupTabPanel extends JPanel {
                                    Consumer<Boolean> completion);
         void markLookupLinesDelivered(Long orderId, List<Long> lineIds, String notes,
                                       Component parent, Consumer<Boolean> completion);
+        default void updateLookupLineDelivery(Long orderId, List<Long> lineIds, String status, String notes,
+                                              Component parent, Consumer<Boolean> completion) {
+            if ("DELIVERED".equals(status)) markLookupLinesDelivered(orderId,lineIds,notes,parent,completion);
+            else completion.accept(false);
+        }
         void loadProductionLines(Long orderId, Consumer<List<ProductionLineOption>> completion);
         void updateProductionLines(Long orderId, List<Long> lineIds, String productionStatus,
                                    String notes, Component parent, Consumer<Boolean> completion);
@@ -757,7 +768,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
     ) {
     }
 
-    private record LineDeliveryRequest(List<Long> lineIds, String notes) {
+    private record LineDeliveryRequest(List<Long> lineIds, String status, String notes) {
     }
 
     private record ProductionUpdateRequest(List<Long> lineIds, String status, String notes) {

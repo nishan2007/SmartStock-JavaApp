@@ -1,0 +1,2 @@
+SmartStock 1.1.54
+Adds private persistent organization submission queues for database-enabled badge templates. Supports first-use organization access codes, permission-protected resets, stable copyable private links, bounded website sessions and lockouts, and staff review/print claims. Public submissions are validated against current template fields/photos and remain store-local. Requires the matching storefront gateway deployment and SmartStudio 0.1.49.

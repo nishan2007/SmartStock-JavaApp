@@ -1,6 +1,7 @@
 package services;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -18,12 +19,22 @@ public final class SyncOutboxService {
 
     public static void recordEvent(Connection conn, String eventType, Map<String, ?> payload,
                                    Integer locationId, String deviceId, Integer userId) throws SQLException {
-        recordJsonEvent(conn,eventType,SyncJson.object(payload == null ? Map.of() : payload),
+        recordJsonEvent(conn,eventType,JsonParser.parseString(SyncJson.object(payload == null ? Map.of() : payload)).getAsJsonObject(),
                 locationId,deviceId,userId);
     }
 
     static void recordJsonEvent(Connection conn,String eventType,JsonObject payload,
                                 Integer locationId,String deviceId,Integer userId)throws SQLException{
+        if (("PRODUCT_CREATED".equals(eventType) || "PRODUCT_UPDATED".equals(eventType))
+                && payload != null && payload.has("product_id")) {
+            payload = payload.deepCopy();
+            try (PreparedStatement ps = conn.prepareStatement("SELECT updated_at FROM products WHERE product_id=?")) {
+                ps.setInt(1,payload.get("product_id").getAsInt());
+                try (var rs=ps.executeQuery()) {
+                    if (rs.next()) payload.addProperty("catalog_updated_at",rs.getTimestamp(1).toInstant().toString());
+                }
+            }
+        }
         recordJsonEvent(conn,eventType,payload==null?"{}":payload.toString(),locationId,deviceId,userId);
     }
 

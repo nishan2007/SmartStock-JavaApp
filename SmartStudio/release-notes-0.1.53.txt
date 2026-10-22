@@ -1,0 +1,9 @@
+SmartStudio 0.1.53 (Windows build 1053)
+
+- Passport printing handles landscape/reverse-landscape printer reports for 4 x 6 paper automatically and shifts photos within asymmetric printable margins without shrinking their physical dimensions.
+- Printer setup respects driver paper defaults instead of forcing Letter or an unsupported fallback paper ID; forced full-sheet printable margins are removed.
+- Passport and badge printer discovery/preferences run in the background, with immediate loading status and protection against duplicate print requests.
+- Image Studio defaults to GPU preferred with CPU fallback.
+- Includes all previously published banner stretching, large-artwork, clipboard, template and organization submission changes through 0.1.52, with SmartStock 1.1.56 client libraries.
+
+For Canon G6020 passport photos, load 4 x 6 photo paper in the rear tray and match paper size/type in Printer Properties and on the printer screen. Hardware printing remains a separate verification step. No AI model weights are bundled.
