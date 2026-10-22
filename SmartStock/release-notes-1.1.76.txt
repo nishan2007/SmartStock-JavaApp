@@ -1,0 +1,5 @@
+SmartStock 1.1.76 - Orders workspace update
+
+Includes all newly saved application changes: public Orders workspace, Orders browser pairing, authenticated order dashboard/details/assignment actions, mobile Orders improvements and installable home-screen assets.
+
+Build 101076. Update the store server before registers. AI models remain separate.

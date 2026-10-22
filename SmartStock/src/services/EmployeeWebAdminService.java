@@ -34,7 +34,8 @@ final class EmployeeWebAdminService {
                     try(ResultSet r=p.executeQuery()){r.next();expires=r.getTimestamp(1).toInstant().toString();}
                 }
                 audit(c,actor,"EMPLOYEE_WEB_QR_ISSUED","Issued single-use activation for "+name);
-                return Map.of("url",state.get("url")+"#activate="+token,"expiresAt",expires);
+                String entry=body.has("workspace")&&"orders".equals(body.get("workspace").getAsString())?OrdersWebService.PUBLIC_URL:state.get("url").toString();
+                return Map.of("url",entry+"#activate="+token,"expiresAt",expires);
             }
             case "LIST" -> {
                 List<Map<String,Object>> rows=new ArrayList<>();
