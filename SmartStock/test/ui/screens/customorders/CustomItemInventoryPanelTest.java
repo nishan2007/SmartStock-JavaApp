@@ -33,7 +33,7 @@ class CustomItemInventoryPanelTest {
                 {"items":[{"itemId":1,"name":"Item","active":true,"isShirt":true,"variants":[]}],"materials":[],"presets":[],"placements":[]}
                 """,State.class);
             var panel=new CustomItemInventoryPanel(null,()->{},(a,b)->{},id->{});panel.setState(state);
-            var model=panel.table.getModel();assertEquals("Category",model.getColumnName(15));assertEquals(22,model.getColumnCount());
+            var model=panel.table.getModel();assertEquals("Category",model.getColumnName(15));assertEquals(24,model.getColumnCount());
             assertTrue(model.isCellEditable(0,18));model.setValueAt(services.CustomItemCategory.LASER,0,15);
             assertFalse(panel.staged("I:1").get("isShirt").getAsBoolean());assertTrue(panel.staged("I:1").get("isLaser").getAsBoolean());assertFalse(model.isCellEditable(0,18));
             model.setValueAt(services.CustomItemCategory.BUSINESS_CARDS,0,15);
@@ -99,6 +99,15 @@ class CustomItemInventoryPanelTest {
             toggle(panel);
             assertEquals("10 × 12 IN",panel.table.getValueAt(1,template));
             assertEquals("8 × 9 CM",panel.table.getValueAt(2,template));
+            var dimensions=panel.table.getModel();
+            assertEquals("Template Width",dimensions.getColumnName(22));
+            assertEquals("Template Height",dimensions.getColumnName(23));
+            assertEquals("10 IN",dimensions.getValueAt(0,22));
+            assertEquals("12 IN",dimensions.getValueAt(1,23));
+            assertEquals("8 CM",dimensions.getValueAt(2,22));
+            assertEquals("9 CM",dimensions.getValueAt(2,23));
+            assertTrue(panel.table.getColumnModel().getColumn(panel.table.convertColumnIndexToView(22)).getMaxWidth()>0);
+
             panel.table.setValueAt("New description",0,1);
             assertEquals("New description",panel.staged("I:1").get("description").getAsString());
             assertEquals("New description",panel.table.getValueAt(1,1));

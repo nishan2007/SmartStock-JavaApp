@@ -86,6 +86,40 @@ public class CustomerAccountDetails extends JFrame {
         loadAccountSnapshot();
     }
 
+    private void previewCompanyExpenseTransfer(){
+        com.google.gson.JsonObject request=new com.google.gson.JsonObject();request.addProperty("customerId",customerId);
+        UiTaskRunner.submit(this,"company-expense.preview",()->LanApiClient.stockLedger("account-preview",request,null),preview->{
+            var eligible=preview.getAsJsonArray("eligible");var skipped=preview.getAsJsonArray("skipped");
+            StringBuilder summary=new StringBuilder("Account: "+preview.get("accountName").getAsString()+" (#"+preview.get("accountNumber").getAsString()+")\n\n");
+            for(var element:eligible){var row=element.getAsJsonObject();summary.append(row.get("receipt").getAsString()).append(" — ").append(currencyFormat.format(row.get("amount").getAsBigDecimal())).append('\n');}
+            summary.append("\nEligible total: ").append(currencyFormat.format(preview.get("total").getAsBigDecimal()));
+            summary.append("\nThese receipts will receive linked noncash account corrections and expense entries. Stock and drawer cash will not change.\n");
+            for(var element:skipped){var row=element.getAsJsonObject();summary.append("\nSkipped ").append(row.get("receipt").getAsString()).append(": ").append(row.get("reason").getAsString());}
+            JTextArea text=new JTextArea(summary.toString(),18,65);text.setEditable(false);text.setLineWrap(true);text.setWrapStyleWord(true);
+            if(eligible.isEmpty()){JOptionPane.showMessageDialog(this,new JScrollPane(text),"No Eligible Purchases",JOptionPane.INFORMATION_MESSAGE);return;}
+            JComboBox<String> category=new JComboBox<>(new String[]{"Company Use","Donation"});
+            JPanel panel=new JPanel(new BorderLayout(8,8));panel.add(new JScrollPane(text),BorderLayout.CENTER);panel.add(category,BorderLayout.SOUTH);
+            if(JOptionPane.showConfirmDialog(this,panel,"Review Company Expense Transfer",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE)!=JOptionPane.OK_OPTION)return;
+            String signature=ui.helpers.CustomerChargeAuthorizationDialog.captureEmployeeSignature(this,managers.SessionManager.getCurrentUserDisplayName());if(signature==null)return;
+            com.google.gson.JsonObject body=new com.google.gson.JsonObject();body.addProperty("customerId",customerId);body.addProperty("previewToken",preview.get("previewToken").getAsString());
+            body.addProperty("category",(String)category.getSelectedItem());body.addProperty("signaturePngBase64",signature);
+            postCompanyExpenseTransfer(body,UUID.randomUUID().toString());
+        },failure->JOptionPane.showMessageDialog(this,failure.getMessage(),"Company Expense Transfer",JOptionPane.ERROR_MESSAGE));
+    }
+
+    private void postCompanyExpenseTransfer(com.google.gson.JsonObject body,String key){
+        UiTaskRunner.submit(this,"company-expense.transfer",()->LanApiClient.stockLedger("account-transfer",body,key),result->{
+            SessionDataCache.invalidate("customer-account:");SessionDataCache.invalidate("reports:");loadAccountSnapshot();if(afterSave!=null)afterSave.run();
+            JOptionPane.showMessageDialog(this,"Transferred "+result.get("transferred").getAsInt()+" receipts to expenses.\nAmount: "+currencyFormat.format(result.get("amount").getAsBigDecimal())+
+                    "\nRemaining account balance: "+currencyFormat.format(result.get("balanceAfter").getAsBigDecimal())+"\nStock and drawer cash were unchanged.","Company Expenses Transferred",JOptionPane.INFORMATION_MESSAGE);
+        },failure->{
+            if(failure instanceof LanApiClient.LanApiException api && !api.retryable()){
+                JOptionPane.showMessageDialog(this,api.getMessage(),"Transfer Not Completed",JOptionPane.WARNING_MESSAGE);return;
+            }
+            if(JOptionPane.showConfirmDialog(this,"Could not confirm the transfer: "+failure.getMessage()+"\nRetry the same transfer safely?","Company Expense Transfer",JOptionPane.YES_NO_OPTION)==JOptionPane.YES_OPTION)postCompanyExpenseTransfer(body,key);
+        });
+    }
+
     private JPanel buildHeaderPanel() {
         JPanel headerPanel = new JPanel(new BorderLayout(12, 8));
 
@@ -98,6 +132,7 @@ public class CustomerAccountDetails extends JFrame {
         JButton previewCardButton=new JButton("Preview Card"),printCardButton=new JButton("Print Card"),pdfCardButton=new JButton("Save Card PDF"),renewCardButton=new JButton("Renew Card");
         buttonPanel.add(refreshButton);
         buttonPanel.add(paymentHistoryButton);
+
         JButton loyalty=new JButton("Loyalty");loyalty.addActionListener(e->ui.helpers.LoyaltyDialog.open(this,customerId,null));buttonPanel.add(loyalty);
         buttonPanel.add(previewCardButton);buttonPanel.add(printCardButton);buttonPanel.add(pdfCardButton);buttonPanel.add(renewCardButton);
 
@@ -256,6 +291,11 @@ public class CustomerAccountDetails extends JFrame {
 
     private JPanel buildFooterPanel() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        if(PermissionManager.hasPermission("RECORD_STOCK_EXPENSE") && PermissionManager.hasPermission("PROCESS_RETURNS")
+                && PermissionManager.hasPermission("RETURN_OVERRIDE")){
+            JButton transfer=new JButton("Transfer Company Expenses");
+            transfer.addActionListener(e->previewCompanyExpenseTransfer());panel.add(transfer);
+        }
         JButton closeButton = new JButton("Close");
         closeButton.addActionListener(e -> dispose());
         panel.add(closeButton);

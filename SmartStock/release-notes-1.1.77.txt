@@ -1,0 +1,5 @@
+SmartStock 1.1.77 - Combined Windows update
+
+Includes all newly saved shared-workspace changes: Orders workspace enhancements and barcode lookup, customer online account support and reviews, custom item categories, expense transfers and stock ledger improvements, plus the latest storefront and desktop changes.
+
+Build 101077. Update the store server before registers. AI models remain separate. Customer online features retain their existing rollout controls.

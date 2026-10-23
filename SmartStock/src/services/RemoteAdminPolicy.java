@@ -43,6 +43,7 @@ public final class RemoteAdminPolicy {
     public static boolean isMutation(String path) {
         if (path == null) return false;
         if(path.equals("/v1/sync/billing-period"))return true;
+        if(Set.of("/v1/stock-ledger/post","/v1/stock-ledger/reverse","/v1/stock-ledger/account-transfer").contains(path))return true;
         return path.endsWith("/update") || path.endsWith("/save") || path.endsWith("/create")
                 || path.endsWith("/assign") || path.endsWith("/unassign") || path.endsWith("/adjust")
                 || path.endsWith("/add") || path.endsWith("/delete") || path.endsWith("/deactivate")

@@ -5,17 +5,18 @@ import java.sql.SQLException;
 
 /** Additive extension outside the established public-schema fingerprint. */
 public final class StorefrontSchema {
-    // Captured from the canonical v16 schema on PostgreSQL 17; migration tests verify installation paths.
-    private static final String VERSION_16_CATALOG = "2e73f1206730d38ac080486b1c053217a756cb131f1abc22bf1fda56396ca792";
+    // Captured from the canonical v17 schema on PostgreSQL 17; migration tests verify installation paths.
+    private static final String VERSION_17_CATALOG = "79a4141d2c07cdb8f0aacfb9d7a3c35a4f3bcd51d3511ecca502eb4d722e6512";
     private StorefrontSchema() { }
     public static void ensure(Connection c) throws SQLException {
+        CustomerWebSchema.ensure(c);
         int installed=0;
         try (var p=c.prepareStatement("SELECT to_regclass('storefront.schema_version') IS NOT NULL"); var r=p.executeQuery()) {
             r.next(); if(r.getBoolean(1)) {
                 try(var version=c.prepareStatement("SELECT MAX(version) FROM storefront.schema_version");var v=version.executeQuery()){
-                    v.next();installed=v.getInt(1);if(installed<1||installed>16)throw new SQLException("Unsupported storefront schema version.");
+                    v.next();installed=v.getInt(1);if(installed<1||installed>17)throw new SQLException("Unsupported storefront schema version.");
                 }
-                if(installed==16){validate(c);return;}
+                if(installed==17){validate(c);return;}
             }
         }
         if(!c.getAutoCommit())throw new SQLException("Storefront schema installation requires its own connection transaction.");
@@ -40,6 +41,7 @@ public final class StorefrontSchema {
                 SqlScriptRunner.runSql(c,SqlScriptRunner.readResource("database/storefront/015_website_prices.sql"));
             }
             SqlScriptRunner.runSql(c,SqlScriptRunner.readResource("database/storefront/016_customer_merges.sql"));
+            SqlScriptRunner.runSql(c,SqlScriptRunner.readResource("database/storefront/017_custom_item_categories.sql"));
             validate(c);
             c.commit();
         } catch(Exception e){c.rollback();throw new SQLException("Storefront schema installation failed.",e);}
@@ -63,7 +65,7 @@ public final class StorefrontSchema {
             ORDER BY kind,table_name,name
             """);
         String actual=LanSecurity.sha256(catalog+"\n"+attributes+"\n"+validity);
-        if(!VERSION_16_CATALOG.equals(actual))throw new SQLException("Storefront schema differs from the supported version 16 catalog ("+actual+"). Restore or migrate the database before enabling checkout.");
+        if(!VERSION_17_CATALOG.equals(actual))throw new SQLException("Storefront schema differs from the supported version 17 catalog ("+actual+"). Restore or migrate the database before enabling checkout.");
         if(!StorefrontService.rows(c,"""
             SELECT 1 FROM pg_namespace n CROSS JOIN LATERAL aclexplode(COALESCE(n.nspacl,acldefault('n',n.nspowner))) a
             WHERE n.nspname='storefront' AND a.grantee=0

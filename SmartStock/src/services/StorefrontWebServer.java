@@ -15,7 +15,6 @@ import static services.StorefrontService.*;
 /** Public shopping surface; only a trusted loopback Cloudflare connector can reach it. */
 public final class StorefrontWebServer implements AutoCloseable {
     private final HttpsServer server;private final ExecutorService pool;private final StorefrontConfig config;
-    private final EmploymentPortalCloud auth=new EmploymentPortalCloud();
     private final Map<String,long[]> attempts=new HashMap<>();
     private StorefrontWebServer(HttpsServer server,ExecutorService pool,StorefrontConfig config){this.server=server;this.pool=pool;this.config=config;}
     static StorefrontWebServer start(StorefrontConfig config)throws Exception{
@@ -56,6 +55,12 @@ public final class StorefrontWebServer implements AutoCloseable {
             if(!config.instanceId().equals(x.getRequestHeaders().getFirst("X-Storefront-Instance"))){send(x,403,Map.of("message","Store server identity does not match."));return;}
             if(ServerRoleGuard.state()!=ServerRoleGuard.State.PRIMARY){send(x,503,Map.of("message","This server is unavailable."));return;}
             String path=x.getRequestURI().getPath();
+            if(path.equals("/shop/internal/customer-auth-lookup")){
+                if(!"POST".equals(x.getRequestMethod())){send(x,405,Map.of("message","POST required."));return;}
+                byte[] bytes=x.getRequestBody().readNBytes(4097);if(bytes.length>4096){send(x,413,Map.of("message","Request too large."));return;}
+                var input=JsonParser.parseString(new String(bytes,StandardCharsets.UTF_8)).getAsJsonObject();
+                try(var c=DB.getConnection()){send(x,200,CustomerWebAuth.lookup(c,text(input,"phone"),text(input,"email"),DatabaseConfig.load().locationId()));}return;
+            }
             if(path.equals("/shop/internal/template-submit")){
                 if(!"POST".equals(x.getRequestMethod())){send(x,405,Map.of("message","POST required."));return;}
                 if(!allow("template-submit:"+Objects.toString(x.getRequestHeaders().getFirst("X-Submission-Client"),"unknown"))){send(x,429,Map.of("message","Too many requests. Try again later."));return;}
@@ -102,7 +107,7 @@ public final class StorefrontWebServer implements AutoCloseable {
             }
             if(path.equals("/shop/health")){
                 Map<String,Long> snapshots=new HashMap<>();try(Connection c=DB.getConnection()){for(var e:rows(c,"SELECT location_id,captured_at FROM storefront.snapshots")){var s=e.getAsJsonObject();snapshots.put(text(s,"location_id"),Instant.parse(text(s,"captured_at")).toEpochMilli());}}
-                send(x,200,Map.of("ok",true,"version",1,"instanceId",config.instanceId(),"locationId",DatabaseConfig.load().locationId(),"snapshots",snapshots));return;
+                send(x,200,Map.of("ok",true,"version",1,"customerAuthVersion",2,"instanceId",config.instanceId(),"locationId",DatabaseConfig.load().locationId(),"snapshots",snapshots));return;
             }
             if(path.equals("/shop/api/v1/custom-order-private")){
                 privateOrderApi(x);return;
@@ -124,6 +129,7 @@ public final class StorefrontWebServer implements AutoCloseable {
                         send(x,200,ShirtDesignerService.estimate(c,location,body.getAsJsonObject("shirtDesign")));return;
                     }
                     JsonObject session=session(x,true);String email=text(session,"email");UUID user=UUID.fromString(text(session,"id"));
+                    CustomerWebAuth.requireSnapshot(s,session);
                     if(route.equals("quote-template")){
                         if(location!=DatabaseConfig.load().locationId())throw new IllegalArgumentException("Choose this store to repeat a custom request.");
                         send(x,200,StorefrontQuoteRequests.template(c,location,user,UUID.fromString(text(body,"requestId"))));return;
@@ -161,7 +167,7 @@ public final class StorefrontWebServer implements AutoCloseable {
                         }catch(Exception e){c.rollback();throw e;}return;
                     }
                     if(route.equals("quote")){send(x,200,quote(s,body,user,email));return;}
-                    if(route.equals("account")){if(location==DatabaseConfig.load().locationId())s=snapshot(c,location);send(x,200,account(c,s,user,email));return;}
+                    if(route.equals("account")){if(location==DatabaseConfig.load().locationId())s=snapshot(c,location);CustomerWebAuth.requireSnapshot(s,session);send(x,200,account(c,s,user,email));return;}
                     if(route.equals("favorite-state")){
                         if(location!=DatabaseConfig.load().locationId())throw new IllegalArgumentException("Choose this store to view saved products.");
                         send(x,200,Map.of("favorites",StorefrontFavorites.list(c,location,user)));return;
@@ -228,6 +234,8 @@ public final class StorefrontWebServer implements AutoCloseable {
                 respond(x,200,bundledContentType(file),in.readAllBytes());
             }
         }catch(EmploymentPortalCloud.AuthFailure e){safe(x,401,e.getMessage());}
+        catch(CustomerWebIdentityStore.Limited e){safe(x,429,e.getMessage());}
+        catch(CustomerWebIdentityStore.Conflict e){safe(x,409,e.getMessage());}
         catch(IllegalArgumentException|JsonParseException e){safe(x,400,e instanceof JsonParseException?"Invalid request.":e.getMessage());}
         catch(Exception e){safe(x,503,"The store could not complete this request. Your bag is saved. Please retry.");}
         finally{x.close();}
@@ -279,37 +287,26 @@ public final class StorefrontWebServer implements AutoCloseable {
         return Map.of("bytesBase64",Base64.getEncoder().encodeToString(data),"filename",filename,"contentType",mime,"totalBytes",size);
     }
     private void auth(HttpExchange x,String route,JsonObject body)throws Exception{
+        var authentication=new CustomerWebAuth(config);
         if(route.equals("session")){JsonObject s=session(x,false);send(x,200,Map.of("csrf",text(s,"csrf"),"email",text(s,"email"),"id",text(s,"id"),"issuedAt",s.get("issuedAt").getAsLong()));return;}
-        if(route.equals("logout")){JsonObject s=session(x,true);auth.auth("logout?scope=local",text(s,"access"),new JsonObject());cookie(x,"",0);send(x,200,Map.of("ok",true));return;}
-        String email=text(body,"email").trim().toLowerCase(Locale.ROOT);
-        if(!email.matches("[^\\s@]+@[^\\s@]+\\.[^\\s@]+")||email.length()>254)throw new IllegalArgumentException("Enter a valid email address.");
-        if(!allow("ip:"+Objects.toString(x.getRequestHeaders().getFirst("X-Real-IP"),"gateway"))||!allow("email:"+LanSecurity.sha256(email))){send(x,429,Map.of("message","Too many attempts. Try again in ten minutes."));return;}
-        JsonObject q=new JsonObject();q.addProperty("email",email);
-        if(route.equals("activate")){q.addProperty("create_user",true);auth.auth("otp",null,q);send(x,200,Map.of("message","Check your email for your verification code."));return;}
-        if(route.equals("recover")){auth.auth("recover",null,q);send(x,200,Map.of("message","If this email has an account, a recovery code has been sent."));return;}
-        JsonObject tokens;
-        if(route.equals("verify")||route.equals("reset")){
-            String password=text(body,"password");if(password.length()<12||password.length()>128)throw new IllegalArgumentException("Use a password with 12 to 128 characters.");
-            q.addProperty("token",text(body,"code"));q.addProperty("type",route.equals("reset")?"recovery":"email");tokens=auth.auth("verify",null,q);
-            JsonObject change=new JsonObject();change.addProperty("password",password);auth.auth("user",text(tokens,"access_token"),change);
-        }else if(route.equals("login")){q.addProperty("password",text(body,"password"));tokens=auth.auth("token?grant_type=password",null,q);}
-        else throw new IllegalArgumentException("Unknown account action.");
-        var user=auth.auth("user",text(tokens,"access_token"),null);if(text(user,"email_confirmed_at").isBlank())throw new EmploymentPortalCloud.AuthFailure("Verify your email first.");
+        if(route.equals("logout")){JsonObject s=session(x,true);authentication.logout(s);cookie(x,"",0);send(x,200,Map.of("ok",true));return;}
+        String ip=Objects.toString(x.getRequestHeaders().getFirst("X-Real-IP"),"gateway");
+        if(!allow("customer-auth-ip:"+ip)){send(x,429,Map.of("message","Too many attempts. Try again in ten minutes."));return;}
+        JsonObject result=authentication.execute(route,body,ip);
+        if(result.has("message")){send(x,200,result);return;}
+        int location=integer(body,"storeId");
         try(Connection c=DB.getConnection()){
-            int location=integer(body,"storeId");cached(c,location); // Only enroll at a known published store.
-            c.setAutoCommit(false);
-            try{StorefrontRuntime.requirePrimary();StorefrontEnrollmentService.enroll(c,location,UUID.fromString(text(user,"id")),text(user,"email"),text(body,"name"),DatabaseConfig.load().locationId());StorefrontRuntime.requirePrimary();c.commit();}
+            cached(c,location);c.setAutoCommit(false);
+            try{StorefrontRuntime.requirePrimary();CustomerWebEnrollment.enroll(c,location,result,DatabaseConfig.load().locationId());StorefrontRuntime.requirePrimary();c.commit();}
             catch(Exception e){c.rollback();throw e;}
         }
-        JsonObject s=new JsonObject();s.addProperty("id",text(user,"id"));s.addProperty("email",text(user,"email"));s.addProperty("access",text(tokens,"access_token"));s.addProperty("csrf",LanSecurity.randomToken());s.addProperty("expires",Instant.now().getEpochSecond()+Math.min(3600,integer(tokens,"expires_in")));
-        s.addProperty("issuedAt",System.currentTimeMillis());
-        cookie(x,StorefrontSession.seal(s,config.sessionKey()),3600);send(x,200,Map.of("csrf",text(s,"csrf"),"email",text(s,"email"),"id",text(s,"id"),"issuedAt",s.get("issuedAt").getAsLong()));
+        cookie(x,StorefrontSession.seal(result,config.sessionKey()),3600);send(x,200,Map.of("csrf",text(result,"csrf"),"email",text(result,"email"),"id",text(result,"id"),"issuedAt",result.get("issuedAt").getAsLong()));
     }
     private JsonObject session(HttpExchange x,boolean csrf)throws Exception{
         String cookie="";for(String part:Objects.toString(x.getRequestHeaders().getFirst("Cookie"),"").split(";")){String[] p=part.trim().split("=",2);if(p.length==2&&p[0].equals("__Host-deckers"))cookie=p[1];}
         JsonObject s;try{s=StorefrontSession.open(cookie,config.sessionKey());}catch(Exception e){throw new EmploymentPortalCloud.AuthFailure("Sign in to continue.");}
         if(csrf&&!LanSecurity.constantTimeEquals(text(s,"csrf"),Objects.toString(x.getRequestHeaders().getFirst("X-CSRF-Token"),"")))throw new EmploymentPortalCloud.AuthFailure("Refresh the page before continuing.");
-        var u=auth.auth("user",text(s,"access"),null);if(!text(s,"id").equals(text(u,"id"))||text(u,"email_confirmed_at").isBlank()||!text(s,"email").equalsIgnoreCase(text(u,"email"))||(!text(u,"banned_until").isBlank()&&Instant.parse(text(u,"banned_until")).isAfter(Instant.now())))throw new EmploymentPortalCloud.AuthFailure("Sign in again.");return s;
+        new CustomerWebAuth(config).validateSession(s);return s;
     }
     private void image(HttpExchange x)throws Exception{
         Map<String,String> q=new HashMap<>();for(String v:Objects.toString(x.getRequestURI().getQuery(),"").split("&")){String[] a=v.split("=",2);if(a.length==2)q.put(a[0],a[1]);}

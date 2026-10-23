@@ -104,9 +104,11 @@ public class BalanceSheet extends JFrame {
     private String overseasWithdrawalKey;
     private JPanel buildOverseasFundSection(){
         JPanel p=new JPanel(new BorderLayout(8,8));p.setOpaque(false);p.setBorder(BorderFactory.createTitledBorder("Separate overseas-order cash fund"));
-        JPanel header=new JPanel(new BorderLayout());header.setOpaque(false);header.add(overseasFundTotals,BorderLayout.CENTER);header.add(overseasWithdrawalButton,BorderLayout.EAST);p.add(header,BorderLayout.NORTH);
-        JTable table=new JTable(overseasFundModel);JScrollPane scroll=new JScrollPane(table);scroll.setPreferredSize(new Dimension(500,140));p.add(scroll,BorderLayout.CENTER);
-        p.add(overseasCashChecker,BorderLayout.EAST);
+        JPanel header=new JPanel(new BorderLayout(8,8));header.setOpaque(false);header.add(overseasFundTotals,BorderLayout.CENTER);header.add(overseasWithdrawalButton,BorderLayout.EAST);p.add(header,BorderLayout.NORTH);
+        JTable table=new JTable(overseasFundModel);configureTable(table);JScrollPane scroll=new JScrollPane(table);scroll.setPreferredSize(new Dimension(500,300));
+        JPanel checkerPanel=new JPanel(new BorderLayout());checkerPanel.setOpaque(false);checkerPanel.add(overseasCashChecker,BorderLayout.NORTH);
+        JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,scroll,new JScrollPane(checkerPanel));split.setResizeWeight(0.65);split.setContinuousLayout(true);split.setBorder(null);
+        scroll.setMinimumSize(new Dimension(250,150));split.getRightComponent().setMinimumSize(new Dimension(330,150));p.add(split,BorderLayout.CENTER);
         overseasWithdrawalButton.addActionListener(e->showOverseasWithdrawal());return p;
     }
     private void showOverseasWithdrawal(){
@@ -207,7 +209,6 @@ public class BalanceSheet extends JFrame {
         JPanel top = new JPanel(new BorderLayout(0, 12));
         top.setOpaque(false);
         top.add(headerStack, BorderLayout.NORTH);
-        top.add(metrics, BorderLayout.SOUTH);
 
         JPanel grid = new JPanel(new GridLayout(1, 4, 12, 0));
         grid.setOpaque(false);
@@ -231,8 +232,18 @@ public class BalanceSheet extends JFrame {
         ));
 
         mainPanel.add(top, BorderLayout.NORTH);
-        mainPanel.add(grid, BorderLayout.CENTER);
-        mainPanel.add(buildOverseasFundSection(),BorderLayout.SOUTH);
+        JPanel normalSheet=new JPanel(new BorderLayout(0,12));normalSheet.setOpaque(false);
+        normalSheet.setBorder(new EmptyBorder(12,0,0,0));normalSheet.add(metrics,BorderLayout.NORTH);normalSheet.add(grid,BorderLayout.CENTER);
+        JTabbedPane sheetTabs=new JTabbedPane();
+        sheetTabs.addTab("Balance Sheet",normalSheet);
+        sheetTabs.addTab("Overseas Shopping",buildOverseasFundSection());
+        sheetTabs.addChangeListener(e->{
+            boolean normal=sheetTabs.getSelectedIndex()==0;
+            editBalanceBfButton.setVisible(normal);matchDrawButton.setVisible(normal);
+            recoverLegacyCashButton.setVisible(normal);addExpenseButton.setVisible(normal);
+            filters.revalidate();filters.repaint();
+        });
+        mainPanel.add(sheetTabs,BorderLayout.CENTER);
         add(mainPanel, BorderLayout.CENTER);
 
         drawerCashTable.setToolTipText("Double-click a drawer to view its count history.");

@@ -46,6 +46,12 @@ public final class StorefrontPanel extends JPanel {
     private final DefaultTableModel accessModel=model("Customer","Verified email","Status","Help needed");
     private final JTable access=new JTable(accessModel);
     private JsonArray accessData=new JsonArray();
+    private final DefaultTableModel reviewModel=model("Customer","Phone","Verified email","Customer ID","Requested");
+    private final JTable reviews=new JTable(reviewModel);
+    private JsonArray reviewData=new JsonArray();
+    private final JCheckBox launchLinks=new JCheckBox("Allow phone-only account linking during launch (employee review required)");
+    private long launchRevision;
+    private boolean launchLoaded;
     private JsonArray productData=new JsonArray(),orderData=new JsonArray();
     private boolean productsLoaded;
     private final boolean ordersOnly;
@@ -55,7 +61,7 @@ public final class StorefrontPanel extends JPanel {
         JPanel header=new JPanel(new BorderLayout());JLabel title=new JLabel("Deckers Online Store");title.setFont(title.getFont().deriveFont(Font.BOLD,23));header.add(title,BorderLayout.NORTH);header.add(status,BorderLayout.SOUTH);add(header,BorderLayout.NORTH);
         JTabbedPane tabs=new JTabbedPane();
         JPanel settings=new JPanel(new BorderLayout(12,12));JPanel fields=new JPanel(new GridLayout(0,2,10,15));fields.add(new JLabel("Store availability"));fields.add(enabled);fields.add(new JLabel("Pickup expiry in hours (48 = 2 days, 168 = 1 week)"));fields.add(expiry);fields.add(new JLabel("Currency code"));fields.add(currency);fields.add(new JLabel("Welcome message"));fields.add(welcome);settings.add(fields,BorderLayout.NORTH);
-        JTextArea help=new JTextArea("The pickup timer starts when an order is marked READY. Existing orders keep their deadline and locked prices.\n\nConfigure the public HTTPS origin and named Cloudflare Tunnel on the store server. No server credentials are sent to registers.\n\nPhone-only customers need an email address added to their SmartStock account before they can activate website access.");help.setEditable(false);help.setLineWrap(true);help.setWrapStyleWord(true);help.setOpaque(false);settings.add(help,BorderLayout.CENTER);
+        JTextArea help=new JTextArea("The pickup timer starts when an order is marked READY. Existing orders keep their deadline and locked prices.\n\nConfigure the public HTTPS origin and named Cloudflare Tunnel on the store server. No server credentials are sent to registers.\n\nDuring launch, phone-only customers may verify a new email and use their existing account immediately. Review these claims in Account reviews. Close launch linking there when onboarding is complete.");help.setEditable(false);help.setLineWrap(true);help.setWrapStyleWord(true);help.setOpaque(false);settings.add(help,BorderLayout.CENTER);
         JPanel settingsActions=new JPanel(new FlowLayout(FlowLayout.LEFT));settingsActions.add(button("Save settings",()->{JsonObject b=body("SETTINGS");b.addProperty("enabled",enabled.isSelected());b.addProperty("pickupHours",((Number)expiry.getValue()).intValue());b.addProperty("currency",currency.getText().trim().toUpperCase());b.addProperty("welcome",welcome.getText().trim());send(b);}));settingsActions.add(button("Resolve customer link",this::link));settings.add(settingsActions,BorderLayout.SOUTH);tabs.addTab("Settings",settings);
         JPanel campaign=new JPanel(new BorderLayout(10,10));JPanel campaignFields=new JPanel(new GridLayout(0,2,10,10));
         campaignFields.add(new JLabel("Campaign topic"));campaignFields.add(campaignTopic);
@@ -89,6 +95,13 @@ public final class StorefrontPanel extends JPanel {
         JPanel fulfillment=new JPanel(new BorderLayout(10,10));orders.setAutoCreateRowSorter(true);fulfillment.add(new JScrollPane(orders),BorderLayout.CENTER);JPanel actions=new JPanel(new FlowLayout(FlowLayout.LEFT));
         actions.add(button("View order",this::details));for(String next:new String[]{"PREPARING","READY","NEEDS_ATTENTION","CANCELLED"})actions.add(button(next.replace('_',' '),()->transition(next)));actions.add(button("Collect and pay",this::collect));actions.add(button("Refresh",this::load));fulfillment.add(actions,BorderLayout.SOUTH);tabs.addTab("Online orders",fulfillment);
         JPanel customerAccess=new JPanel(new BorderLayout(10,10));access.setAutoCreateRowSorter(true);customerAccess.add(new JScrollPane(access),BorderLayout.CENTER);JPanel accessActions=new JPanel(new FlowLayout(FlowLayout.LEFT));accessActions.add(button("Resolve selected customer",()->{var selected=selected(access,accessData);if(selected!=null)link(value(selected,"email"));}));accessActions.add(button("Find by email",this::link));accessActions.add(button("Refresh",this::load));customerAccess.add(accessActions,BorderLayout.SOUTH);tabs.addTab("Customer access",customerAccess);
+        JPanel reviewPanel=new JPanel(new BorderLayout(10,10));reviews.setAutoCreateRowSorter(true);reviewPanel.add(new JScrollPane(reviews),BorderLayout.CENTER);
+        JPanel reviewHeader=new JPanel(new GridLayout(0,1,8,8));reviewHeader.add(launchLinks);reviewHeader.add(new JLabel("These accounts can use their existing store account immediately. Rejecting revokes online access across stores."));reviewPanel.add(reviewHeader,BorderLayout.NORTH);
+        launchLinks.setEnabled(managers.PermissionManager.hasPermission("COMPANY_PREFERENCES"));
+        JPanel reviewActions=new JPanel(new FlowLayout(FlowLayout.LEFT));reviewActions.add(button("Approve selected",()->reviewAccount("APPROVED")));reviewActions.add(button("Reject selected",()->reviewAccount("REJECTED")));reviewActions.add(button("Refresh",this::loadReviews));
+        if(managers.PermissionManager.hasPermission("COMPANY_PREFERENCES"))reviewActions.add(button("Save launch setting",this::saveLaunch));
+        reviewPanel.add(reviewActions,BorderLayout.SOUTH);if(managers.PermissionManager.hasPermission("CUSTOMER_ACCOUNTS")||managers.PermissionManager.hasPermission("COMPANY_PREFERENCES"))tabs.addTab("Account reviews",reviewPanel);
+        tabs.addChangeListener(e->{if(tabs.getSelectedComponent()==reviewPanel)loadReviews();});
         if(ordersOnly){tabs.removeAll();tabs.addTab("Online orders",fulfillment);}
         add(tabs,BorderLayout.CENTER);load();if(!ordersOnly){loadProjects();if(managers.PermissionManager.hasPermission("COMPANY_PREFERENCES"))loadServices();if(managers.PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS"))loadQuotes();}
     }
@@ -96,6 +109,9 @@ public final class StorefrontPanel extends JPanel {
     private JButton button(String text,Runnable action){JButton b=new JButton(text);DeckersSwing.styleUtilityButton(b,DeckersPalette.ORANGE);b.addActionListener(e->action.run());return b;}
     private static JsonObject body(String action){JsonObject b=new JsonObject();b.addProperty("action",action);return b;}
     private void load(){send(body(ordersOnly?"ORDERS_STATE":"STATE"));}
+    private void loadReviews(){send(body(managers.PermissionManager.hasPermission("CUSTOMER_ACCOUNTS")?"ACCOUNT_REVIEW_STATE":"ACCOUNT_LAUNCH_STATE"),result->{var policy=result.getAsJsonObject("policy");launchRevision=policy.get("revision").getAsLong();launchLinks.setSelected(policy.get("allowUnreviewedLinks").getAsBoolean());launchLoaded=true;reviewData=result.getAsJsonArray("reviews");reviewModel.setRowCount(0);for(var entry:reviewData){var r=entry.getAsJsonObject();reviewModel.addRow(new Object[]{value(r,"name"),value(r,"phone"),value(r,"email"),value(r,"customerUuid"),value(r,"linkRequestedAt")});}status.setText(reviewData.size()+" online accounts awaiting review (up to 200 shown).");});}
+    private void reviewAccount(String decision){var r=selected(reviews,reviewData);if(r==null)return;String reason=JOptionPane.showInputDialog(this,"Reason for "+(decision.equals("APPROVED")?"approving":"rejecting")+" "+value(r,"email")+":");if(reason==null||reason.isBlank())return;var b=body("ACCOUNT_REVIEW");b.addProperty("email",value(r,"email"));b.add("revision",r.get("revision"));b.addProperty("decision",decision);b.addProperty("reason",reason);send(b,result->loadReviews());}
+    private void saveLaunch(){if(!launchLoaded){loadReviews();return;}String reason=JOptionPane.showInputDialog(this,"Reason for changing the launch linking setting:");if(reason==null||reason.isBlank())return;var b=body("ACCOUNT_LAUNCH_SAVE");b.addProperty("revision",launchRevision);b.addProperty("allowUnreviewedLinks",launchLinks.isSelected());b.addProperty("reason",reason);send(b,result->loadReviews());}
     private void send(JsonObject body){send(body,null);}
     private void send(JsonObject body,java.util.function.Consumer<JsonObject> onResult){status.setText("Working…");String key=UUID.randomUUID().toString();new SwingWorker<JsonObject,Void>(){
         protected JsonObject doInBackground()throws Exception{return LanApiClient.storefrontAdmin(body,key);}
@@ -238,7 +254,7 @@ public final class StorefrontPanel extends JPanel {
         form.add(new JLabel("Select the customer's record. Other records remain separate; balances and sales are not merged."),BorderLayout.SOUTH);
         while(JOptionPane.showOptionDialog(this,form,"Choose customer account",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE,null,new String[]{"Link selected customer","Cancel"},"Cancel")==JOptionPane.OK_OPTION){
             int row=table.getSelectedRow();if(row<0){JOptionPane.showMessageDialog(this,"Select the correct customer record first.");continue;}
-            JsonObject customer=candidates.get(table.convertRowIndexToModel(row)).getAsJsonObject();var b=body("LINK");b.add("authId",identity.get("authId"));b.add("email",identity.get("email"));b.add("customerUuid",customer.get("uuid"));send(b);return;
+            JsonObject customer=candidates.get(table.convertRowIndexToModel(row)).getAsJsonObject();String reason=JOptionPane.showInputDialog(this,"Reason for linking or changing this customer online account (the customer will need to sign in again):");if(reason==null||reason.isBlank())return;var b=body("RELINK");b.addProperty("reason",reason);b.add("authId",identity.get("authId"));b.add("email",identity.get("email"));b.add("customerUuid",customer.get("uuid"));send(b);return;
         }
     }
 }

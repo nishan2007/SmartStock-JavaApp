@@ -67,3 +67,38 @@ From the repository root, run:
 Live verification still requires a separate iPhone: scan the new QR, switch to
 mobile data, sign in, open an order, save an assignment, inspect the audit record,
 and confirm revocation denies further requests. Also check Add to Home Screen.
+
+## Printed order label scanning
+
+Use **Scan label** next to search to scan the Code 128 barcode printed on custom
+order labels and slips. A matching active order opens immediately. If the order
+is not in the loaded queue, the authenticated `/orders/lookup` endpoint performs
+an exact lookup at the employee's assigned store, including historical delivered
+orders. Delivered and cancelled orders remain read-only in the assignment form.
+Typing an order number and pressing Enter follows the same lookup, including
+keyboard-style barcode scanners.
+
+The scanner uses the rear camera, with a take/choose-photo fallback. Decoding
+runs entirely on the device; camera frames and photos are not uploaded. Camera
+tracks and decoding stop when the scanner closes, the page becomes hidden, or
+the employee signs out. Safari camera permission is required for live scanning.
+Physical iPhone camera and printed-label verification remain separate checks.
+
+The vendored `orders-barcode.js` is the npm `@zxing/browser@0.1.5` UMD bundle.
+Its package SHA-512 integrity was verified before extraction. Bundle SHA-256:
+`b5ad3df920738ca7adcb74508d7e6b6a5b9024993fb9a0c702da1ad8964eca07`.
+MIT and bundled ZXing/text-encoding licenses accompany it in
+`orders-barcode-LICENSE.txt`. No external CDN is needed at runtime.
+The decoder test fixture was generated using SmartStock's
+`ReceiptBarcodeRenderer.renderCode128("CO-1042", 552, 112)` with sample data.
+
+## SmartStock branding
+
+Orders uses the shared `DeckersPalette` purple (#7022a8), orange (#ff5b00), lime
+status accent, and light surfaces. Signed-in company details come from
+`ServerCompanyCustomizationRepository.loadReceiptSettingsForLocation`, including
+the saved company name/logo, motto, and location contact/address lines. No separate
+company profile is maintained by this web app. Only bounded PNG/JPEG logos are
+returned inline through the authenticated dashboard response. Before sign-in or
+when settings are unavailable, the UI uses the SmartStock name instead of invented
+company information. The installed Java server must include this branding update.

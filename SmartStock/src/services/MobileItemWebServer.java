@@ -84,7 +84,7 @@ public final class MobileItemWebServer implements AutoCloseable {
         try {
             requireLan(x); String path=x.getRequestURI().getPath();
             if(path.startsWith("/api/v1/")){api(x);return;}
-            String resource=switch(path){case "/","/index.html"->"mobile-web/index.html";case "/orders.html"->"mobile-web/orders.html";case "/orders.js"->"mobile-web/orders.js";case "/orders.css"->"mobile-web/orders.css";case "/app.css"->"mobile-web/app.css";case "/boot.js"->"mobile-web/boot.js";case "/app.js"->"mobile-web/app.js";case "/photo.html"->"mobile-web/photo.html";case "/photo.js"->"mobile-web/photo.js";case "/background-remover.html"->"mobile-web/background-remover.html";case "/background-remover.js"->"mobile-web/background-remover.js";case "/background-remover.css"->"mobile-web/background-remover.css";case "/spoils.js"->"mobile-web/spoils.js";case "/design.html"->"mobile-web/design.html";case "/design.js"->"mobile-web/design.js";case "/design.css"->"mobile-web/design.css";default->null;};
+            String resource=switch(path){case "/","/index.html"->"mobile-web/index.html";case "/orders-barcode.js"->"mobile-web/orders-barcode.js";case "/orders.html"->"mobile-web/orders.html";case "/orders.js"->"mobile-web/orders.js";case "/orders.css"->"mobile-web/orders.css";case "/app.css"->"mobile-web/app.css";case "/boot.js"->"mobile-web/boot.js";case "/app.js"->"mobile-web/app.js";case "/photo.html"->"mobile-web/photo.html";case "/photo.js"->"mobile-web/photo.js";case "/background-remover.html"->"mobile-web/background-remover.html";case "/background-remover.js"->"mobile-web/background-remover.js";case "/background-remover.css"->"mobile-web/background-remover.css";case "/spoils.js"->"mobile-web/spoils.js";case "/design.html"->"mobile-web/design.html";case "/design.js"->"mobile-web/design.js";case "/design.css"->"mobile-web/design.css";default->null;};
             if(resource==null){sendText(x,404,"text/plain; charset=utf-8","Not found");return;}
             try(InputStream in=MobileItemWebServer.class.getClassLoader().getResourceAsStream(resource)){
                 if(in==null){sendText(x,404,"text/plain; charset=utf-8","Web asset missing");return;}
@@ -120,6 +120,7 @@ public final class MobileItemWebServer implements AutoCloseable {
                 case "/price-tags/print"->priceTagPrint(requireSession(x,true),body);
                 case "/orders/dashboard"->ordersDashboard(requireSession(x,false),body);
                 case "/orders/details"->ordersDetails(requireSession(x,false),body);
+                case "/orders/lookup"->ordersLookup(requireSession(x,false),body);
                 case "/orders/assign"->ordersAssign(x,requireSession(x,true),body);
                 case "/custom/state"->customState(requireSession(x,false));
                 case "/custom/save"->customSave(x,requireSession(x,true),body);
@@ -220,7 +221,7 @@ public final class MobileItemWebServer implements AutoCloseable {
             if("DELIVERED".equals(optional(b,"view")))return Map.of("orders",LanOrdersDashboardService.delivered(c,s.locationId,"ALL".equals(optional(b,"range"))));
             java.time.ZoneId zone=java.time.ZoneId.systemDefault();
             try(var p=c.prepareStatement("SELECT timezone FROM locations WHERE location_id=?")){p.setInt(1,s.locationId);try(var r=p.executeQuery()){if(r.next()&&r.getString(1)!=null)zone=java.time.ZoneId.of(r.getString(1));}}
-            return Map.of("dashboard",LanOrdersDashboardService.load(c,s.locationId,zone),"employees",ServerCustomOrderDataService.listActiveEmployees(c,s.locationId));
+            return Map.of("dashboard",LanOrdersDashboardService.load(c,s.locationId,zone),"employees",ServerCustomOrderDataService.listActiveEmployees(c,s.locationId),"branding",OrdersWebBranding.load(s.locationId));
         }
     }
     private long requireWebCustomOrder(Connection c,Session s,JsonObject b)throws Exception{
@@ -228,6 +229,13 @@ public final class MobileItemWebServer implements AutoCloseable {
         try(var p=c.prepareStatement("SELECT 1 FROM custom_orders WHERE custom_order_id=? AND location_id=? AND order_type='CUSTOM'")){
             p.setLong(1,id);p.setInt(2,s.locationId);try(var r=p.executeQuery()){if(!r.next())throw new WebError(404,"ORDER_NOT_FOUND","Custom order was not found at this store.");}
         }return id;
+    }
+    private Object ordersLookup(Session s,JsonObject b)throws Exception{
+        owner.requireMobileAny(s.userId,"ORDERS_MANAGER_DASHBOARD","MANAGE_CUSTOM_ORDERS");
+        try(Connection c=DB.getConnection()){
+            var row=OrdersWebLookupService.lookup(c,s.locationId,optional(b,"barcode"));
+            return row==null?Map.of("found",false):Map.of("found",true,"order",row);
+        }
     }
     private Object ordersDetails(Session s,JsonObject b)throws Exception{
         owner.requireMobileAny(s.userId,"ORDERS_MANAGER_DASHBOARD","MANAGE_CUSTOM_ORDERS");

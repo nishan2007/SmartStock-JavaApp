@@ -111,7 +111,7 @@ class StorefrontDatabaseIntegrationTest {
                     finally{primary.rollback();primary.setAutoCommit(true);}
                     StorefrontSchema.ensure(primary);
                 }
-                assertEquals(15,integer(one(rows(backup,"SELECT MAX(version) AS version FROM storefront.schema_version")),"version"));
+                assertEquals(17,integer(one(rows(backup,"SELECT MAX(version) AS version FROM storefront.schema_version")),"version"));
                 primary.createStatement().execute("SET search_path TO public");backup.createStatement().execute("SET search_path TO public");
                 seed(primary);seed(backup);
                 execute(primary,"UPDATE storefront.products SET website_price=120,promotional_price=90 WHERE location_id=1 AND product_id=1001");

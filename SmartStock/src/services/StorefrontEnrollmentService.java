@@ -30,6 +30,7 @@ final class StorefrontEnrollmentService {
         int location=integer(enrollment,"location_id");UUID auth=UUID.fromString(text(enrollment,"auth_id"));String email=text(enrollment,"email");
         Savepoint point=c.setSavepoint();
         try{
+            if("store-auth-v1".equals(text(enrollment,"note"))){CustomerWebEnrollment.complete(c,enrollment);c.releaseSavepoint(point);return;}
             JsonObject context=new JsonObject();
             context.add("links",rows(c,"SELECT auth_id AS auth,customer_uuid AS customer FROM storefront.customer_links WHERE location_id=? AND (auth_id=? OR customer_uuid IN (SELECT sync_uuid FROM customer_accounts WHERE lower(btrim(email))=?))",location,auth,email));
             context.add("customers",rows(c,"SELECT sync_uuid AS uuid,name,email,is_active AS active FROM customer_accounts WHERE lower(btrim(email))=? OR sync_uuid=(SELECT customer_uuid FROM storefront.customer_links WHERE auth_id=? AND location_id=?)",email,auth,location));

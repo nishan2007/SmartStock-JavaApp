@@ -1,10 +1,6 @@
 package services;
 
 import com.google.gson.*;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.net.http.*;
-import java.nio.charset.StandardCharsets;
 import java.time.*;
 import java.util.*;
 import static services.StorefrontService.text;
@@ -21,19 +17,13 @@ final class StorefrontIdentityDirectory {
     }
 
     static JsonObject byEmail(String value)throws Exception {
-        String email=email(value);
-        // Auth's filter is a search, not an ownership check. Only exact verified
-        // matches are returned, regardless of names or editable user metadata.
-        JsonObject response=get("admin/users?page=1&per_page=100&filter="+URLEncoder.encode(email,StandardCharsets.UTF_8));
-        JsonArray users=response.getAsJsonArray("users");
-        if(users==null)throw new IllegalArgumentException("The website account directory is unavailable.");
-        if(users.size()>=100)throw new IllegalArgumentException("Too many website accounts match this search. Ask the administrator to resolve the duplicate contacts.");
-        return verifiedMatch(users,email,Instant.now());
+        String email=email(value);var config=StorefrontConfig.load();if(config==null)throw new IllegalArgumentException("Configure the customer website first.");
+        var identity=new CustomerWebIdentityStore(config).read(email).identity();
+        if(!identity.has("verified")||!identity.get("verified").getAsBoolean())throw new IllegalArgumentException("No verified store-hosted online account was found. Ask the customer to verify their email on the website first.");
+        JsonObject safe=new JsonObject();safe.addProperty("authId",text(identity,"id"));safe.addProperty("email",email);return safe;
     }
-
     static JsonObject byId(UUID id,String email)throws Exception {
-        JsonArray users=new JsonArray();users.add(get("admin/users/"+id));
-        return verifiedMatch(users,email(email),Instant.now());
+        var identity=byEmail(email);if(!id.toString().equals(text(identity,"authId")))throw new IllegalArgumentException("The verified online identity changed. Search again.");return identity;
     }
 
     static JsonObject verifiedMatch(JsonArray users,String email,Instant now) {
@@ -51,12 +41,4 @@ final class StorefrontIdentityDirectory {
         JsonObject safe=new JsonObject();safe.addProperty("authId",UUID.fromString(text(match,"id")).toString());safe.addProperty("email",email);return safe;
     }
 
-    private static JsonObject get(String route)throws Exception {
-        var config=SupabaseProjectConfig.load();
-        var request=HttpRequest.newBuilder(URI.create(config.url()+"/auth/v1/"+route)).timeout(Duration.ofSeconds(15)).GET();
-        var response=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
-            .send(ServerSupabaseCredentials.applyTo(request).build(),HttpResponse.BodyHandlers.ofString());
-        if(response.statusCode()!=200)throw new IllegalArgumentException("The website account directory is unavailable. Please try again.");
-        return JsonParser.parseString(response.body()).getAsJsonObject();
-    }
 }

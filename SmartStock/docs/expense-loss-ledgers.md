@@ -96,3 +96,36 @@ expenses refreshed by the balance-sheet service. Reports recognize old Payroll
 labels as Salary too. Existing submitted balance-sheet snapshots retain their
 original labels and audit history. Other historical custom category names remain
 supported; descriptions are not used to guess or override the selected category.
+
+## Moving old company-account purchases into expenses
+
+For an existing company account such as Deckers, open Customer Accounts, open
+that account's details, and choose **Transfer Company Expenses**. The action
+requires Customer Accounts, Record Stock Expenses, Process Returns, and Return
+Override permissions on the server. Review the receipt list, choose Company Use
+or Donation, and sign the bulk transfer. The preview identifies the account by
+name and number, lists skipped receipts, and is rejected if the account changes
+before posting. Transfers are scoped to the register's selected store.
+
+Eligible purchases are complete unpaid account sales containing supported stock
+items, with matching account credit and receipt totals and no earlier returns.
+Paid/partly paid receipts, receipts with loyalty activity, mismatched discounts,
+non-stock/miscellaneous lines, invoices and custom-order charges are not converted
+by this action. Skipped charges remain on the account for separate review.
+
+The transaction records a linked ACCOUNT return/correction to offset the original
+sale and customer debt, then signed noncash expense rows linked to the original
+sale items. It issues no cash and performs no inventory deduction or restock.
+Expense rows preserve the purchase date and original receipt unit prices; details
+identify the correction and actual transfer signing time. The original sale,
+audit history and account transactions remain. Existing purchase stock quantities
+are unchanged. Repeated attempts cannot convert the same receipt twice.
+
+Account transfers cannot be reversed using the stock-ledger reversal button,
+because that would incorrectly restock inventory without undoing the account
+correction. Any correction must be reviewed as an accounting transaction.
+
+For new company use and donations, use Reports → Expense Ledger → Record Stock
+Expense directly instead of charging the company customer account. These source
+changes must be deployed to the server and registers before the new transfer
+button can be used; no live account was converted while developing this feature.

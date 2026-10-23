@@ -217,11 +217,29 @@ final class LanRefundService {
     static Map<String, Object> refund(Connection connection, JsonObject body, UUID deviceId,
                                        int userId, String userName, int locationId,
                                        ApprovalConsumer approvalConsumer) throws Exception {
+        return refundInternal(connection,body,deviceId,userId,userName,locationId,approvalConsumer,false);
+    }
+
+    /** Accounting reclassification only; stock was already consumed by the original sale. */
+    static Map<String,Object> refundForCompanyExpense(Connection connection,JsonObject body,UUID deviceId,
+            int userId,String userName,int locationId)throws Exception {
+        LanInventoryService.requirePermission(connection,userId,"CUSTOMER_ACCOUNTS");
+        LanInventoryService.requirePermission(connection,userId,"RECORD_STOCK_EXPENSE");
+        LanInventoryService.requirePermission(connection,userId,"RETURN_OVERRIDE");
+        return refundInternal(connection,body,deviceId,userId,userName,locationId,
+                (a,b,c,d,e)->{throw new IllegalStateException("Company transfer requires direct return authorization.");},true);
+    }
+
+    private static Map<String,Object> refundInternal(Connection connection,JsonObject body,UUID deviceId,
+            int userId,String userName,int locationId,ApprovalConsumer approvalConsumer,boolean companyTransfer)throws Exception {
         RefundRequest request = GSON.fromJson(body, RefundRequest.class);
         validateRequest(request);
         requirePermission(connection, userId, "PROCESS_RETURNS");
 
         Sale sale = lockSale(connection, request.saleId(), locationId);
+        if(companyTransfer && (!"ACCOUNT".equalsIgnoreCase(sale.paymentMethod()) || !"ACCOUNT".equalsIgnoreCase(request.refundMethod())
+                || sale.customerId()==null || sale.amountPaid().signum()!=0 || sale.returnedAmount().signum()!=0))
+            throw new RuleViolation(409,"TRANSFER_NOT_ELIGIBLE","Only unpaid, unreturned account sales may be reclassified.",false);
         TreeMap<Integer, Integer> requestedQuantities = requestedQuantities(request.lines());
         List<ValidatedLine> lines = lockAndValidateLines(
                 connection, sale.saleId(), requestedQuantities);
@@ -234,6 +252,7 @@ final class LanRefundService {
             throw new RuleViolation(400, "INVALID_RETURN", "Return total must be greater than zero.", false);
         }
 
+        if(companyTransfer && total.compareTo(sale.totalAmount())!=0)throw new RuleViolation(409,"TRANSFER_NOT_ELIGIBLE","Company transfers must correct the complete receipt.",false);
         BigDecimal approvalLimit = loadApprovalLimit(connection, locationId);
         Approval approval = null;
         boolean approvalRequired = approvalLimit.signum() > 0 && total.compareTo(approvalLimit) > 0;
@@ -286,7 +305,7 @@ final class LanRefundService {
             insertReturnAudit(connection, sale, returnId, returnItemId, line, userId, userName,
                     deviceId, deviceName, "RETURN_LINE_RECORDED", "RETURN_ITEM", lineAmount,
                     line.quantity(), request.reason().trim(), "refund_method=" + refundMethod);
-            if ("INVENTORY".equals(line.productType())) {
+            if ("INVENTORY".equals(line.productType()) && !companyTransfer) {
                 restoreInventory(connection, sale, returnId, line, locationId, userId,
                         userName, deviceId, deviceName);
                 insertReturnAudit(connection, sale, returnId, returnItemId, line, userId, userName,
@@ -295,6 +314,8 @@ final class LanRefundService {
             }
         }
 
+        if(companyTransfer)insertReturnAudit(connection,sale,returnId,null,null,userId,userName,deviceId,deviceName,
+                "COMPANY_EXPENSE_TRANSFER","RETURN",total,null,request.reason().trim(),"Accounting correction only; no cash refund and no stock restored.");
         updateSale(connection, sale.saleId(), total);
         if (sale.customerId() != null && "ACCOUNT".equalsIgnoreCase(sale.paymentMethod())) {
             BalanceChange balance = applyAccountCredit(connection, sale, total, returnId, locationId, userName,

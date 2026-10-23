@@ -18,13 +18,14 @@ final class StorefrontAdminService {
     static Map<String,Object> run(Connection c,JsonObject body,int user,int location,String name,UUID device,LanSalesService.ApprovalConsumer approvals)throws Exception{
         if("WEBSITE_STATUS".equals(text(body,"action"))){require(c,user,"VIEW_SALES");return websiteStatus(c,location);}
         if(ServerRoleGuard.state()!=ServerRoleGuard.State.PRIMARY)throw new IllegalArgumentException("Use the active store server.");
-        String action=text(body,"action");require(c,user,switch(action){case "SETTINGS","CAMPAIGN","PUBLISH","PUBLISH_ALL_ACTIVE","SET_ENABLED","PROJECT_DRAFT","PROJECT_SAVE","PROJECT_COVER","PROJECT_MEDIA_UPLOAD","PROJECT_MEDIA_DELETE","PROJECT_STATUS","PROJECT_STATE","PROJECT_SHARE","SERVICE_STATE","SERVICE_AVAILABILITY"->"COMPANY_PREFERENCES";case "QUOTE_STATE","QUOTE_STATUS","QUOTE_FILES","QUOTE_PROOF","QUOTE_LINK_ORDER","QUOTE_SHIRT_IMPORT"->"MANAGE_CUSTOM_ORDERS";case "LINK","LINK_SEARCH"->"CUSTOMER_ACCOUNTS";case "STATE","WEBSITE_STATUS"->"VIEW_SALES";default->"MAKE_SALE";});
+        String action=text(body,"action");require(c,user,switch(action){case "CUSTOM_CATEGORY_STATE","CUSTOM_CATEGORY_SAVE","SETTINGS","CAMPAIGN","PUBLISH","PUBLISH_ALL_ACTIVE","SET_ENABLED","PROJECT_DRAFT","PROJECT_SAVE","PROJECT_COVER","PROJECT_MEDIA_UPLOAD","PROJECT_MEDIA_DELETE","PROJECT_STATUS","PROJECT_STATE","PROJECT_SHARE","SERVICE_STATE","SERVICE_AVAILABILITY"->"COMPANY_PREFERENCES";case "QUOTE_STATE","QUOTE_STATUS","QUOTE_FILES","QUOTE_PROOF","QUOTE_LINK_ORDER","QUOTE_SHIRT_IMPORT"->"MANAGE_CUSTOM_ORDERS";case "LINK","LINK_SEARCH","RELINK","ACCOUNT_REVIEW_STATE","ACCOUNT_REVIEW"->"CUSTOMER_ACCOUNTS";case "ACCOUNT_LAUNCH_SAVE","ACCOUNT_LAUNCH_STATE"->"COMPANY_PREFERENCES";case "STATE","WEBSITE_STATUS"->"VIEW_SALES";default->"MAKE_SALE";});
+        if(java.util.Set.of("ACCOUNT_REVIEW_STATE","ACCOUNT_REVIEW","ACCOUNT_LAUNCH_SAVE","ACCOUNT_LAUNCH_STATE").contains(action))return CustomerWebReview.run(c,body,user);
         if(action.equals("LINK_SEARCH")){
             String email=StorefrontIdentityDirectory.email(text(body,"email"));
             JsonObject identity=StorefrontIdentityDirectory.byEmail(email);
             return Map.of("identity",identity,"customers",linkCandidates(c,email,location));
         }
-        if(action.equals("LINK"))StorefrontIdentityDirectory.byId(UUID.fromString(text(body,"authId")),text(body,"email"));
+        if(action.equals("RELINK")||action.equals("LINK")){CustomerWebAuth.relink(c,UUID.fromString(text(body,"authId")),UUID.fromString(text(body,"customerUuid")),StorefrontIdentityDirectory.email(text(body,"email")),text(body,"reason"),user,location);return Map.of("ok",true);}
         StorefrontRuntime.requirePrimary();
         lock(c,location);
         if(action.equals("QUOTE_STATE"))return Map.of("quotes",StorefrontQuoteRequests.staff(c,location));
@@ -43,6 +44,8 @@ final class StorefrontAdminService {
             audit(c,user,action,"request="+text(body,"requestId")+"; status="+text(body,"status"));return Map.of("ok",true);
         }
         if(action.equals("PROJECT_STATE"))return Map.of("projects",StorefrontProjects.staffState(c,location));
+        if(action.equals("CUSTOM_CATEGORY_STATE"))return Map.of("categories",CustomItemCategories.list(c));
+        if(action.equals("CUSTOM_CATEGORY_SAVE")){CustomItemCategories.save(c,body);StorefrontRuntime.requirePrimary();audit(c,user,action,"category="+text(body,"id"));return Map.of("ok",true);}
         if(action.equals("SERVICE_STATE"))return Map.of("services",StorefrontServiceAvailability.staff(c,location));
         if(action.equals("SERVICE_AVAILABILITY")){
             if(!body.has("available")||!body.get("available").isJsonPrimitive()||!body.getAsJsonPrimitive("available").isBoolean())
@@ -117,10 +120,6 @@ final class StorefrontAdminService {
                 StorefrontRuntime.requirePrimary();audit(c,user,action,"location="+location+"; published="+count);
                 return Map.of("ok",true,"publishedCount",count);
             }
-            case "LINK": {
-                UUID auth=UUID.fromString(text(body,"authId")),customer=UUID.fromString(text(body,"customerUuid"));String email=StorefrontIdentityDirectory.email(text(body,"email"));
-                linkCustomer(c,auth,customer,email,location);break;
-            }
             case "TRANSITION": {
                 UUID id=UUID.fromString(text(body,"orderId"));transition(c,id,location,text(body,"status"),text(body,"note"),user);break;
             }
@@ -185,8 +184,11 @@ final class StorefrontAdminService {
             """,location,email);
     }
     static void linkCustomer(Connection c,UUID auth,UUID customer,String email,int location)throws SQLException {
+        linkCustomer(c,auth,customer,email,location,false);
+    }
+    static void linkCustomer(Connection c,UUID auth,UUID customer,String email,int location,boolean allowMissingEmail)throws SQLException {
         lock(c,location);
-        if(rows(c,"SELECT customer_id FROM customer_accounts WHERE sync_uuid=? AND is_active AND lower(btrim(email))=? FOR UPDATE",customer,email).isEmpty())
+        if(rows(c,"SELECT customer_id FROM customer_accounts WHERE sync_uuid=? AND is_active AND (lower(btrim(email))=? OR (? AND btrim(COALESCE(email,''))='')) FOR UPDATE",customer,email,allowMissingEmail).isEmpty())
             throw new IllegalArgumentException("The selected active customer must have this verified email.");
         if(!rows(c,"SELECT auth_id FROM storefront.customer_links WHERE location_id=? AND customer_uuid=? AND auth_id<>?",location,customer,auth).isEmpty())
             throw new IllegalArgumentException("This customer record is already linked to another website account. Ask the administrator to review it.");

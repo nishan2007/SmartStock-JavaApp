@@ -17,7 +17,7 @@ class OrdersWebServiceTest {
         assertFalse(OrdersWebService.canEdit(Set.of("ACCESS_EMPLOYEE_WEB","DEVICE_MANAGEMENT")));
     }
     @Test void unauthorizedRequestsAreRejectedBeforeDatabaseAccess() {
-        for(String action:new String[]{"dashboard","details","assign"})
+        for(String action:new String[]{"dashboard","details","assign","lookup"})
             assertThrows(SecurityException.class,()->OrdersWebService.execute(null,1,"Employee",Set.of("ACCESS_EMPLOYEE_WEB"),UUID.randomUUID(),action,new JsonObject()));
     }
 }

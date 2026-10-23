@@ -107,11 +107,11 @@ public final class EmployeeWebServer implements AutoCloseable {
                 else {
                     UUID browser=requireBrowser(c,x);
                     switch(route) {
-                        case "auth/session","bootstrap","employees","history","history/correct","auth/logout","overseas","orders/dashboard","orders/details","orders/assign" -> {
+                        case "auth/session","bootstrap","employees","history","history/correct","auth/logout","overseas","orders/dashboard","orders/details","orders/assign","orders/lookup" -> {
                             Session s=requireSession(c,x,browser,!route.equals("auth/session"));
                             result=switch(route) {
                                 case "auth/session" -> renewCsrf(c,s);
-                                case "orders/dashboard","orders/details","orders/assign" -> OrdersWebService.execute(c,s.userId,s.name,s.permissions,browser,route.substring("orders/".length()),b);
+                                case "orders/dashboard","orders/details","orders/assign","orders/lookup" -> OrdersWebService.execute(c,s.userId,s.name,s.permissions,browser,route.substring("orders/".length()),b);
                                 case "overseas" -> overseas(c,s,b,browser);
                                 case "bootstrap" -> Map.of("userId",s.userId,"name",s.name,"canBrowse",EmployeeWebHistoryService.canBrowse(s.permissions),
                                         "canEdit",EmployeeWebCorrectionService.canEdit(s.permissions),"canOverseas",OverseasOrderService.canView(s.permissions),"overseasStores",overseasStores(c,s.userId));

@@ -5,7 +5,7 @@
 
   <groupId>edu.fiu</groupId>
   <artifactId>inventory-management</artifactId>
-  <version>1.1.76</version>
+  <version>1.1.77</version>
 
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
@@ -108,6 +108,7 @@
           <include>migrations/v1_after/*.sql</include>
           <include>v1/**/*.sql</include>
           <include>storefront/*.sql</include>
+          <include>customer-auth/*.sql</include>
         </includes>
       </resource>
       <resource>

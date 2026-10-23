@@ -36,7 +36,7 @@ final class CustomItemInventoryPanel extends JPanel {
     private final JButton save=new JButton("Save Changes");
     private final Runnable refresh;
     private final BiConsumer<String,JsonObject> writer;
-    private final DefaultTableModel model=new DefaultTableModel(new String[]{"Item / Variant","Size","Colour","Brand","Barcode","Price / Rate","Qty","Reorder","Active","Pricing","Image","Date Added","Sell in POS","Description","Template Size","Category","Shirt setup","Shirt style","Enable designer","Fabric","Shirt type","Neckline"},0){
+    private final DefaultTableModel model=new DefaultTableModel(new String[]{"Item / Variant","Size","Colour","Brand","Barcode","Price / Rate","Qty","Reorder","Active","Pricing","Image","Date Added","Sell in POS","Description","Template Size","Category","Shirt setup","Shirt style","Enable designer","Fabric","Shirt type","Neckline","Template Width","Template Height"},0){
         public boolean isCellEditable(int row,int col){
             if(archivedOnly.isSelected())return false;
             if(col>=18&&col<=21){if(saving||rowKeys.get(row).startsWith("V:"))return false;JsonObject item=parentRow(row);return flag(item,"isShirt")&&(col!=21||!"COLLARED".equals(text(shirtConfig(item),"shirtType")));}
@@ -92,6 +92,8 @@ final class CustomItemInventoryPanel extends JPanel {
         for(int column=18;column<=21;column++)table.moveColumn(table.convertColumnIndexToView(column),table.convertColumnIndexToView(16));
         table.moveColumn(table.convertColumnIndexToView(13),1);
         table.getColumnModel().getColumn(1).setPreferredWidth(260);
+        table.moveColumn(table.convertColumnIndexToView(22),table.convertColumnIndexToView(14));
+        table.moveColumn(table.convertColumnIndexToView(23),table.convertColumnIndexToView(22)+1);
         setTemplateVisible(false);
         showTemplate.addActionListener(e->setTemplateVisible(showTemplate.isSelected()));
         showCreated.addActionListener(e->setDateVisible(showCreated.isSelected()));
@@ -104,7 +106,7 @@ final class CustomItemInventoryPanel extends JPanel {
             int row=e.getFirstRow();String key=rowKeys.get(row);if(key.startsWith("G:")){if(e.getColumn()!=12&&e.getColumn()!=13&&e.getColumn()!=15)return;key="I:"+key.substring(2);}
             JsonObject draft=drafts.computeIfAbsent(key,k->originals.get(k).deepCopy());
             String field=e.getColumn()==15?"category":e.getColumn()==13?"description":e.getColumn()==12?"sellInPos":new String[]{"name","size","color","brand","barcode","fixedPrice","quantity","reorderLevel","active"}[e.getColumn()];
-            Object value=model.getValueAt(row,e.getColumn());if(field.equals("name"))value=String.valueOf(value).stripLeading();if(field.equals("category"))CustomItemCategory.parse(value).apply(draft);else draft.add(field,JSON.toJsonTree(value));status.setText(drafts.size()+" row(s) changed.");
+            Object value=model.getValueAt(row,e.getColumn());if(field.equals("name"))value=String.valueOf(value).stripLeading();if(field.equals("category"))services.CustomItemCategories.apply(value,draft);else draft.add(field,JSON.toJsonTree(value));status.setText(drafts.size()+" row(s) changed.");
             if(key.startsWith("V:")&&List.of("size","color","brand").contains(field)){
                 long parentId=draft.get("itemId").getAsLong();
                 Item parent=state.items().stream().filter(item->item.itemId()==parentId).findFirst().orElse(null);
@@ -147,6 +149,7 @@ final class CustomItemInventoryPanel extends JPanel {
         save.addActionListener(e->save(owner));
     }
     void setState(State loaded){
+        table.getColumnModel().getColumn(table.convertColumnIndexToView(15)).setCellEditor(new DefaultCellEditor(new JComboBox<>(services.CustomItemCategories.choices(loaded.customCategories()))));
         if(!drafts.isEmpty()||saving)return;
         state=loaded;originals.clear();
         for(Item item:state.items()){originals.put("I:"+item.itemId(),JSON.toJsonTree(item).getAsJsonObject());
@@ -186,11 +189,17 @@ final class CustomItemInventoryPanel extends JPanel {
                 List<Variant> variants=item.variants().stream().filter(v->match||matchesSearch(drafts.getOrDefault("V:"+v.variantId(),originals.get("V:"+v.variantId())),query,itemData)).toList();
                 if(!match&&variants.isEmpty())continue;
                 if(item.hasVariants()){
-                    rowKeys.add("G:"+item.itemId());model.addRow(new Object[]{(expanded.contains(item.itemId())||!query.isBlank()?"▾ ":"▸ ")+text(itemData,"name"),variantSummary(item,"size"),variantSummary(item,"color"),variantSummary(item,"brand"),"",null,item.quantity(),item.reorderLevel(),item.active(),item.pricingType(),item.imageUrl(),displayDate(item.createdAt()),itemData.has("sellInPos")&&itemData.get("sellInPos").getAsBoolean(),text(itemData,"description"),templateSummary(item,itemData),CustomItemCategory.from(itemData).toString(),item.shirtReadiness(),item.isShirt()?ShirtDesignerService.styleLabel(item.shirtDesignerConfig()):""});
+                    rowKeys.add("G:"+item.itemId());model.addRow(new Object[]{(expanded.contains(item.itemId())||!query.isBlank()?"▾ ":"▸ ")+text(itemData,"name"),variantSummary(item,"size"),variantSummary(item,"color"),variantSummary(item,"brand"),"",null,item.quantity(),item.reorderLevel(),item.active(),item.pricingType(),item.imageUrl(),displayDate(item.createdAt()),itemData.has("sellInPos")&&itemData.get("sellInPos").getAsBoolean(),text(itemData,"description"),templateSummary(item,itemData),services.CustomItemCategories.displayChoice(itemData,state.customCategories()),item.shirtReadiness(),item.isShirt()?ShirtDesignerService.styleLabel(item.shirtDesignerConfig()):""});
                     if(expanded.contains(item.itemId())||!query.isBlank())for(Variant v:variants)add("V:"+v.variantId(),true);
                 }else add(itemKey,false);
             }
             refreshShirtCells();
+            for(int row=0;row<rowKeys.size();row++){
+                String key=rowKeys.get(row);JsonObject parent=parentRow(row);
+                JsonObject value=key.startsWith("G:")?parent:drafts.getOrDefault(key,originals.get(key));
+                model.setValueAt(templateDimension(value,parent,"templateWidth"),row,22);
+                model.setValueAt(templateDimension(value,parent,"templateHeight"),row,23);
+            }
         }finally{rendering=false;}
     }
     private static boolean matchesSearch(JsonObject row,String query,JsonObject... parents){
@@ -229,12 +238,12 @@ final class CustomItemInventoryPanel extends JPanel {
     private void add(String key,boolean variant){
         JsonObject row=drafts.getOrDefault(key,originals.get(key));rowKeys.add(key);
         JsonObject parent=variant?drafts.getOrDefault("I:"+row.get("itemId").getAsLong(),originals.get("I:"+row.get("itemId").getAsLong())):row;
-        model.addRow(new Object[]{(variant?"    ":"")+text(row,"name"),text(row,"size"),text(row,"color"),text(row,"brand"),text(row,"barcode"),text(row,"fixedPrice"),text(row,"quantity"),text(row,"reorderLevel"),row.get("active").getAsBoolean(),text(row,"pricingType"),text(row,"imageUrl"),displayDate(text(row,"createdAt")),parent.has("sellInPos")&&parent.get("sellInPos").getAsBoolean(),text(parent,"description"),templateSize(row,parent),CustomItemCategory.from(parent).toString(),text(parent,"shirtReadiness"),parent.get("isShirt").getAsBoolean()?ShirtDesignerService.styleLabel(parent.has("shirtDesignerConfig")&&!parent.get("shirtDesignerConfig").isJsonNull()?parent.getAsJsonObject("shirtDesignerConfig"):null):""});
+        model.addRow(new Object[]{(variant?"    ":"")+text(row,"name"),text(row,"size"),text(row,"color"),text(row,"brand"),text(row,"barcode"),text(row,"fixedPrice"),text(row,"quantity"),text(row,"reorderLevel"),row.get("active").getAsBoolean(),text(row,"pricingType"),text(row,"imageUrl"),displayDate(text(row,"createdAt")),parent.has("sellInPos")&&parent.get("sellInPos").getAsBoolean(),text(parent,"description"),templateSize(row,parent),services.CustomItemCategories.displayChoice(parent,state.customCategories()),text(parent,"shirtReadiness"),parent.get("isShirt").getAsBoolean()?ShirtDesignerService.styleLabel(parent.has("shirtDesignerConfig")&&!parent.get("shirtDesignerConfig").isJsonNull()?parent.getAsJsonObject("shirtDesignerConfig"):null):""});
     }
     private static boolean flag(JsonObject value,String key){return value!=null&&value.has(key)&&!value.get(key).isJsonNull()&&value.get(key).getAsBoolean();}
     private JsonObject parentRow(int row){String key=rowKeys.get(row);if(key.startsWith("G:"))key="I:"+key.substring(2);else if(key.startsWith("V:"))key="I:"+originals.get(key).get("itemId").getAsLong();return drafts.getOrDefault(key,originals.get(key));}
     private static JsonObject shirtConfig(JsonObject item){return item.has("shirtDesignerConfig")&&item.get("shirtDesignerConfig").isJsonObject()&&item.getAsJsonObject("shirtDesignerConfig").size()>0?item.getAsJsonObject("shirtDesignerConfig").deepCopy():ShirtDesignerService.defaults();}
-    private void refreshShirtCells(){for(int row=0;row<rowKeys.size();row++){JsonObject item=parentRow(row),config=shirtConfig(item);model.setValueAt(CustomItemCategory.from(item).toString(),row,15);boolean shirt=flag(item,"isShirt"),polo="COLLARED".equals(text(config,"shirtType"));model.setValueAt(shirt&&flag(config,"websiteEnabled"),row,18);model.setValueAt(shirt?("DRY_FIT".equals(text(config,"fabric"))?"Dry-fit":"Normal"):"",row,19);model.setValueAt(shirt?(polo?"Polo":"T-shirt"):"",row,20);model.setValueAt(shirt&&!polo?("V".equals(text(config,"neckline"))?"V-neck":"Round neck"):"",row,21);model.setValueAt(shirt?ShirtDesignerService.styleLabel(config):"",row,17);}}
+    private void refreshShirtCells(){for(int row=0;row<rowKeys.size();row++){JsonObject item=parentRow(row),config=shirtConfig(item);model.setValueAt(services.CustomItemCategories.displayChoice(item,state.customCategories()),row,15);boolean shirt=flag(item,"isShirt"),polo="COLLARED".equals(text(config,"shirtType"));model.setValueAt(shirt&&flag(config,"websiteEnabled"),row,18);model.setValueAt(shirt?("DRY_FIT".equals(text(config,"fabric"))?"Dry-fit":"Normal"):"",row,19);model.setValueAt(shirt?(polo?"Polo":"T-shirt"):"",row,20);model.setValueAt(shirt&&!polo?("V".equals(text(config,"neckline"))?"V-neck":"Round neck"):"",row,21);model.setValueAt(shirt?ShirtDesignerService.styleLabel(config):"",row,17);}}
     private void stageShirt(int row,int column){
         if(row>=rowKeys.size()||rowKeys.get(row).startsWith("V:"))return;
         String key=rowKeys.get(row);if(key.startsWith("G:"))key="I:"+key.substring(2);
@@ -263,6 +272,14 @@ final class CustomItemInventoryPanel extends JPanel {
             if(!value.isBlank())values.add(value);
         }
         return values.isEmpty()?templateSize(parent,parent):String.join(", ",values);
+    }
+    private static String templateDimension(JsonObject row,JsonObject parent,String field){
+        String area=text(row,"templateUsesOrderArea");
+        if(area.isBlank())area=text(parent,"templateUsesOrderArea");
+        if("true".equals(area))return "Order measurements";
+        JsonObject dimensions=text(row,"templateWidth").isBlank()&&text(row,"templateHeight").isBlank()?parent:row;
+        String value=text(dimensions,field);
+        return value.isBlank()?"":new BigDecimal(value).stripTrailingZeros().toPlainString()+" "+text(dimensions,"templateUnit");
     }
     private static String templateSize(JsonObject row,JsonObject parent){
         String area=text(row,"templateUsesOrderArea");

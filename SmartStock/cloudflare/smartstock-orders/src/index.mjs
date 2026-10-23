@@ -1,11 +1,11 @@
 const HOST='ordersmanagement.deckers.gy';
-const API=/^\/employees\/api\/v1\/(?:auth\/(?:session|login|verify|logout)|activate|orders\/(?:dashboard|details|assign))$/;
-const ASSET=/^\/employees\/(?:orders\.(?:html|css|js|webmanifest)|orders-icon-(?:180|192|512)\.png)$/;
+const API=/^\/employees\/api\/v1\/(?:auth\/(?:session|login|verify|logout)|activate|orders\/(?:dashboard|details|assign|lookup))$/;
+const ASSET=/^\/employees\/(?:orders\.(?:html|css|js|webmanifest)|orders-barcode(?:\.js|-LICENSE\.txt)|orders-icon-(?:180|192|512)\.png)$/;
 function secured(response){
   const r=new Response(response.body,response);
   r.headers.set('Cache-Control','no-store');r.headers.set('X-Content-Type-Options','nosniff');
   r.headers.set('X-Frame-Options','DENY');r.headers.set('Referrer-Policy','no-referrer');
-  r.headers.set('Content-Security-Policy',"default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  r.headers.set('Content-Security-Policy',"default-src 'self'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self'; script-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   return r;
 }
 const error=(status,code,message)=>secured(Response.json({ok:false,error:{code,message}},{status}));

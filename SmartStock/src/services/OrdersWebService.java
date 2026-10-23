@@ -32,10 +32,14 @@ final class OrdersWebService {
                 zone=r.getString(1)==null||r.getString(1).isBlank()?ZoneId.of("America/Guyana"):ZoneId.of(r.getString(1));
             }
         }
+        if(action.equals("lookup")) {
+            var row=OrdersWebLookupService.lookup(c,location,body.has("barcode")?body.get("barcode").getAsString():null);
+            return row==null?Map.of("found",false):Map.of("found",true,"order",row);
+        }
         if(action.equals("dashboard")) {
             if(body.has("view")&&"DELIVERED".equals(body.get("view").getAsString()))
                 return Map.of("orders",LanOrdersDashboardService.delivered(c,location,body.has("range")&&"ALL".equals(body.get("range").getAsString())));
-            return Map.of("dashboard",LanOrdersDashboardService.load(c,location,zone),"employees",ServerCustomOrderDataService.listActiveEmployees(c,location));
+            return Map.of("dashboard",LanOrdersDashboardService.load(c,location,zone),"employees",ServerCustomOrderDataService.listActiveEmployees(c,location),"branding",OrdersWebBranding.load(location));
         }
         if(!action.equals("details")&&!action.equals("assign"))throw new IllegalArgumentException("Unknown orders action.");
         if(action.equals("assign")&&!canEdit(permissions))throw new SecurityException("Your account cannot change order assignments or statuses.");

@@ -96,6 +96,7 @@ public class CompanyCustomization extends JFrame {
     private static final String NAV_PRICE_TAG_TEMPLATE = "Price Tag Template";
     private static final String NAV_IMAGE_STORAGE = "Image Storage";
     private static final String NAV_EMPLOYMENT_PORTAL = "Employment Portal";
+    private static final String NAV_CUSTOM_ITEM_CATEGORIES = "Custom Item Categories";
     private static final String NAV_STOREFRONT = "Online Store";
     private static final String NAV_LOYALTY = "Loyalty";
     private static final int BADGE_CARD_WIDTH = 638;
@@ -415,6 +416,7 @@ public class CompanyCustomization extends JFrame {
         addNodeIfPermitted(root, NAV_BACKUPS);
         addNodeIfPermitted(root, NAV_IMAGE_STORAGE);
         addNodeIfPermitted(root, NAV_EMPLOYMENT_PORTAL);
+        addNodeIfPermitted(root,NAV_CUSTOM_ITEM_CATEGORIES);
         addNodeIfPermitted(root,NAV_STOREFRONT);
         addNodeIfPermitted(root,NAV_LOYALTY);
         addNodeIfPermitted(root, NAV_TIME_CLOCK_SAFETY);
@@ -542,6 +544,7 @@ public class CompanyCustomization extends JFrame {
             case NAV_BACKUPS -> buildBackupSchedulerScreen();
             case NAV_IMAGE_STORAGE -> new ImageStoragePanel();
             case NAV_EMPLOYMENT_PORTAL -> new EmploymentPortalPanel();
+            case NAV_CUSTOM_ITEM_CATEGORIES -> new ui.screens.companyprefs.CustomItemCategoriesPanel();
             case NAV_STOREFRONT -> new ui.screens.companyprefs.StorefrontPanel();
             case NAV_LOYALTY -> new ui.screens.companyprefs.LoyaltyPanel();
             case NAV_TIME_CLOCK_SAFETY -> buildTimeClockSafetyScreen();
@@ -714,7 +717,7 @@ public class CompanyCustomization extends JFrame {
                 NAV_LOCATIONS, NAV_CASH_DRAWER_MANAGER, NAV_BACKUPS, NAV_TIME_CLOCK_SAFETY,
                 NAV_SCHEDULER_LINK_EMAIL,
                 NAV_IMAGE_STORAGE,
-                NAV_EMPLOYMENT_PORTAL, NAV_STOREFRONT, NAV_LOYALTY,
+                NAV_EMPLOYMENT_PORTAL, NAV_STOREFRONT, NAV_CUSTOM_ITEM_CATEGORIES, NAV_LOYALTY,
                 NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_SALE_ITEM_TYPE_BUTTONS, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_SIGNATURE_PAD,
                 NAV_CUSTOM_ORDERS, NAV_CUSTOM_ORDER_DEPOSIT_REFUND,
                 NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING
@@ -743,7 +746,7 @@ public class CompanyCustomization extends JFrame {
             case NAV_LOCATIONS -> PermissionManager.hasPermission("LOCATION_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_CASH_DRAWER_MANAGER -> PermissionManager.hasPermission("CASH_DRAWER_MANAGEMENT") || canEditCompanyPreferences();
             case NAV_BACKUPS -> isPhysicalServerMode() && canEditCompanyPreferences();
-            case NAV_IMAGE_STORAGE, NAV_EMPLOYMENT_PORTAL, NAV_STOREFRONT, NAV_LOYALTY -> canEditCompanyPreferences();
+            case NAV_IMAGE_STORAGE, NAV_EMPLOYMENT_PORTAL, NAV_STOREFRONT, NAV_CUSTOM_ITEM_CATEGORIES, NAV_LOYALTY -> canEditCompanyPreferences();
             case NAV_COMPANY_IDENTITY, NAV_EMPLOYEE_BADGES, NAV_PRICE_TAG_TEMPLATE, NAV_TIME_CLOCK_SAFETY, NAV_SCHEDULER_LINK_EMAIL, NAV_SALE, NAV_SALE_RECEIPT_FORMATTING, NAV_SALE_ITEM_TYPE_BUTTONS, NAV_ACCOUNT_PAYMENT_RECEIPTS, NAV_SIGNATURE_PAD, NAV_CUSTOM_ORDERS,
                  NAV_CUSTOM_ORDER_DEPOSIT_REFUND, NAV_CUSTOM_ORDER_SLIP_FORMATTING, NAV_QUOTATION_ORDER_PRINTING -> canEditCompanyPreferences();
             default -> false;

@@ -75,6 +75,7 @@ public final class StorefrontService {
             var product=e.getAsJsonObject();var manifest=ServerImageAssetService.storefrontManifest(c,text(product,"image"));
             if(manifest!=null){product.add("_imageManifest",manifest);product.addProperty("image",ImageAssetReference.format(UUID.fromString(text(manifest,"id"))));}
         }
+        s.add("customItemCategories",CustomItemCategories.catalog(c));
         s.add("shirts",ShirtDesignerService.catalog(c,location));
         s.add("sublimationProducts",rows(c,"""
             SELECT custom_item_id AS id,item_name AS name,COALESCE(description,'') AS description,
@@ -153,7 +154,7 @@ public final class StorefrontService {
     static JsonObject publicSyncSnapshot(JsonObject snapshot){
         JsonObject publicOnly=new JsonObject();
         for(String key:List.of("locationId","capturedAt","settings","unavailableServices",
-                "store","branding","tax","products","projects","shirts","sublimationProducts","businessCardsProducts","largeFormatPrintingProducts","laserProducts")){
+                "store","branding","tax","products","projects","customItemCategories","shirts","sublimationProducts","businessCardsProducts","largeFormatPrintingProducts","laserProducts")){
             if(snapshot.has(key))publicOnly.add(key,snapshot.get(key).deepCopy());
         }
         if(publicOnly.has("settings"))publicOnly.getAsJsonObject("settings").addProperty("enabled",false);
@@ -165,7 +166,7 @@ public final class StorefrontService {
         return row.getAsJsonObject("payload");
     }
     static JsonObject catalog(JsonObject s){
-        JsonObject out=new JsonObject();for(String k:List.of("locationId","capturedAt","settings","store","products","projects","shirts","sublimationProducts","businessCardsProducts","largeFormatPrintingProducts","laserProducts","branding","unavailableServices"))out.add(k,s.has(k)?s.get(k).deepCopy():JsonNull.INSTANCE);
+        JsonObject out=new JsonObject();for(String k:List.of("locationId","capturedAt","settings","store","products","projects","customItemCategories","shirts","sublimationProducts","businessCardsProducts","largeFormatPrintingProducts","laserProducts","branding","unavailableServices"))out.add(k,s.has(k)?s.get(k).deepCopy():JsonNull.INSTANCE);
         JsonObject settings=out.get("settings").isJsonObject()?out.getAsJsonObject("settings"):new JsonObject();
         JsonObject campaign=new JsonObject();
         for(String[] field:new String[][]{{"topic","campaign_topic"},{"eyebrow","campaign_eyebrow"},{"headline","campaign_headline"},
@@ -369,6 +370,7 @@ public final class StorefrontService {
             if(!other.has("settings"))continue;
             try{
                 JsonObject linked=customer(other,auth,email);
+                if(snapshot.has("_verifiedCustomerUuid")&&!text(linked,"uuid").equals(text(snapshot,"_verifiedCustomerUuid")))throw new IllegalArgumentException("Customer link is awaiting synchronization.");
                 // A new-account placeholder is not an existing balance at another store.
                 if(linked.has("balance"))addAccountStore(other,linked,stores,receipts);
             }catch(IllegalArgumentException ignored){

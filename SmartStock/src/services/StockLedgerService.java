@@ -83,6 +83,7 @@ final class StockLedgerService {
             p.setObject(1,original);p.setInt(2,location);
             try(var r=p.executeQuery()) {
                 if(!r.next() || r.getObject("reversal_of")!=null)throw invalid("Choose an original ledger entry to reverse.");
+                if("ACCOUNT_SALE_ITEM".equals(r.getString("source_movement_type")))throw invalid("Account transfers cannot use stock reversal. They already contain an account correction and did not change stock.");
                 try(var q=c.prepareStatement("SELECT 1 FROM stock_ledger_entries WHERE reversal_of=?")){
                     q.setObject(1,original);try(var existing=q.executeQuery()){if(existing.next())throw invalid("This entry has already been reversed.");}
                 }

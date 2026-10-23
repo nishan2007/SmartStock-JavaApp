@@ -219,7 +219,7 @@ public final class LanApiServer implements AutoCloseable {
         server.createContext("/v1/inventory/list", exchange -> handle(exchange, this::inventoryList));
         server.createContext("/v1/inventory/details", exchange -> handle(exchange, this::inventoryDetails));
         server.createContext("/v1/inventory/receiving-history", exchange -> handle(exchange, this::receivingHistory));
-        for(String action:List.of("load","detail","post","reverse")) {
+        for(String action:List.of("load","detail","post","reverse","account-preview","account-transfer")) {
             server.createContext("/v1/stock-ledger/"+action, exchange -> handle(exchange, context -> stockLedger(context,action)));
         }
         server.createContext("/v1/inventory/receive", exchange -> handle(exchange, this::receiveInventory));
@@ -2122,25 +2122,29 @@ public final class LanApiServer implements AutoCloseable {
     private ApiResult stockLedger(RequestContext context,String action)throws Exception {
         requireMethod(context.exchange(),"POST");DevicePrincipal device=authenticateDevice(context.exchange());
         SessionPrincipal session=authenticateSession(context.exchange(),device,true);
-        boolean mutation=action.equals("post")||action.equals("reverse");
+        boolean mutation=action.equals("post")||action.equals("reverse")||action.equals("account-transfer");
         String key=mutation?requireIdempotencyKey(context,"A ledger idempotency key is required."):null;
         try(Connection c=DB.getConnection()) {
             c.setAutoCommit(false);
             try {
                 // Check permissions before serving a cached mutation response as well.
-                if(mutation)requireAnyPermission(c,session.userId(),action.equals("post")?"RECORD_STOCK_EXPENSE":"REVERSE_STOCK_LEDGER");
+                if(action.startsWith("account-"))CompanyExpenseTransferService.require(c,session.userId());
+                else if(mutation)requireAnyPermission(c,session.userId(),action.equals("post")?"RECORD_STOCK_EXPENSE":"REVERSE_STOCK_LEDGER");
                 String hash=LanSecurity.sha256(GSON.toJson(context.body()));
                 if(mutation){Map<String,Object> previous=loadIdempotentResult(c,device.deviceId(),key,"stock-ledger."+action+".v1",hash);if(previous!=null){c.commit();return ApiResult.ok(previous);}}
                 AuthenticatedUser user=loadUser(c,session.userId(),session.locationId());
                 Map<String,Object> result=switch(action){
                     case "load" -> StockLedgerService.load(c,context.body(),session.userId(),session.locationId());
                     case "detail" -> StockLedgerService.detail(c,context.body(),session.userId(),session.locationId());
+                    case "account-preview" -> CompanyExpenseTransferService.preview(c,context.body(),session.userId(),session.locationId());
+                    case "account-transfer" -> CompanyExpenseTransferService.transfer(c,context.body(),device.deviceId(),session.userId(),displayName(user),session.locationId());
                     case "post" -> StockLedgerService.post(c,context.body(),device.deviceId(),session.userId(),displayName(user),session.locationId());
                     default -> StockLedgerService.reverse(c,context.body(),device.deviceId(),session.userId(),displayName(user),session.locationId());
                 };
                 if(mutation)completeIdempotency(c,device.deviceId(),key,result);
                 c.commit();return ApiResult.ok(result);
             }catch(LanInventoryService.RuleViolation e){c.rollback();throw apiException(e);}
+            catch(LanRefundService.RuleViolation e){c.rollback();throw apiException(e);}
             catch(IllegalArgumentException | java.io.IOException e){c.rollback();throw new ApiException(400,"VALIDATION_ERROR","Invalid ledger request or signature image.",false);}
             catch(Exception e){c.rollback();throw e;}
         }

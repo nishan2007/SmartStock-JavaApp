@@ -1,9 +1,10 @@
+import {identityOperation,identityRoute,rankIdentityOrigins} from './customer-auth.js';
 import {templateSubmissionRoute} from './template-submit.js';
 import {captureRoute,StudioCapture} from './studio-capture.js';
 import {queueRoute} from './studio-photo-queue.js';
 export {StudioCapture};
 const json = (value, status = 200) => new Response(JSON.stringify(value), {status, headers:{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
-const publicSnapshotKeys=['locationId','capturedAt','settings','unavailableServices','store','branding','tax','products','projects','shirts','sublimationProducts','businessCardsProducts','largeFormatPrintingProducts','laserProducts'];
+const publicSnapshotKeys=['locationId','capturedAt','settings','unavailableServices','store','branding','tax','products','projects','customItemCategories','shirts','sublimationProducts','businessCardsProducts','largeFormatPrintingProducts','laserProducts'];
 const publicSyncSnapshot=snapshot=>{
   const selected=Object.fromEntries(publicSnapshotKeys.filter(key=>Object.hasOwn(snapshot,key)).map(key=>[key,snapshot[key]]));
   if(selected.settings)selected.settings={...selected.settings,enabled:false};
@@ -81,13 +82,13 @@ export function pendingQuantities(orders,snapshot) {
     for(const line of order.quote.lines) result[line.id]=(result[line.id]||0)+line.quantity;
   return result;
 }
-async function healthy(env, selected) {
+async function healthy(env, selected, identity=false) {
   const list=origins(env), health={};
   await Promise.all(list.map(async o=>{const start=Date.now();try{
     const r=await fetch(o.url+'/shop/health',{headers:originHeaders(env,o),signal:AbortSignal.timeout(2500)});
-    const b=await r.json();health[o.storeId]=originHealth(o,selected,b,Date.now()-start);if(!r.ok)health[o.storeId].ok=false;
+    const b=await r.json();health[o.storeId]=originHealth(o,selected,b,Date.now()-start);if(!r.ok||identity&&b.customerAuthVersion!==2)health[o.storeId].ok=false;
   }catch{health[o.storeId]={ok:false};}}));
-  return rankOrigins(list,selected,health);
+  return identity?rankIdentityOrigins(list,health):rankOrigins(list,selected,health);
 }
 async function proxy(request, origin, env, body) {
   const url=new URL(request.url);const headers=new Headers(request.headers);
@@ -148,6 +149,7 @@ export default {
         // Keep large JSON processing outside the free Worker's 10 ms CPU budget.
         return stub(env,'sync:'+id).fetch(request);
       }
+      if(url.pathname==='/shop/internal/customer-auth')return identityRoute(request,env,configured,stub,readBoundedBody);
       // Internal origin endpoints are never available through the public proxy.
       if(url.pathname.startsWith('/shop/internal/'))return json({message:'Not found'},404);
       if(!url.pathname.startsWith('/shop'))return Response.redirect(url.origin+'/shop/',302);
@@ -168,7 +170,7 @@ export default {
         return json({message:'This store is temporarily unavailable for custom requests. Please retry shortly.'},503);
       }
       if(url.pathname.endsWith('/checkout')||url.pathname.endsWith('/quote'))return stub(env,selected).fetch(new Request(request,{body:JSON.stringify(data)}));
-      for(const origin of await healthy(env,selected)){try{const response=await proxy(request,origin,env,body?JSON.stringify(data):undefined);if(response.status<500){if(browseOnly&&url.pathname==='/shop/api/v1/catalog'&&response.ok){const catalog=await response.json();catalog.browseOnly=true;if(catalog.settings)catalog.settings.enabled=false;catalog.products=(catalog.products||[]).map(product=>({...product,canOrder:false}));if(catalog.campaign?.topic==='3D Printing')catalog.campaign={...catalog.campaign,description:'Discover what Deckers can create with 3D printing. Ask your store about current availability.',steps:'Bring your idea · Discuss the details · Plan the print',primary:'Find your store',primaryAction:'START'};return json(catalog);}return response;}}catch{}}
+      for(const origin of await healthy(env,selected,url.pathname.startsWith('/shop/api/v1/auth/')||url.pathname==='/shop/api/v1/account')){try{const response=await proxy(request,origin,env,body?JSON.stringify(data):undefined);if(response.status<500){if(browseOnly&&url.pathname==='/shop/api/v1/catalog'&&response.ok){const catalog=await response.json();catalog.browseOnly=true;if(catalog.settings)catalog.settings.enabled=false;catalog.products=(catalog.products||[]).map(product=>({...product,canOrder:false}));if(catalog.campaign?.topic==='3D Printing')catalog.campaign={...catalog.campaign,description:'Discover what Deckers can create with 3D printing. Ask your store about current availability.',steps:'Bring your idea · Discuss the details · Plan the print',primary:'Find your store',primaryAction:'START'};return json(catalog);}return response;}}catch{}}
       return json({message:'Stores are temporarily unavailable. Your bag is saved.'},503);
     }catch(error){if(error instanceof RequestFailure)return json({message:error.message},error.status);return json({message:'The request could not be completed. Please retry.'},503);}
   }
@@ -206,6 +208,7 @@ export class StoreCoordinator {
   async handle(request){
     const url=new URL(request.url),storage=this.state.storage;
     if(url.pathname==='/shop/internal/sync')return synchronize(request,this.env);
+    if(url.pathname==='/customer-identity')return identityOperation(storage,await request.json());
     if(url.pathname==='/meta')return snapshotMeta(storage);
     if(url.pathname==='/revoke'){
       const body=await request.json();
