@@ -171,7 +171,7 @@ final class StudioPdfOcrService {
         }
     }
 
-    private static void deleteTemporary(Path path) throws IOException {
+    static void deleteTemporary(Path path) throws IOException {
         boolean interrupted = Thread.interrupted();
         try {
             for (int attempt = 0; ; attempt++) {

@@ -125,40 +125,29 @@ final class StudioPdfOcrRuntime {
         try (var channel = FileChannel.open(root.resolve("install.lock"), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
              var lock = channel.tryLock()) {
             if (lock == null) throw new IOException("Another server process is installing PDF OCR.");
-            // Stage on the same volume as the active pointer so both moves can be atomic.
             Path staging = Files.createTempDirectory(root, "install-");
+            String name = "tesseract-" + VERSION + "-" + UUID.randomUUID();
+            Path candidate = root.resolve(name);
+            boolean activated = false;
             try {
                 Path archive = staging.resolve("tesseract.zip");
                 download(RUNTIME, archive, 0, "Downloading Tesseract…");
-                Path unpacked = Files.createDirectory(staging.resolve("runtime"));
-                extract(archive, unpacked);
-                download(ENGLISH, unpacked.resolve("tessdata/eng.traineddata"), RUNTIME.size(),
+                // The candidate is inactive until the pointer changes. Test in place because
+                // Windows can lock an executable's directory briefly after the process exits.
+                Files.createDirectory(candidate);
+                extract(archive, candidate);
+                download(ENGLISH, candidate.resolve("tessdata/eng.traineddata"), RUNTIME.size(),
                         "Downloading English language data…");
                 progress = new StudioModelService.Progress("CHECKING", TOTAL, TOTAL, "Testing PDF OCR…");
-                StudioPdfOcrService.checkEnglish(settings(unpacked));
+                StudioPdfOcrService.checkEnglish(settings(candidate));
 
-                String name = "tesseract-" + VERSION + "-" + UUID.randomUUID();
-                Path candidate = root.resolve(name);
                 Path pointer = Files.writeString(staging.resolve("active"), name);
-                Files.move(unpacked, candidate, StandardCopyOption.ATOMIC_MOVE);
-                try {
-                    Files.move(pointer, root.resolve("active"), StandardCopyOption.ATOMIC_MOVE,
-                            StandardCopyOption.REPLACE_EXISTING);
-                } catch (IOException ex) {
-                    try {
-                        deleteStaging(candidate);
-                    } catch (IOException cleanup) {
-                        ex.addSuppressed(cleanup);
-                    }
-                    throw ex;
-                }
+                Files.move(pointer, root.resolve("active"), StandardCopyOption.ATOMIC_MOVE,
+                        StandardCopyOption.REPLACE_EXISTING);
+                activated = true;
             } finally {
-                // Activation already succeeded if the pointer moved. Cleanup failure must not turn success into failure.
-                try {
-                    deleteStaging(staging);
-                } catch (IOException ex) {
-                    System.err.println("Could not remove temporary PDF OCR installation files.");
-                }
+                if (!activated) cleanTemporaryFiles(candidate);
+                cleanTemporaryFiles(staging);
             }
         }
     }
@@ -235,11 +224,16 @@ final class StudioPdfOcrRuntime {
             throw new IOException("PDF OCR package is incomplete.");
     }
 
-    private static void deleteStaging(Path directory) throws IOException {
-        java.util.List<Path> files;
-        try (var paths = Files.walk(directory)) {
-            files = paths.sorted(Comparator.reverseOrder()).toList();
+    private static void cleanTemporaryFiles(Path directory) {
+        try {
+            if (!Files.exists(directory)) return;
+            java.util.List<Path> files;
+            try (var paths = Files.walk(directory)) {
+                files = paths.sorted(Comparator.reverseOrder()).toList();
+            }
+            for (Path path : files) StudioPdfOcrService.deleteTemporary(path);
+        } catch (IOException ex) {
+            System.err.println("Could not remove temporary PDF OCR installation files.");
         }
-        for (Path path : files) Files.deleteIfExists(path);
     }
 }

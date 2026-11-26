@@ -1,0 +1,11 @@
+SmartStock 1.1.153 for Windows
+
+This release gives sites running an earlier build labeled 1.1.152 a versioned update to the verified package. It also prevents a Windows file lock after the Tesseract test from interrupting activation.
+
+- Install PDF OCR from Status > AI Models. SmartStock downloads and verifies Tesseract and English language data on the Windows x64 store server so SmartStudio workstations can recognize scans and correct scanned text regions.
+- Post stock used by each store directly to its own expense ledger. Expense checkout collects the representative and employee signature, and administrators can transfer eligible historical company-account entries.
+- Charge the unpaid portion of finalized custom orders to eligible business accounts. Credit-limit approval blocks over-limit orders until a manager authorizes them, and deposits are counted once in local and cross-store balances.
+- Open the redesigned Deckers customer account screen, with credit details, permission-checked editing, recent transactions, searchable history, itemized receipts and detailed custom-order history.
+- Improve customer ledger, custom-order detail and ad-review handling. Retains the latest inventory, quotations, session and permit changes.
+
+Update the store server before registers and SmartStudio. Public web gateway deployment is separate.
