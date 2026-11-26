@@ -1,0 +1,6 @@
+SmartStudio 0.1.119 for Windows
+
+This update makes the cumulative SmartStudio release available to computers already running a build labeled 0.1.118.
+PDF Editor uses server OCR for scanned pages and scanned-region correction. Use OCR > Check server OCR after an administrator enables Tesseract on the SmartStock 1.1.153 store server.
+Includes editable badge barcodes, QR codes, tables and WordArt, PDF barcodes and QR codes, replaceable photo frames, Send to design in Image Studio, and sortable Orealla / Siparuta permit records.
+Uses the verified SmartStock 1.1.153 client.
