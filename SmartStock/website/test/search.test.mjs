@@ -1,5 +1,16 @@
 import {test} from 'node:test';import {strict as assert} from 'node:assert';
 import {searchCatalog} from '../src/search.mjs';
+test('shop search finds a paper format through catalog aliases',()=>{
+ const paper={name:'Bond paper',size:'8.5 x 11',searchAliases:'letter size us letter 8.5 by 11'};
+ const frame={name:'Photo frame',size:'8.5 x 11'};
+ assert.deepEqual(searchCatalog('letter size',[paper,frame]).products,[paper]);
+});
+test('product tags are searchable with all query terms and older catalogs still work',()=>{
+ const products=[{name:'White polo',tags:['School Wear','Embroidery Ready']},{name:'Plain cup'}];
+ assert.deepEqual(searchCatalog('school polo',products).products,[products[0]]);
+ assert.deepEqual(searchCatalog('EMBROIDERY',products).products,[products[0]]);
+ assert.equal(searchCatalog('school cup',products).products.length,0);
+});
 test('global search separates products, services and categories',()=>{
  const results=searchCatalog('business',[{name:'Card stock',sku:'C1',category:'Business Printing'},{name:'Black ink',sku:'B1',category:'Office'}]);
  assert.equal(results.products.length,1);assert.equal(results.products[0].name,'Card stock');

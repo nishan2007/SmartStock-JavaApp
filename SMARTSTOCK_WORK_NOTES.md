@@ -529,3 +529,337 @@ Before switching computers:
 5. On the other computer, pull the same branch before editing.
 
 Do not copy or synchronize the live working tree through OneDrive, Dropbox, iCloud, or another file-sync service.
+
+### Plaque designer — source implementation (2026-10-29)
+
+- Added active plaque variants and their existing template dimensions/photos to storefront snapshots, with private image metadata redacted and published item/variant image lookup.
+- Added a browser plaque designer using shared shirt fonts/layer types, real template-inch controls, per-variant drafts, image upload, JSON save/restore, artwork PNG export, and nine photo-traced procedural 3D shapes.
+- Template dimensions are the artwork area. Overall size, approximate depth/material, and preview placement remain separate. Unknown shapes have no substitute 3D model.
+- Website build, 73 JavaScript tests, TypeScript, browser acceptance for all nine shapes/mobile/draft isolation/export, relevant Maven storefront tests, security check and scoped whitespace check passed. Maven native staging was skipped for the test run after an existing DirectML cache file lock; no installed-app validation was performed.
+- Server/frontend deployment is still pending the normal release/install workflow. No release was published and the installed store server was not updated. See SmartStock/docs/website-plaque-designer.md.
+
+### Plaque preview refinement (2026-10-29)
+
+- Replaced parent-item entry cards with individual active variant photo cards; each opens the correct editor. Model/reference-photo clicks return to artwork editing, while drags rotate the preview.
+- Added detailed photo-space silhouettes and photo-projected front textures for the nine plaques, preserving their actual faceting, curved bodies, inserts, star ornamentation and bases. Unmeasured side/rear geometry and artwork placement remain approximate.
+- Fixed front-surface artwork visibility and a canvas lifecycle issue. Browser checks now require the photo-textured canvas to remain mounted, verify changed artwork changes the rendered image, and exercise all nine models plus drafts/downloads/mobile layout. All 73 JavaScript tests and the normal website build pass. Source changes remain local; production deployment is still pending.
+
+### Plaque designer deployment (2026-10-29)
+
+- Prepared the normal model-free Windows 1.1.96 updater package and verified its layout, size and SHA-256, including the transferred copy. The full Maven test run completed with no failures/errors; database/hardware-dependent tests retain their documented skips. Isolated updater installation retained its rollback copy and model sentinel.
+- Installed 1.1.96 on POS-SERVER using the standard updater. An orphaned old server process initially held the service copy open; recovery retained 1.1.95, then a controlled stop and retry completed successfully. Pinned HTTPS health, installed version, schema readiness, and LAN discovery passed. Server and dedicated tunnel tasks are running. All three profile model files retain valid SHA-256 content hashes.
+- Deployed the website bundle extracted from the exact installed updater artifact while preserving the live gateway, origin configuration, secrets, and browse-only restrictions. No global app-release metadata or installer selection was published.
+- Verified all nine real plaque models through the public website, all active variant photos, exclusion of the inactive diamond, advancing catalog synchronization, and live card/model click-to-edit behavior. Public catalogs contain no private image manifests. Physical print alignment remains a separate staff verification step.
+
+### Custom item Item Type inheritance (2026-10-29)
+
+- Exposed the main-item Item Type prominently in Windows and shared web add/edit forms, with read-only inherited values in variant forms. Fixed classification lookup loading when selector inputs are embedded separately.
+- Added Item Type to Custom Inventory: main/group rows edit it, variants inherit it without overrides or duplicate stored values. Main-row draft edits update expanded children and type searches.
+- Added parent-derived item type to the web inventory API, cards, and item details. Reused the existing item-type schema and authenticated catalog save path; no migration is needed.
+- Targeted Swing/service tests passed, including all four InventoryWebDatabaseTest cases on a disposable localhost PostgreSQL instance; that test database was stopped afterward. Web unit/browser checks passed for both Add Item and Edit Item and inherited inventory details. Security and scoped whitespace checks passed. This feature is not deployed to the installed app or hosted web assets yet.
+
+## 2026-10-29 combined Windows update 1.1.97 published
+- Shared Maven version 1.1.97, build 101097. Standard UpdateOnly package includes the completed SmartStock working-tree changes across chats; SmartStudio remains separate. Custom-photo generation/review work still active in its chat was not claimed complete.
+- Artifact: smartstock-windows-1.1.97.zip; 168671721 bytes; SHA-256 78e5a3dc95d93bb2a31254e4281168b14cd5b1ea44cff68301d51666bbeaade3.
+- Published via standard protected Windows/R2 publisher. Complete remote download size/SHA matched before app_releases insertion; independent read-back confirmed version/build/platform/path/hash/size/published. Existing first-install selection unchanged.
+- Validation: Maven package/full suite 1417 tests, 0 failures/errors, 152 skipped; security check and git diff --check passed; website build and 73 tests passed; six custom-item web tests plus Edge browser add/edit/variant/inventory checks passed. Exact ZIP verified model-free; isolated standard updater installed matching JAR, retained previous-version backup and preserved profile model sentinel.
+- No live installations or service restarts performed for this release. POS-SERVER must update before registers. Live database, installed Windows service and physical printer/drawer/NFC checks remain separate from this isolated acceptance.
+
+## 2026-10-29 custom-item AI photo review preparation
+
+- Retrieved current custom-item metadata and original photos through the authenticated store LAN API. Excluded shirts and plaques; retained operational data outside the repository.
+- Generated 30 custom-item main-photo previews and 12 variant previews for items with variant-only source photos. All 42 remain unapproved; no live catalog photos were changed.
+- Prepared source support for the existing Product Photo Review workflow to resolve custom owners using the existing POS signed-ID convention. Promotion retains original gallery photos, validates current sources and exact approved previews, and preserves server-side EDIT_ITEM enforcement. No schema change.
+- Full Maven gate passed: 1420 tests, 152 skipped, zero failures/errors. Focused owner-routing/parser and gallery tests passed; security and whitespace checks passed.
+- Standard Windows UpdateOnly packaging completed for the current checkout at 1.1.97. verify-app-update confirmed the model-free ZIP; 168673795 bytes, SHA-256 69ee96d16078a680f41ea3f938cad6e88ad568861f1c7547b979f19945a3ee9d. No release metadata was published and no application/service was installed or restarted. Live server approval/promotion and storefront checks remain outstanding after installation is authorized.
+
+## 2026-10-29 authorized 1.1.97 server installation and custom photo queue
+
+- User explicitly authorized installing the prepared update. Transferred the exact 168673795-byte ZIP to POS-SERVER and verified SHA-256 69ee96d16078a680f41ea3f938cad6e88ad568861f1c7547b979f19945a3ee9d before running the standard updater.
+- First attempt recovered to 1.1.96 because an orphaned 1.1.96 server Java process locked the service folder. Stopped that confirmed old server process and retried. Updater completed; installed desktop/service JAR hashes match the verified release. HTTPS health, installed version, local schema and LAN discovery passed. Server, storefront tunnel and scheduler tunnel tasks are running. All three persistent model hashes are unchanged.
+- Preflighted all 42 current source image references/digests, then uploaded the unapproved custom-item batch into the existing shared Product Photo Review queue. Downloaded and compared all 42 originals and previews byte-for-byte; all decisions are review, and current primary photo references/digests are unchanged. Existing regular product reviews were retained.
+- No release metadata was published. Approval/promotion awaits the user; live Swing approval and physical hardware checks were not performed.
+
+## 2026-10-29 main custom-item photos for website service cards
+- Added protected snapshot main-item photo manifests for sublimation, laser, business-card and large-format service catalogues. Public JSON exposes only image presence. Image lookup is restricted to items in the selected published snapshot; remote photo prefetch includes these main-item assets.
+- Existing service cards now show the main item photo when available, with contained sizing on desktop/mobile. Missing or failed photos leave the existing text card. Shirt/plaque organization and variant designers retain their existing behavior.
+- Website TypeScript/build passed; Edge browser acceptance passed for main photo, absent/404 photos and mobile width. ServiceProductPhotosTest, PlaqueCatalogTest, StorefrontImagePrefetchTest and StorefrontBundleTest passed; repository security and whitespace checks passed.
+- Source and website bundle prepared only. Live activation requires a new immutable application release installed on POS-SERVER and the matching website assets deployed. Published 1.1.97 bytes were not changed.
+
+## 2026-10-29 website service items grouped by main Item Type
+- Storefront service and custom-category catalogues now expose the saved parent Item Type name. Each service renders alphabetized Item Type subsections with catalogue ordering preserved within each type. Blank types appear in Other items; no name-based guessing or database classification changes.
+- Photo cards and plaque variant galleries share their parent's subsection. Existing service organization and designer workflows remain intact.
+- Website TypeScript/build, 75 unit tests and Edge desktop/mobile acceptance (including grouped card counts, photo/failure fallbacks) passed. Targeted Maven and repository security/whitespace validation recorded for this change. Deployment remains pending alongside the main-item photo update; immutable published 1.1.97 is unchanged.
+
+## 2026-10-29 Windows update 1.1.98 published
+- Build 101098, standard UpdateOnly package. Includes main-item service photos and grouping by saved main Item Type; missing-template sublimation designers remain on hold.
+- ZIP 168676562 bytes, SHA-256 24ec1a9c781468f8c7764007193832472012e1eaadf5ef474c5d8b0b8b1ce8b2. Standard protected publisher downloaded and verified exact remote bytes before release metadata insertion; independent metadata read-back passed. First-install selection unchanged.
+- Maven package/full suite: 1422 tests, 0 failures/errors, 152 skipped. Website 75 tests and grouped photo-card Edge desktop/mobile check passed. Security and whitespace checks passed. Model-free ZIP verification and exact isolated updater acceptance passed, preserving model sentinel and previous-version backup. Source snapshot stayed unchanged during build.
+- Publication only: no live install or service restart. Update POS-SERVER before registers; matching hosted website assets still need deployment. Physical printer/drawer/NFC and live installed service checks remain outstanding.
+
+## 2026-10-30 missing template-size review queue
+- Added Custom Inventory > Review missing template sizes: sublimation-first queue with optional other non-shirt inventory, per-variant targeting, photo and item details, existing partial dimensions, explicit units, Save & Next and Skip for now. Complete/inactive/archived targets are excluded; skipped entries remain incomplete and reappear on reopening.
+- Added SAVE_TEMPLATE_SIZE in the authenticated catalogue-admin mutation path. It writes only width/height/unit with prior-value conflict checks and active target/parent ownership enforcement, under existing catalogue permissions/idempotency/transaction handling. Other item values and order-area settings are preserved. Images load off the Swing event thread.
+- 17 targeted tests passed without skips, including real temporary-table PostgreSQL save/conflict/ownership checks. Disposable local PostgreSQL stopped afterward. Security and whitespace checks passed. Documentation: SmartStock/docs/template-size-review.md.
+- Source implementation only; not packaged/published or installed. Live Swing dialog and server/register verification remain outstanding.
+
+## 2026-10-30 Windows update 1.1.99 published
+- Build 101099, standard UpdateOnly release with missing-template review queue and current combined SmartStock source. Existing first-install selection unchanged.
+- ZIP 168689470 bytes, SHA-256 f574f0a81955e43c6a5a5b30394bbcda99ffb31f7fc6f96e82bbad7aab2b07f7. Protected standard publisher verified full remote download size/SHA before metadata insertion; independent metadata read-back matched. Published objects/previous versions were not modified.
+- Full Maven package: 1427 tests, 0 failures/errors, 153 skipped (opt-in database test had passed separately during implementation). Security and whitespace checks passed. Model-free ZIP and hosted catalogue readiness verified. Exact isolated updater installed matching JAR, preserved existing model sentinel and previous-version backup. Release source hash snapshot unchanged through build.
+- Publication only, no live installations or service restarts. Update POS-SERVER before registers. Live dialog/server/register and physical hardware checks remain outstanding. Matching hosted website assets for earlier photo/grouping changes still require separate deployment.
+
+## 2026-10-30 live website photo/grouping frontend activated
+- Diagnosed installed POS-SERVER already running 1.1.99 and returning main-item image indicators/types, while Cloudflare frontend overlay still referenced index-JNt70BV5.js/index-DSglL-22.css. Main photo endpoint returned HTTP 200 for magic cup.
+- Downloaded current live Worker modules/settings, preserved gateway index.js byte-for-byte, existing registered origins/bindings/secrets/domains, and deployed exact storefront-web assets extracted from the immutable published 1.1.99 ZIP. Updated overlay JS/CSS references to index-E-OXMv0F.js/index-B9yNFEgt.css. Production preflight and protected origin-secret binding passed.
+- Worker version 0d6afea3-1efa-4b86-bef3-3b81c990e0af. Live downloaded JS/CSS match exact release hashes. Edge browser verified 24 main-photo cards, 16 Item Type groups, decoded magic cup photo, zero page errors, and desktop/mobile width. No store data or installed service changed. Items with only variant photos and no parent photo remain without main-photo cards as requested.
+
+## 2026-10-30 compact service cards live
+- Scoped service Item Type grids use auto-fill columns so a short group no longer stretches one card across the page. Compact 200px photos, smaller copy/buttons, matching heights; two phone columns above 359px, single column on narrower screens. Type headings and plaque workflows preserved.
+- Website build/TypeScript and synthetic service-page Edge acceptance passed, including same-row desktop cards, bounded single-card width and mobile fit. Live Edge check passed compact width, cups side-by-side, loaded photo, zero page errors and mobile width.
+- Deployed matching frontend assets with existing gateway code unchanged. Cloudflare version fcbb2896-5618-4853-a211-08ed0fafc099; index-CoFUCzHw.js/index-CmswSTKb.css. App release 1.1.99 remains immutable; generated bundle updated for the next app release.
+
+## 2026-10-30 compact Item Type sections share rows live
+- Adjacent non-plaque sections pair when they fit up to four cards: 1+1, 1+2, 2+1, 2+2, 1+3 or 3+1. Weighted 12-column spans keep card widths consistent; maximum two sections per row. Bigger groups and plaque galleries keep full rows. Reading order preserved. At <=1000px sections stack while retaining compact card layout.
+- Website build/TypeScript and 76 tests passed. Synthetic Edge verified two sections at the same vertical position on desktop and stacking on mobile. Live Edge verified BOTTLE/BRACELET share row, compact card widths, cups across, loaded photos, mobile fit and zero page errors.
+- Frontend deployed with preserved gateway and bindings; Worker version a7c392fe-76eb-418b-8355-8cc679c6f075. Generated source bundle updated for next app release; immutable app releases unchanged.
+
+## 2026-10-30 custom-item detail galleries and variant selectors
+- Added click-through details for main custom service cards and individual plaque cards: main/additional/variant photo gallery, next/previous and thumbnails, bottom photo selectors, linked colour/size options using only real combinations, named shape/variant fallback, missing-photo state, and related plaque families/sibling variants with designer access.
+- Storefront snapshot includes active variants/gallery manifests; public responses redact storage metadata and expose photo counts. Image requests are scoped by published main item, active variant and bounded photo index. Remote prefetch includes all gallery assets. General variants remain normal compact service cards; plaques retain separate cards.
+- Website build and 79 tests passed. Edge detail workflow (colour, size, combined choices, photos, missing image, other plaques, designer), compact-card regression and all-nine-plaque regression passed. Targeted Java tests including real disposable PostgreSQL active/parent filtering and bundle verification passed; database stopped. Security/whitespace checks passed.
+- Preview screenshots under SmartStock/target/ui-previews. Not published/deployed/installed; new server metadata and hosted frontend must activate together. Existing immutable app release unchanged.
+
+## 2026-10-30 custom-item gallery live; 1.1.100 installed and published
+- Standard Windows update build 101100: 168770921 bytes, SHA-256 34d8edd362b88d171ed048ccf0749dfecd59a5eac8e27757527100fc1dc9da44. Full Maven gate passed 1444 tests, 0 failures/errors, 154 skipped after adding null-category snapshot compatibility. Security/whitespace and isolated exact-ZIP upgrade passed. Source hash snapshot unchanged.
+- Installed exact verified ZIP on POS-SERVER through standard updater; desktop/service JAR bytes verified against candidate. HTTPS health, version, local schema and LAN discovery verified by updater. All persistent model hashes unchanged; server/scheduler/storefront tasks Running. No other computers updated.
+- Matching exact packaged frontend deployed with existing gateway/bindings preserved; Worker version 3923a4e2-4ab6-49cc-b538-9104b91a8887. Hosted JS/CSS hash matches packaged files. Live Edge verified Baby Cup four variants, kids bottle three variants, decoded colour-selected photos, main/gallery switching, mobile width, related nine plaques and designer entry. Public catalogue has no private image manifests.
+- Standard R2 publisher downloaded/verified hosted ZIP size/SHA before release insertion; independent metadata read-back confirmed version/build/path/hash/size/published. First-install selection unchanged. Physical printer/drawer/NFC checks remain separate and were not performed.
+
+## 2026-10-30 all-custom variant photo audit and first review batch
+- User requested professional variant photos including shirts, with existing images retained as secondary after approval. Live authenticated catalogue audit: 397 active variants, 373 source photos, 24 missing source photos, 298 shirt variants. Twelve existing imported professional reviews retained (kids bottles, Baby Cups, stamps), leaving 361 source-backed variants initially pending.
+- Generated six 20oz Speaker flask colour previews through built-in image generation. Uploaded original/preview pairs to existing shared catalogue review queue via authenticated API; no photos approved/promoted. Blue generation was held/rejected for invented speaker controls, regenerated faithfully, and corrected under expected revision=2/rejected guard. Six final shared JPEG previews and unchanged source photo URL/SHA verified.
+- Local production batch evidence resides under ~/.smartstock/catalog-studio/variants-20261030 (not Git). Missing source list: SmartStock/docs/custom-variants-missing-photos.md. After first six, 355 source-backed variants remain; 24 need source photos. User's choice on reuse across visually identical shirt sizes is pending; avoid claiming entire catalogue done.
+
+## 2026-10-30 shirt size photo reuse authorized
+- User explicitly chose reuse across identical sizes. Grouping is scoped to the same custom main item, brand and colour; sizes retain individual variant targets, original bytes and source fingerprints, review decisions and secondary-image preservation on approval.
+- Live audit groups 298 shirt variants into 122 parent/brand/colour groups; five groups have no variant source photo. Group membership is saved privately under ~/.smartstock/catalog-studio/variants-20261030/shirt-size-reuse-groups.json, subject to visual match review before reuse.
+- First source group set: Army green Hanes (source 239), Black Pacific Polo Club (87), Black Hanes T-shirt (77), 14 individual variants. Each original/source hash captured; professional folded-product previews being prepared for shared review. Main product photos remain unchanged.
+- First three reused shirt previews completed and uploaded through authenticated review API for 14 separate variants (4 Army green Hanes, 6 Black Pacific Polo Club, 4 Black Hanes). Generated PNG masters retained locally; server pending JPEG previews verified against uploads. All 14 original review bytes and current source hashes verified, no promotions. Total new variant reviews this run: 20 including six flask colours; 341 source-backed variants remain pending generation/reuse, and 24 lack individual source photos (some can be covered by a confirmed identical-size group). No claim that full catalogue processing is complete.
+
+## 2026-11-09 temporary custom banner media fix
+- Reproduced GP-4600S temporary 44 x 72 inch media loss using installed Canon driver and a no-spool Java harness: common Java dialog returned Letter; native dialog plus Java media reconstruction returned Poster 44 x 62.
+- Banner printing now explicitly uses the native Windows print dialog, captures the native job/DC page before Java standard-media reconstruction, removes stale MediaSizeName/printable-area attributes, and preserves short-edge roll orientation. Too-small native media remains rejected.
+- Live native driver check returned 1828.72 x 1117.52 mm after selecting temporary Custom Size 44 x 72, and passed banner size validation without creating a preset or submitting a print job. Physical printing remains unverified. No publication or live installation authorized/performed.
+- Added regression coverage for native-dialog choice, stale standard media, tray/quality preservation, genuine size mismatch, and native landscape DC normalization. Existing unrelated working-tree changes preserved.
+- Earlier in this chat, applied cloud migration smartstock_phone_minutes_cross_store_sync_functions through Supabase: added phone_minutes_sales to both cross-store function allowlists using existing invoker/service_role-only definitions. Verified both RPCs under service_role and all 12 table hash reads; live Skeldon status subsequently showed successful Rosehall refresh with no lastError.
+- Final automatic-size workflow validated against Canon GP-4600S: choose printer, accept the auto-populated native Custom Size Page Setup, then print properties inherit 44.00 x 72.00 inches with no typing/preset. Using Book/Pageable instead of setPrintable avoids OpenBook's later standard-media remapping. Final no-spool harness passed resolved 1828.72 x 1117.52 mm, landscape, with no stale media attribute after final page attachment.
+- Final targeted Maven test/package gate (BannerPrintingTest, BannerDocumentsTest, BannerArtworkTest, StudioPrintPipelineTest, PublicationPrintingTest) passed. Initial full suite passed 370 tests (1 skipped); a later full repeat was interrupted while an unrelated StudioTaskDialogTest waited on a modal dialog. No physical print job submitted.
+- User explicitly authorized updating the installed app. Backed up installed 0.1.97 app/launcher under this chat work/SmartStudio-before-banner-fix. Built model-free standard UpdateOnly installer 0.1.99 (173604338 bytes, SHA-256 FCB224A7546F69F52C9C5C05EBBA71E7BFEAB3DC42FDE30052A1FEE92FD6E4CC), verified hash, and installed to the existing per-user SmartStudio directory; installer exit 0. Every installed app file matches the tested portable candidate and installed --check-launch passed. No release feed publication and no physical printing.
+
+## 2026-11-09 SmartStudio 0.1.100 published
+- User explicitly requested publication. Existing published 0.1.99 remains immutable; bumped Studio Maven version to 0.1.100/build 1100 and wrote release notes for automatic temporary banner custom media and Canon GP-4600S validation. No changes to the existing public first-install selection.
+- Final targeted test/package gate: 32 tests, 0 failures/errors/skips; repository security and scoped whitespace checks passed. Standard UpdateOnly installer: 173604286 bytes, SHA-256 95ed249420e3c6eff2a4198199371ac7edf84934fad10f195b4e0c65e61f70db.
+- Exact installer upgraded an isolated copy of installed 0.1.99; isolated startup passed and installed Studio JAR matches candidate hash 0816d83e2b2c86461ed054f9db6e6ec1a63c5ddc6deca75903c7df0a6d236ef9. File associations and existing shortcuts were backed up and restored after isolated validation; live installed app remains the previously authorized 0.1.99 local fix.
+- Published using standard protected publish-verified-release-windows.ps1 -Kind studio. Hosted installer fully downloaded and verified before metadata publication. Immutable artifact path: smartstudio/windows/0.1.100/95ed249420e3c6eff2a4198199371ac7edf84934fad10f195b4e0c65e61f70db/SmartStudio-update-0.1.100.exe. No physical printing performed.
+
+## 2026-11-12 admin-only custom-order item exchanges
+- Added Orders > More > Exchange item, also available in detailed Items actions. Preview/save require an active ADMIN role on the local store server; remote admin and studio devices are blocked.
+- Exchanges fixed-price custom-catalog stock items/variants one line at a time. Explicit return-to-stock choice, current replacement price, retained add-ons/line discount, configured order rounding, revised balance and any refund are previewed before confirmation. Required customer charge authorization is captured for an increased outstanding balance.
+- Stock, parent quantities/sold counts, reservations, line identity/template dimensions, restarted production, financial history, refund, audit and outbox update together. Stock/price/order changes invalidate previews. Idempotency and a frozen retry request prevent duplicate stock issues/refunds after network interruptions.
+- Delivered/returned, invoice/account-allocated, pending/area/customer-supplied/regular-product, loyalty-discounted and manually adjusted cases are explicitly rejected for their existing workflows. See SmartStock/docs/custom-order-item-exchanges.md for scope and acceptance instructions.
+- Focused validation: 19 tests passed, including full-schema disposable PostgreSQL exchange/refund/authorization/rollback/concurrency/idempotency checks and Orders workspace/admin boundary checks. Dialog rendered and visually checked with the shared Orders typography/palette. Security and whitespace checks passed.
+- Source changes only: no release publication, live installation, store database changes, provider refunds, or physical stock/cash/printer/NFC checks performed for this feature. Existing unrelated worktree changes preserved.
+- Full Maven gate passed: 1480 tests, zero failures/errors, 160 optional tests skipped. Exchange-specific PostgreSQL coverage was separately enabled and passed.
+
+## 2026-11-12 shared-workspace quick releases published
+- Published SmartStock 1.1.113/build 101113 and SmartStudio 0.1.101/build 1101 using the standard protected publishers. Studio's SmartStock client dependency is 1.1.113. Includes the order exchange/payment reversal changes and current shared application/Studio resources, including full-page banner printing.
+- Exact artifacts: SmartStock ZIP 169102133 bytes, SHA-256 97a9f40c528b6fba86d01db76539eb5f4ae96a8677ccbcfd7ca73ef2ccd1d60f; Studio updater 173658161 bytes, SHA-256 b117bfeee57b60bb60e8c4a1b9f3723ff76464103ee2ac8e99aa675d249dfe42. Full hosted download/hash/size verification preceded release metadata writes; read-back matched both release rows.
+- SmartStock 1480 tests (160 optional skips), Studio 377 tests (one skip), gateway/mobile/portal 141 tests and storefront 79 tests passed without failures/errors. Security and whitespace gates passed. Website bundle rebuilt.
+- Exact SmartStock update accepted over isolated 1.1.112; Studio updater accepted over isolated 0.1.99. Native startup, installed JAR identity, model exclusion and runtime/profile preservation passed; Studio registry/shortcut restoration was verified.
+- Deployed storefront, Orders, Timeclock and installer portal Workers. Preserved storefront production origins/secrets and frontend overlay. Public HTTP checks and hosted JS/CSS byte verification passed. No model changes or full installer publication.
+- No live desktop installation or store service restart. Server-first rollout and live database, hardware, operational exchange/refund and macOS checks remain outstanding. Existing unrelated working-tree changes preserved. Details: SmartStock/docs/release-1.1.113.md.
+
+## 2026-11-12 approved Supabase updates, SmartDrive deferred
+- User authorized all six outstanding cloud updates except SmartDrive. Applied the exact SQL from released SmartStock 1.1.113 for Sales Tasks permissions, Balance Sheet History permission, display device mode, Phone Minutes reversal permission/cross-store RPCs, one-time customer compatibility and order-payment reversal permission.
+- Recorded all six immutable resource checksums/app version in SmartStock's migration ledger and refreshed the catalog/applied-resource checkpoints for the selectively applied set. The guarded one-time-customer change is a no-op in the cloud because public.custom_orders is not a live cloud table; no cloud POS/order table was created.
+- Verified all four new permissions are granted to ADMIN with zero non-admin grants; DISPLAY is allowed; both cross-store RPCs remain SECURITY INVOKER and service_role-only. Executed both RPCs under service_role for all 12 supported tables successfully. All six ledger checksums and both checkpoints matched.
+- SmartDrive permission and migration remain absent/pending at the user's request. The cloud is intentionally not claimed fully up to date while this migration is deferred. Existing unrelated working-tree changes and live store-local records were untouched.
+- Supabase security advisor categories/counts were unchanged from preflight; no new advisory category was introduced by this update.
+
+## 2026-11-13 SmartStock 1.1.114 published
+- Reviewed recent product coverage, duplicate review, archive-cache, website pricing and NFC chats. Built from an isolated source snapshot and preserved unrelated working-tree edits. Shared Maven version is 1.1.114/build 101114; SmartStudio was not separately released.
+- Includes active-product AI photo asset/status coverage and four ad frames with needs-ad filters, administrator duplicate review, archived/restored sale catalogue refresh, bundled website custom-item prices and NFC diagnostics. Ad generation/approval screens remain unfinished; hosted website activation/catalogue sync and the previously deferred SmartDrive cloud migration remain separate.
+- Full Java gate: 1483 tests, zero failures/errors, 161 optional skips; initial missing sibling fixture corrected before a successful full rerun. Website 81 tests, TypeScript/build, repository security and whitespace passed. Standard all-in-one Windows packaging passed; model-free ZIP and hosted immutable model catalogue verified.
+- Exact updater accepted over isolated 1.1.113: installed JAR/launcher identity, prior-version backup, runtime/model-profile preservation and native startup passed. Exact full installer accepted in isolated current-user directories; JAR/model/provisioner/startup checks passed. Existing shortcuts and prior uninstall registration restored and verified after correcting cleanup of protected common shortcuts.
+- ZIP: 169144616 bytes, SHA-256 8f4aa214c6901506ae6ebb484187f04c203ba11f73a6b40a902aa96b9e77f16c. Full installer: 582211170 bytes, SHA-256 b58e1cb0ab1602534da51c97f26ca097d0cad5e30e51e3967ae640c810d4b917. Protected publishers fully downloaded and verified exact hosted bytes before selecting installer/inserting update metadata; independent manifest and release-row read-back matched. No prior release bytes or rows overwritten.
+- No live app installation, database migration or store service restart. Server-first rollout, live database/register/sync acceptance, physical printer/drawer/NFC/camera, real model downloads/offline processing and macOS checks remain outstanding. Details: SmartStock/docs/release-1.1.114.md.
+
+## 2026-11-14 cross-store inventory merge release 1.1.115
+- Published model-free Windows update 1.1.115/build 101115 through the protected verified publisher. Exact ZIP 169178814 bytes, SHA-256 f129fe2214a44d6461ebf161261402b4ab376cc6597ea58083baf737034cecba. Full hosted download/hash/size verification preceded metadata publication; independent read-back matched. First-install selection and Studio channel unchanged.
+- Added catalogue-UUID merge aliases, per-store stock consolidation and receipts, retained old barcode/SKU scan aliases, combined descriptions, original-photo preservation, historical money/cost preservation, stale-write retirement guards, photos/store quantities in review, and administrator stock requests executed by the owning store. Local baseline, guarded migration, recovery manifests and shared-reference sync updated; no new cloud POS stock table.
+- Full Maven gate: 1486 test cases, zero failures/errors, 163 optional skips. Separately enabled two-store/replay/stock command/previous-schema drift and upgrade tests passed. Security, whitespace, exact updater/native installed acceptance and runtime/model-profile preservation checks passed.
+- Installed the exact artifact on Skeldon via standard updater and verified service restart. Applied the three user-approved duplicate pairs there; original photos, all scan barcodes, merged descriptions, local stock conservation and retirement independently checked. Used the authenticated SSH maintenance channel after the original desktop login expired; did not renew or alter that session. Before-state evidence and approval context stay private on the server, outside Git.
+- Confirmed six merge mapping/application announcements reached the shared cloud outbox with no sync failures/conflicts. Rosehall has not acknowledged them and still reports 1.1.113; a recent heartbeat does not mean compatible merge processing. Rosehall completion remains pending. Physical stock, hardware and macOS checks remain separate/outstanding. Details: SmartStock/docs/release-1.1.115.md.
+
+2026-11-14: Published SmartStock 1.1.116 (101116), fixing image-reference reconciliation when asset metadata arrives later than its URL. Preserves existing links, gallery indexes and FK enforcement. Full suite with disposable PostgreSQL: 1487 tests, 0 failures/errors, 160 skips; security/diff checks, isolated exact-update/native startup and hosted download/hash/size checks passed. ZIP 169179086 bytes, SHA-256 1aeb7f731ec42fc8896a01bf2507f79b77bef10e0174a70d9ca7459ea3b1a2b4. Cloud metadata independently confirmed. No live store installation or Rosehall sync recovery verified; Rosehall must run 1.1.116 before remaining merge acknowledgements can be checked. No Supabase migration or model changes.
+
+2026-11-14: Published SmartStock 1.1.117 (101117): verified catalogue photo identities reuse exact bucket/object rows with different store UUIDs and retain immutable local aliases in image_sync_state. Product imports and merge photo assignments resolve local identities without altering shared approvals or stock authority. Separate-store regression reproduces missing-photo merge, imports metadata despite newer item version, applies/replays once, retains shared fields and rejects object/checksum conflicts. Full suite: 1488 tests, 0 failures/errors, 160 skips; security/diff and isolated installed update/native startup passed. ZIP 169182778 bytes; SHA-256 fe4c38b0b281b8246f910ae3f57ea04198388d2160f3f6ec6f3c3ae357450b0f; hosted download and independent published metadata verified. Rosehall needs 1.1.117 before its two pending merges can be confirmed; no live installation performed. No schema or model changes.
+
+2026-11-14: Rosehall confirmed 1.1.117 but pending book merges persisted. Read-only off-site metadata comparison identified the remaining guard: same bucket/path/category/access/SHA-256, but Skeldon provider SUPABASE and Rosehall ONEDRIVE. Published 1.1.118 (101118), permitting provider differences only with equal valid 64-character SHA-256 while retaining local provider/state and immutable shared approval. Regression now exercises provider migration, unknown-hash rejection, successful merge/replay and retained OneDrive metadata. Full suite 1488 tests, zero failures/errors, 160 skips; security/diff, isolated installed updater/native startup, hosted download/hash/size and independent published metadata passed. ZIP 169182776 bytes; SHA-256 84c01abf559233c95b1b33f0262f838b6b3d12941dc4ece20778043efd6cccc3. No live installation performed; Rosehall merge completion remains unverified until 1.1.118 runs. No schema/model changes.
+
+
+## 2026-11-19 cumulative quick update 1.1.126
+- Published SmartStock Windows 1.1.126/build 101126 from a frozen source snapshot. Includes the current completed shared Customers/account phone labels, Mobile Management, overseas/mobile and existing application changes. SmartStudio 0.1.105 source is unchanged; the separately deferred SmartDrive release stays excluded. No first-install selection, model publication or live installation.
+- ZIP: 169394196 bytes, SHA-256 845552a733f2c9893dbe7ffcb488f09f7f1b56d7633f3b79c807d380a7d25e8f. Complete hosted download verified before release metadata; independent read-back matched.
+- Combined Java reports: 1556 tests, zero failures/errors, 196 optional skips after adding a missing sibling test helper and rerunning the four affected tests. All 77 selected web/gateway tests, security/whitespace, model-free package/catalogue readiness and isolated exact-update/native-launcher/backup/runtime/model/profile acceptance passed.
+- Deployed Orders, Inventory, Customers, Balance Sheet, Overseas and Time Clock gateways, retaining production variables. Root redirects and exact public asset hashes passed; the dedicated gateways also rejected invalid mobile methods/origins. Shared launchers return 404 until the live store server is updated; real-phone pairing and authenticated workflows remain unverified. Existing phones must pair again after server rollout.
+- No live application/service/database change. Server-first rollout, real phone, local database/service, physical hardware and macOS acceptance remain outstanding. Details: SmartStock/docs/release-1.1.126.md; evidence outside Git in D:/SmartStock-release-builds/1.1.126.
+
+
+## 2026-11-19 iPhone home-screen deployment 1.1.127
+
+- Published verified Windows 1.1.127/build 101127 from frozen 1.1.126 plus the home-screen connection fix; unrelated newer work excluded. Standard model-free updater ZIP: 169401621 bytes, SHA-256 32fb98596aa629f54368e154d794339c1959fd2053e985eb3674e730542eb9df. Full uploaded object downloaded and checked before metadata publication; independent read-back matched. No first-install or model publication.
+- Deployed all six staff gateways with current production variables/bindings retained and rollback versions recorded. Public pages/origin checks passed. Reconnect backend remains older (HTTP 405), requiring POS-SERVER update.
+- Frozen build: 1558 tests, zero failures/errors, 198 optional skips; 53 focused web/gateway tests, security/diff, exact isolated updater/native startup and runtime/model/profile preservation passed.
+- This PC is a production register pointing to POS-SERVER. Remote administration/admin share unavailable; no live installed app, service/task or store database changed. Required: on POS-SERVER, Status > Check for Updates > install 1.1.127, then verify the existing iPhone icons. Evidence outside Git: D:/SmartStock-release-builds/1.1.127. Details: SmartStock/docs/release-1.1.127.md.
+
+## 2026-11-20 unified Deckers workspace deployment 1.1.128
+- Built an immutable Windows update from frozen 1.1.127 plus the workspace changes, excluding unrelated newer source. Maven 1.1.128/build 101128. ZIP 169704112 bytes, SHA-256 a7577dff5a44b017e224beb5bff1fff52beb2ab48b6b9583973aee2900f13125. No release-feed metadata, first-install selection or model publication changed.
+- Frozen package: 1564 Java cases, zero failures/errors, 199 optional skips; all 59 selected web/reconnection tests, security/diff, model-free/catalogue verification and exact isolated installed update/native startup/runtime/model/profile acceptance passed.
+- Existing trusted SSH identity reached POS-SERVER. The complete ZIP was transferred and independently size/hash-verified, then applied using the standard updater. Installed desktop/service JARs match; server HTTPS health, installed version, local schema and discovery verified. Runtime and encrypted cloud credential retained; standard startup rewrote database.properties while retaining SERVER/store 1. Rollback retained.
+- Deployed all six staff gateways with production settings retained and prior active versions saved. All 36 live public checks passed, including exact assets, role/device entry protections, blocked public LAN proof and legacy sites. Main URL: https://timeclock.deckers.gy/.
+- Individual apps remain available. Await user iPhone Wi-Fi/mobile-data and authenticated workflow acceptance before retiring separate entry points. No physical hardware, macOS or register-install acceptance claimed. Details: SmartStock/docs/release-1.1.128.md. Private evidence: D:/SmartStock-release-builds/1.1.128.
+
+## 2026-11-20 — Deckers single-login screen correction
+
+Replaced public workspace tile navigation with in-document, scoped workflow
+screens. The employee session now reaches the existing employee, mobile and
+Scheduler services without a second screen login. Server-side app/device/role,
+CSRF and direct-LAN proof checks remain mandatory. Order Design has a chooser;
+Home retains native unsaved-change checks. Separate app entries remain pending
+phone acceptance. See docs/deckers-unified-screen-qa.md and release-1.1.129.md.
+
+Deployment complete: POS-SERVER and all six gateways are on the verified 1.1.129
+correction. Frozen package tests 1566/0 failures/errors (199 skipped), selected
+web tests 60/60, and live public checks 52/52. The model-free artifact and hosted
+model catalogue were verified; normal updater/rollback/runtime/model-preservation
+acceptance passed. Release-feed publication and individual-app removal were not
+performed. iPhone and physical hardware acceptance remain outstanding.
+
+## 2026-11-20 — Dedicated Deckers app address
+
+Configured deckersapps.deckers.gy as the standalone employee workspace entry.
+Prepared 1.1.131/build 101131 from frozen 1.1.130 plus exact-origin authentication,
+mobile-management/LAN probe support and canonical QR links. Existing app screens
+still mount in one document. The new Worker retains server origin enforcement and
+returns SERVER_UPDATE_REQUIRED until the store server accepts this domain.
+
+The user explicitly requested package/publication only and prohibited installation.
+No live server update, service restart or installed-app update is performed here.
+See docs/deckers-apps-domain.md and docs/release-1.1.131.md for verification receipts.
+
+1.1.131 publication completed and verified: 169722837 bytes, SHA-256
+9c393bcdf19a3c7c12cd2d0d47172a22e4e09b93eec163f4f3afd28e39a00bab.
+1570 Maven tests reported zero failures/errors (200 skipped); 35 selected web
+tests passed. Hosted models and the model-free archive were verified. The stored
+artifact was downloaded and checked before release metadata creation. Dedicated
+HTTPS domain/origin protection was verified. No live installation or service
+restart was performed, in accordance with the user's instruction.
+
+## 2026-11-20 — Device-specific QR re-pairing
+
+Added Scan re-pair QR code directly below Use existing iPhone pairing in the
+recovery sheet, plus an Account recovery entry. Mobile Management can issue a
+single-use, ten-minute Re-pair QR for the selected approved device. Redemption
+keeps that device ID and app grants, replaces this browser credential and clears
+its login; it does not restore revoked devices or bypass employee permissions.
+Camera, image and pasted-link paths are available, with scanner cleanup and URL
+validation. Existing local handoff storage is reused without a schema migration.
+
+Prepared 1.1.132 from frozen 1.1.131. Full Maven suite: 1571 tests, zero failures
+or errors, 201 skipped; selected web suite: 39 passed. Real HTTPS/disposable DB
+acceptance covered admin issuance/retry, same-device redemption, app preservation,
+no duplicate device, fresh login, expired/reused/revoked QR rejection and non-admin
+denial. Browser visual access was unavailable; real iPhone camera and layout
+acceptance remain pending. No installation or live server restart is performed.
+
+A final resource-content mismatch was caught before release metadata existed.
+Publication of the first candidate was stopped; the standard package was rebuilt,
+and exact recovery resource/class hashes were checked inside the final JAR/ZIP.
+The unreferenced initial candidate is retained outside Git and is not the release.
+
+1.1.132 is published and independently verified: 169726482 bytes, SHA-256
+b24ea8669cde4fd9cd6cb9a8d9498b4169355912183327cb070caaee9d1dd0bb.
+The final package matches its tested service classes and final recovery scripts.
+Five legacy gateways were updated with their existing production configuration.
+No live server/register installation, restart, first-install selection, or model
+publication was performed. Real iPhone camera and layout acceptance remain pending.
+
+## 2026-11-20 — Restore revoked mobile devices
+
+Added a Restore device action on revoked rows in Mobile Management, using the
+existing revoke-button position. The server requires Device Management permission,
+current revision and revoked status, records the acting employee in the audit,
+and handles retries idempotently. Existing app grants and browser credentials are
+retained; neither apps nor names can be changed through restoration. Remote Admin
+classifies approval issue/repair/restore as mutations requiring current store state.
+
+Prepared 1.1.133 from frozen 1.1.132 with focused restore and remote-policy changes.
+No live installation or server restart is performed. Nishan's earlier explicit
+one-device restoration is separate from this software change.
+
+1.1.133/build 101133 publication completed and was independently verified:
+169727599 bytes; SHA-256 bb02fe1697ae42934ed522b477232139a6dc9db5f2508ad453e21b014e18f0dc.
+The full suite passed (1571 tests, 201 skipped), then the final remote-policy and
+restore change passed 15 focused tests (9 skipped); 39 web tests passed. Exact
+packaged classes, model-free archive, hosted catalogue, security and whitespace
+checks passed. No live installation, restart, first-install selection, model
+publication or gateway deployment was performed.
+
+## 2026-11-21 — cumulative quick updates 1.1.139 / 0.1.106
+- Prepared frozen SmartStock 1.1.139/build 101139 and SmartStudio 0.1.106/build 1106 at D:/SmartStock-release-builds/1.1.139.
+- Includes the unified Payroll screen/shared headers, photo framing, saved-password duplicate-submit fix, transfer drafts, queue error diagnostics and lossless Studio banner resampling/cache improvements.
+- Main full tests: 1605 (0 failures/errors, 208 optional skips); Studio full tests: 383 (0 failures/errors, 1 optional skip); web tests: 47 pass; publisher tests: 3 pass. Security and whitespace passed. Isolated updater/native launch checks passed; no live installation or service restart.
+- Cloud photo-framing migration and resource/catalogue checkpoint verified. Publication waited for Cloudflare model-catalogue availability, then verified the exact immutable catalogue. Protected publisher downloads each exact hosted artifact and verifies size/SHA before publishing metadata.
+- SmartStock 1.1.139 published and independently read back. Studio publication status is recorded in D:/SmartStock-release-builds/1.1.139/publish-studio.log and release-verification.md.
+- SmartStudio 0.1.106 publication completed and independent metadata readback matched its exact verified EXE. Both updates are published; neither is installed.
+
+## 2026-11-23 — cumulative Windows quick update 1.1.141
+
+Published SmartStock 1.1.141/build 101141 from D:/SmartStock-release-builds/1.1.141/source, combining this chat's iPhone login, payroll photo and scheduler changes with current other-chat source changes including digital overseas items, Store Keys and ad-review guides. SmartStudio has no source differences from published 0.1.106 and was not rebuilt.
+
+Clean full suite: 1613 tests, zero failures/errors, 209 optional skips; 83 web tests and 3 publisher tests passed. Security, whitespace, exact packaged-resource, model-free archive and hosted catalogue checks passed. Isolated updater/native-launch acceptance passed; backup, launcher configuration and persistent model folder verified. Initial missing sibling test helper was corrected in the freeze before the clean full rerun.
+
+Hosted download and independent release metadata verified: 170506170 bytes; SHA-256 2187772f50e141e537242790cd97b4b4c09c37e34d8224330d08ce0e5c3d8a2e. No live installation, restart, first-install selection, models or gateway deployment. Real iPhone, database/service and physical hardware acceptance remain separate. Full evidence: D:/SmartStock-release-builds/1.1.141/release-verification.md.
+
+## 2026-11-23 — photo queue quick updates 1.1.142 / 0.1.107
+- Published both verified Windows updates from frozen prior-release sources plus the queue fix. Full tests: SmartStock 1615, Studio 383; zero failures/errors. Isolated Stock updater/native launch and packaged Studio native launch passed.
+- Both hosted artifacts fully downloaded and size/SHA verified before metadata creation; independent metadata matched. Evidence: D:/SmartStock-release-builds/1.1.142/release-verification.md. Live installs/services and first-install selections unchanged; update server first. Real phone/model and hardware acceptance remain outstanding.
+
+## 2026-11-24 - cumulative Windows quick updates 1.1.143 / 0.1.108
+Published both updates from the current shared-workspace snapshot at D:/SmartStock-release-builds/1.1.143/source, including the other chats' current SmartStock and SmartStudio changes. SmartStock 1646 tests (210 skipped), Studio 383 tests (1 skipped), zero failures/errors after correcting a missing sibling test helper in the snapshot. Website 83, provisioning 11, installer manifest 10 and archive validation 3 tests passed; security and whitespace passed. Exact Stock updater backup/config/model-preservation and isolated native launcher checks passed; Studio packaged native launch passed. Both hosted artifacts were fully downloaded and size/SHA verified before publication, then independent metadata readbacks matched. Evidence: D:/SmartStock-release-builds/1.1.143/release-verification.md. Windows update-only publication; no live installation/restart, first-install selection, model upload or Mac release. Update server first; physical hardware, real phones, store provisioning and live database/service checks remain separate.
+
+## 2026-11-25 - cumulative Windows quick update 1.1.144
+Published SmartStock 1.1.144/build 101144 from D:/SmartStock-release-builds/1.1.144/source, including the one-time authorized Rosehall custom-stock correction and the other chat's optional-NFC Store Keys checkout change. SmartStudio unchanged from 0.1.108, not rebuilt. Java 1654 tests: zero failures/errors after creating the missing disposable schema test DB and rerunning its check; 208 optional skips. Rosehall and eight Store Keys DB tests passed; website 83, provisioning 11, model publisher 5, archive validator 3 passed. Security/whitespace, exact packaged classes/SQL/JAR, model-free ZIP, hosted catalogue and isolated updater/native-launch acceptance passed. Hosted download verified before metadata creation; independent readback matched 170634886 bytes, SHA-256 a3226226fe00446c23d5003174ec1b60847dfd60d0897d6839b3605cc42db810. Windows update only; no live install/restart, model upload, first-install selection or Mac build. Update store servers before registers; Rosehall correction runs at first updated production-server schema readiness. Live correction/hardware checks remain outstanding. Evidence: D:/SmartStock-release-builds/1.1.144/release-verification.md.
+
+
+## 2026-11-25 - cumulative Windows releases and first-install installers
+Published SmartStock 1.1.145/build 101145 and SmartStudio 0.1.109/build 1109 from the frozen shared workspace in D:/SmartStock-release-builds/1.1.145/source. Includes the other chats' application changes, server validation of badge Front/Back pages, SmartStudio two-sided badge editing/output and whole-table movement/resizing. SmartStudio uses the 1.1.145 client libraries. Both in-app updates and both full installers are published; the public SmartStudio installer moved from 0.1.105 to 0.1.109.
+Java suites: 2,039 tests, zero failures/errors, 211 optional skips; missing snapshot identity-helper fixture was supplied and its test rerun successfully. Storefront 83, installer portal 19, publisher/archive 8 tests passed, as did security and whitespace checks. Exact model-free archives, hosted immutable model catalogue, source fingerprints, installed full-app/native startup and updater/backup/model-directory preservation checks passed. All 11 pre-existing shortcuts and saved application registrations were restored and verified after isolated installer acceptance.
+Each artifact's full hosted download, size and SHA-256 was verified before release metadata or installer selection changed. Independent metadata readback and full downloads from both permanent public installer links matched the exact local files. Public release mutation without the operator key was denied. Evidence and artifact hashes: D:/SmartStock-release-builds/1.1.145/release-verification.json and artifact-manifest.json. No Git staging/commit, live store install/restart, model upload or Mac publication was performed. Update servers before registers and SmartStudio; live database/service, real network, printer/drawer/NFC and macOS checks remain separate. Server template-pair consolidation still requires authenticated access to the live library.
+
+## 2026-11-25 - Deckers phone intermittent LAN check
+The shared workspace now retries a failed credential-free LAN probe once with a fresh one-use challenge and a 10-second timeout. Item operations are only sent after proof succeeds and are never retried by this change. Older background failures cannot overwrite newer successful connection status. Auth failures remain distinct and LAN enforcement stays server-side. All 55 web tests passed, including cold connection recovery, persistent denial, out-of-order checks, auth/address validation and gateway isolation. Deployed canonical app.js through the existing Deckers gateway asset binding on its exact GET/HEAD script route with no-store. APIs still go to the authenticated store server; the local probe is never proxied. Worker version 68837832-8138-481b-8659-b9c307e1d2d0. Live script SHA-256 matched source after revalidation: 7d1e109a2d823f55288bdc6abd8b0488b8664631dd5a9d12ffb35ad5fbda6dda. Trusted LAN HTTPS returned 200/TLS verify 0; direct public probe returned 404. Real iPhone acceptance pending after app close/reopen. No server/register restart or installation.
+
+## 2026-11-25 - cumulative Windows Quick Updates 1.1.146 and 0.1.110
+Reverified the already-published SmartStock 1.1.146/build 101146 against the current shared SmartStock release inputs and exact release metadata. Published SmartStudio 0.1.110/build 1110 with negative horizontal and vertical business-card spacing and the exact SmartStock 1.1.146 client. Studio ran 389 tests with zero failures or errors and one skip. The exact updater upgraded the isolated 0.1.109 installation, retained its runtime, contained no model weights, and passed native startup. Hosted download size and SHA-256 were verified before metadata publication and matched the independent readback. Evidence: D:/SmartStock-release-builds/studio-0.1.110/studio-published-metadata.json. Live store, macOS, and hardware checks remain separate.
+
+
+## 2026-11-25 - live badge template consolidation
+Merged 14 badge designs into Front/Back templates on the authenticated POS-SERVER library, including Queensway standard/Serif, Orealla permit and both NDC variants. Renamed 60 separate-side/duplicate entries with ZZ Archive prefixes. Preserved all 272 original template IDs and store assignments, retaining existing references because the print-history API returned a server error. The 198 unrelated templates were unchanged. Every saved page was read back and its rendered pixels verified against the prepared merge. Private source backups and the operation journal are outside Git under the user profile .smartstudio/maintenance/badge-pairs-20261125. No application rebuild/publication was needed.
+
+
+## 2026-11-25 - SmartStudio 0.1.111 visible badge controls
+Published Windows SmartStudio 0.1.111/build 1111 updater and full installer. Insert now provides Blank back and Add back from template; View provides Front/Back switching. Persistent controls above the card remain visible with a collapsed ribbon. Replacing existing Back artwork with a blank page requires confirmation and preserves Front artwork. The frozen build starts from published 0.1.110, retains its card-spacing changes and exact SmartStock 1.1.146 client dependency. Version 0.1.110 was not overwritten; its original release notes were retained.
+390 tests passed with zero failures/errors and one skip after supplying the PDF integration test source fixture; security/whitespace passed. Expanded/compact UI renders, exact isolated 0.1.110-to-0.1.111 updater/full-installer acceptance, native startup, runtime preservation and model-free payload checks passed. Existing shortcuts and application registrations were restored and read back. Full hosted bytes, sizes and SHA-256 were verified before update metadata/public installer selection, and the permanent public Studio installer was independently downloaded and verified. No live installation, backend release, template-data mutation, model upload or Mac publication was performed for this UI fix. Physical printing remains a separate check. Evidence: D:/SmartStudio-release-0.1.111/release-verification.json.

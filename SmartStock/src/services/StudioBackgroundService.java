@@ -104,7 +104,8 @@ public final class StudioBackgroundService {
 
     static byte[] prepareQueuedPhoto(byte[] bytes)throws Exception{
         // No waiting behind an interactive operation, and no cold model loads under RAM pressure.
-        if(!StudioRemovalRuntime.canPrepare())throw new BusyException();
+        StudioModelService.current().resolve(StudioQuality.BEST);
+        if(!StudioRemovalRuntime.canPrepare())throw new PreparationDeferredException("Waiting for free memory on the store server. Close unused applications; background removal will retry automatically.");
         return process(bytes,StudioQuality.BEST,false,false,StudioImageEnhancer.Mode.AUTO,null);
     }
     static void prewarmBest()throws Exception{
@@ -117,6 +118,10 @@ public final class StudioBackgroundService {
 
     public static final class BusyException extends Exception {
         public BusyException() { super("Another photo is being processed. Try again shortly."); }
+    }
+
+    static final class PreparationDeferredException extends Exception {
+        PreparationDeferredException(String message){super(message);}
     }
 
     public static Map<String,Object> branding(int locationId) throws Exception {

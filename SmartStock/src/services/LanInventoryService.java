@@ -58,24 +58,26 @@ final class LanInventoryService {
         requireAnyPermission(c, userId, "RECEIVING_INVENTORY", "RECORD_STOCK_EXPENSE");
         String query = text(search, 300);
         if (query.isBlank()) return List.of();
-        String sql = """
-                SELECT item_type,item_id,name,description,code,quantity_on_hand,item_type_name,brand_name,price,color,flavor,image_url,size FROM (
+        String sql = ("""
+                SELECT item_type,item_id,name,description,code,quantity_on_hand,item_type_name,brand_name,price,color,flavor,image_url,size,sales_shelf FROM (
                   SELECT 'Product' item_type,p.product_id item_id,
                     p.name||CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END name,
                     COALESCE(p.description,'') description,COALESCE(p.sku,'') code,
                     COALESCE(i.quantity_on_hand,0) quantity_on_hand,COALESCE(it.name,'') item_type_name,
                     COALESCE(ib.name,'') brand_name,COALESCE(p.price,0) price,
                     COALESCE(p.color,'') color,COALESCE(p.flavor,'') flavor,COALESCE(p.image_url,'') image_url,
-                    COALESCE(p.size,'') size
+                    COALESCE(p.size,'') size,COALESCE(sl.name,'') sales_shelf
                   FROM products p LEFT JOIN inventory i ON i.product_id=p.product_id AND i.location_id=?
+                  LEFT JOIN product_shelf_assignments psa ON psa.product_id=p.product_id AND psa.location_id=?
+                  LEFT JOIN shelf_locations sl ON sl.shelf_location_id=psa.shelf_location_id
                   LEFT JOIN item_types it ON it.item_type_id=p.item_type_id
                   LEFT JOIN item_brands ib ON ib.brand_id=p.brand_id
                   WHERE COALESCE(p.product_type,'INVENTORY')='INVENTORY' AND %s
                   UNION ALL
                   SELECT 'Custom Item',coi.custom_item_id,coi.item_name,COALESCE(coi.description,''),
                     COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),
-                    COALESCE(coi.quantity_on_hand,0),COALESCE(it.name,''),COALESCE(ib.name,''),
-                    COALESCE(coi.fixed_price,coi.area_price,0),'' color,'' flavor,COALESCE(coi.image_url,''),'' size
+                    COALESCE(custom_stock_value(coi.custom_item_id,NULL,__CUSTOM_STORE__,'quantity_on_hand'),0),COALESCE(it.name,''),COALESCE(ib.name,''),
+                    COALESCE(coi.fixed_price,coi.area_price,0),'' color,'' flavor,COALESCE(coi.image_url,''),'' size,NULL
                   FROM custom_order_items coi LEFT JOIN item_types it ON it.item_type_id=coi.item_type_id
                   LEFT JOIN item_brands ib ON ib.brand_id=coi.brand_id WHERE coi.is_active=TRUE AND coi.is_archived=FALSE
                     AND COALESCE(coi.product_type,'INVENTORY')='INVENTORY'
@@ -83,21 +85,22 @@ final class LanInventoryService {
                   UNION ALL
                   SELECT 'Custom Variant',coiv.custom_variant_id,CONCAT_WS(' - ',coi.item_name,coiv.variant_name,NULLIF(COALESCE(NULLIF(BTRIM(coiv.size),''),NULLIF(BTRIM(coi.size),'')),''),NULLIF(COALESCE(NULLIF(BTRIM(coiv.color),''),NULLIF(BTRIM(coi.color),'')),'')),
                     COALESCE(coi.description,''),COALESCE(NULLIF(coiv.sku,''),NULLIF(coiv.barcode,''),
-                    'CUSTOM-'||coi.custom_item_id||'-'||coiv.custom_variant_id),COALESCE(coiv.quantity_on_hand,0),
+                    'CUSTOM-'||coi.custom_item_id||'-'||coiv.custom_variant_id),COALESCE(custom_stock_value(coiv.custom_item_id,coiv.custom_variant_id,__CUSTOM_STORE__,'quantity_on_hand'),0),
                     COALESCE(it.name,''),COALESCE(ib.name,''),COALESCE(coiv.fixed_price,coi.fixed_price,coi.area_price,0),
-                    '' color,'' flavor,COALESCE(NULLIF(coiv.image_url,''),coi.image_url,''),'' size
+                    '' color,'' flavor,COALESCE(NULLIF(coiv.image_url,''),coi.image_url,''),'' size,NULL
                   FROM custom_order_item_variants coiv JOIN custom_order_items coi ON coi.custom_item_id=coiv.custom_item_id
                   LEFT JOIN item_types it ON it.item_type_id=coi.item_type_id LEFT JOIN item_brands ib ON ib.brand_id=coi.brand_id
                   WHERE coi.is_active=TRUE AND coi.is_archived=FALSE AND coiv.is_active=TRUE
                     AND COALESCE(coi.product_type,'INVENTORY')='INVENTORY' AND %s
                 ) matched ORDER BY item_type,name LIMIT 300
-                """.formatted(ProductSearchHelper.predicate("p", locationId, query),
+                """).replace("__CUSTOM_STORE__",Integer.toString(locationId)).formatted(ProductSearchHelper.predicate("p", locationId, query),
                 ProductSearchHelper.customItemPredicate("coi", query),
                 ProductSearchHelper.customVariantPredicate("coi", "coiv", query));
         List<Map<String, Object>> rows = new ArrayList<>();
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setInt(1, locationId);
-            int index = ProductSearchHelper.bindTokens(ps, 2, query);
+            ps.setInt(2, locationId);
+            int index = ProductSearchHelper.bindTokens(ps, 3, query);
             index = ProductSearchHelper.bindTokens(ps, index, query);
             ProductSearchHelper.bindTokens(ps, index, query);
             try (ResultSet rs = ps.executeQuery()) {
@@ -106,7 +109,7 @@ final class LanInventoryService {
                         "description", rs.getString(4), "code", rs.getString(5), "quantityOnHand", rs.getInt(6),
                         "itemTypeName",rs.getString(7),"brandName",rs.getString(8),"price",rs.getBigDecimal(9),
                         "color",rs.getString(10),"flavor",rs.getString(11),"imageUrl",rs.getString(12),
-                        "size",rs.getString(13)));
+                        "size",rs.getString(13),"salesShelf",rs.getString(14)));
             }
         }
         return rows;
@@ -148,6 +151,12 @@ final class LanInventoryService {
         if (!search.isBlank()) {
             sql.append(" AND ").append(ProductSearchHelper.predicate("p", locationId, search, showVendor));
             for (String token : ProductSearchHelper.tokens(search)) args.add("%" + token + "%");
+        }
+        if(body.has("tagIds")&&!body.getAsJsonArray("tagIds").isEmpty()) {
+            var tags=body.getAsJsonArray("tagIds");if(tags.size()>100)throw rule(400,"VALIDATION_ERROR","Choose up to 100 tags.");
+            sql.append(" AND EXISTS (SELECT 1 FROM product_tags pt WHERE pt.product_id=p.product_id AND pt.tag_id IN (");
+            sql.append(String.join(",",java.util.Collections.nCopies(tags.size(),"?::uuid"))).append("))");
+            for(var tag:tags)args.add(java.util.UUID.fromString(tag.getAsString()).toString());
         }
         appendFilter(sql, args, "cat.name", department);
         appendProductTypeFilter(sql, productType);
@@ -301,6 +310,8 @@ final class LanInventoryService {
             if (line.itemId() <= 0 || line.quantity() <= 0 || line.quantity() > 1_000_000)
                 throw rule(400, "VALIDATION_ERROR", "Every receiving line needs a valid item, count, and quantity.");
             if (!unique.add(type + ":" + line.itemId())) throw rule(400, "VALIDATION_ERROR", "An item appears more than once.");
+            if (!text(line.salesShelf(),100).isBlank() && !"PRODUCT".equals(type))
+                throw rule(400,"VALIDATION_ERROR","Sales shelves can only be assigned to inventory products.");
             LockedStock stock = lockStock(c, type, line.itemId(), locationId);
             long correction=(long)line.countedStock()-stock.currentStock();
             if(correction < -Integer.MAX_VALUE || correction > Integer.MAX_VALUE) throw rule(400,"VALIDATION_ERROR","Stock correction is too large.");
@@ -331,6 +342,8 @@ final class LanInventoryService {
         }
         for (int i = 0; i < requested.size(); i++) {
             ReceiveLine line = requested.get(i); LockedStock stock = locked.get(i);
+            if (line.salesShelf()!=null && !line.salesShelf().isBlank())
+                ItemDetailsService.assignMissingSalesShelf(c,line.itemId(),locationId,line.salesShelf());
             int adjustment = line.countedStock() - stock.currentStock();
             if (adjustment < 0) StockLedgerService.shortage(c,stock,line.countedStock(),line.lossReason(),line.lossNotes(),userId,userName,deviceId,locationId,receive.receiveId());
             if (adjustment != 0) {
@@ -369,18 +382,18 @@ final class LanInventoryService {
             }
         }
         if ("CUSTOM_ITEM".equals(type)) {
-            try (PreparedStatement ps = c.prepareStatement("SELECT item_name,COALESCE(quantity_on_hand,0) FROM custom_order_items WHERE custom_item_id=? AND is_archived=FALSE AND is_active=TRUE AND COALESCE(product_type,'INVENTORY')='INVENTORY' AND COALESCE(has_variants,FALSE)=FALSE FOR UPDATE")) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT item_name FROM custom_order_items WHERE custom_item_id=? AND is_archived=FALSE AND is_active=TRUE AND COALESCE(product_type,'INVENTORY')='INVENTORY' AND COALESCE(has_variants,FALSE)=FALSE")) {
                 ps.setInt(1, itemId); try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) throw rule(404, "ITEM_NOT_FOUND", "A custom receiving item no longer exists.");
-                    return new LockedStock(type, itemId, null, rs.getString(1), null, rs.getInt(2));
+                    return new LockedStock(type, itemId, null, rs.getString(1), null, CustomItemStockService.lock(c,itemId,null,locationId).intValue());
                 }
             }
         }
         if ("CUSTOM_VARIANT".equals(type)) {
-            try (PreparedStatement ps = c.prepareStatement("SELECT v.custom_item_id,i.item_name||' - '||v.variant_name,v.variant_name,COALESCE(v.quantity_on_hand,0) FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id WHERE v.custom_variant_id=? AND v.is_active=TRUE AND i.is_active=TRUE AND i.is_archived=FALSE AND COALESCE(i.product_type,'INVENTORY')='INVENTORY' FOR UPDATE OF v")) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT v.custom_item_id,i.item_name||' - '||v.variant_name,v.variant_name FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id WHERE v.custom_variant_id=? AND v.is_active=TRUE AND i.is_active=TRUE AND i.is_archived=FALSE AND COALESCE(i.product_type,'INVENTORY')='INVENTORY'")) {
                 ps.setInt(1, itemId); try (ResultSet rs = ps.executeQuery()) {
                     if (!rs.next()) throw rule(404, "ITEM_NOT_FOUND", "A custom receiving variant no longer exists.");
-                    return new LockedStock(type, itemId, rs.getInt(1), rs.getString(2), rs.getString(3), rs.getInt(4));
+                    return new LockedStock(type, itemId, rs.getInt(1), rs.getString(2), rs.getString(3), CustomItemStockService.lock(c,rs.getInt(1),(long)itemId,locationId).intValue());
                 }
             }
         }
@@ -388,10 +401,13 @@ final class LanInventoryService {
     }
 
     static void applyStock(Connection c, LockedStock stock, int change, int locationId) throws SQLException {
+        if(!"PRODUCT".equals(stock.type())) {
+            CustomItemStockService.move(c,stock.parentItemId()==null?stock.itemId():stock.parentItemId(),stock.parentItemId()==null?null:(long)stock.itemId(),locationId,BigDecimal.valueOf(change),BigDecimal.ZERO,false);
+            return;
+        }
         String sql = switch (stock.type()) {
             case "PRODUCT" -> "UPDATE inventory SET quantity_on_hand=quantity_on_hand+? WHERE product_id=? AND location_id=?";
-            case "CUSTOM_ITEM" -> "UPDATE custom_order_items SET quantity_on_hand=quantity_on_hand+?,updated_at=CURRENT_TIMESTAMP WHERE custom_item_id=?";
-            default -> "UPDATE custom_order_item_variants SET quantity_on_hand=quantity_on_hand+?,updated_at=CURRENT_TIMESTAMP WHERE custom_variant_id=?";
+            default -> throw new IllegalArgumentException("Unsupported stock type.");
         };
         try (PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setInt(1, change); ps.setInt(2, stock.itemId()); if ("PRODUCT".equals(stock.type())) ps.setInt(3, locationId);
@@ -529,6 +545,6 @@ final class LanInventoryService {
     private record InventoryRequest(String search,String stockFilter,String department,String productType,String itemType,String brand,String shelf,String storageShelf,boolean includeArchived){}
     private record HistoryRequest(String search,String fromDate,String toDate){}
     private record ReceiveRequest(String overrideApprovalToken,String overrideReason,List<ReceiveLine> lines){}
-    private record ReceiveLine(String itemType,int itemId,int countedStock,int quantity,String lossReason,String lossNotes,Integer expectedSystemStock){}
+    private record ReceiveLine(String itemType,int itemId,int countedStock,int quantity,String lossReason,String lossNotes,Integer expectedSystemStock,String salesShelf){}
     record LockedStock(String type,int itemId,Integer parentItemId,String name,String variantName,int currentStock){}
 }

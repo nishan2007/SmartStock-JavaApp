@@ -26,12 +26,16 @@ public final class PublicationWordArt {
       }
       Rectangle2D b=path.getBounds2D(); double pad=e.wordArtOutsideBounds?0:e.wordArtOutlineWidth/2+(e.wordArtHasShadow?.6:0);
       double sx=Math.max(.01,e.width-2*pad)/b.getWidth(),sy=Math.max(.01,e.height-2*pad)/b.getHeight();
-      var fit=new AffineTransform();fit.translate(pad,pad);fit.scale(sx,sy);fit.translate(-b.getX(),-b.getY());
+      double usableWidth=Math.max(.01,e.width-2*pad);
+      if(e.textAlignment!=null)sx=Math.min(sx,e.height*bounds.getWidth()/bounds.getHeight()/b.getWidth());
+      double width=sx*b.getWidth();
+      double x=pad+(e.textAlignment==null?0:e.textAlignment.offset(usableWidth,width));
+      var fit=new AffineTransform();fit.translate(x,pad);fit.scale(sx,sy);fit.translate(-b.getX(),-b.getY());
       Shape shape=fit.createTransformedShape(path);
       if(e.wordArtHasShadow){g.translate(.5,.5);g.setColor(Color.decode(e.wordArtShadow));g.fill(shape);g.translate(-.5,-.5);}
       g.setPaint(e.wordArtGradient?new GradientPaint(0,0,Color.decode(e.color),0,(float)e.height,Color.decode(e.wordArtEndColor)):Color.decode(e.color));g.fill(shape);
       if(e.wordArtOutlineWidth>0){g.setColor(Color.decode(e.wordArtOutline));g.setStroke(new BasicStroke((float)e.wordArtOutlineWidth,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND));g.draw(shape);}
-      g.setColor(Color.decode(e.color));g.setStroke(new BasicStroke((float)Math.max(.08,e.height/25)));if(e.underline)g.draw(new java.awt.geom.Line2D.Double(0,e.height*.95,e.width,e.height*.95));if(e.strike)g.draw(new java.awt.geom.Line2D.Double(0,e.height*.5,e.width,e.height*.5));
+      g.setColor(Color.decode(e.color));g.setStroke(new BasicStroke((float)Math.max(.08,e.height/25)));double ruleLeft=e.textAlignment==null?0:x,ruleRight=e.textAlignment==null?e.width:x+width;if(e.underline)g.draw(new java.awt.geom.Line2D.Double(ruleLeft,e.height*.95,ruleRight,e.height*.95));if(e.strike)g.draw(new java.awt.geom.Line2D.Double(ruleLeft,e.height*.5,ruleRight,e.height*.5));
     } finally {g.dispose();}
   }
 }

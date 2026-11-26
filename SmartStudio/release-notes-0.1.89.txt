@@ -1,0 +1,1 @@
+Combined Windows quick update from all current shared SmartStudio sources. Keeps Add barcode and Add QR code visible on Insert. Fixes font and font-style dropdown browsing without resetting the list or scroll position. Includes outstanding shared Studio improvements and the exact SmartStock 1.1.93 client. Save drafts before restarting; update SmartStock first.

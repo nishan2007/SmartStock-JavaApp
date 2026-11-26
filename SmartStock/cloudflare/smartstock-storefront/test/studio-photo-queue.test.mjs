@@ -36,7 +36,7 @@ test('invalid links, cross-origin requests and oversized photos never reach the 
 });
 test('queue page supports repeated uploads without a template and never lists personal photos publicly',async()=>{
  const response=await worker.fetch(new Request('https://shop.test/shop/studio-photo-queue'),env);assert.equal(response.status,200);assert.equal(response.headers.get('Referrer-Policy'),'no-referrer');
- const html=await response.text();assert.match(html,/24 hours/);assert.match(html,/12 hours/);assert.match(html,/crypto.randomUUID/);assert.match(html,/location.hash/);assert.match(html,/history.replaceState/);
+ const html=await response.text();assert.match(html,/24 hours after upload, whether printed or not/);assert.match(html,/12 hours/);assert.match(html,/crypto.randomUUID/);assert.match(html,/location.hash/);assert.match(html,/history.replaceState/);
  const internal=await worker.fetch(new Request('https://shop.test/shop/internal/studio-photo-queue'),env);assert.equal(internal.status,404);
 });
 
@@ -123,4 +123,63 @@ test('QR scan activates app storage and stops camera tracks',async()=>{
  page.context.jsQR=()=>({data:'https://pic.deckers.gy/#instance='+instanceId(1)+'&token='+token+'&paired=1'});
  await page.elements.get('scan').onclick();assert.equal(stopped,1);assert.equal(JSON.parse(storage.get('smartstudio.photoPhones.v1'))[0].token,token);
  assert.equal(page.elements.get('scanner').hidden,true);
+});
+
+test('photo preparation preserves suitable JPEGs and adapts large photos within the upload limit',async()=>{
+ const page=pageSession(new Map());let width=4000,height=3000,calls=[],mode='fits';
+ page.context.Image=class{constructor(){this.naturalWidth=width;this.naturalHeight=height;}async decode(){}};
+ const canvas={getContext:()=>({fillRect(){},drawImage(){}}),toBlob(done,type,quality){calls.push({width:this.width,height:this.height,quality});done({size:mode==='fits'?1500000:this.width>3300?3000000:1900000,type});}};
+ page.context.document.createElement=()=>canvas;
+ const jpeg={type:'image/jpeg',size:1900000};
+ assert.equal(await page.context.preparePhoto(jpeg,'blob:test'),jpeg);assert.equal(calls.length,0);
+ width=8064;height=6048;
+ const result=await page.context.preparePhoto({type:'image/jpeg',size:9000000},'blob:test');
+ assert.equal(result.size,1500000);assert.deepEqual(calls[0],{width:4000,height:3000,quality:.95});
+ assert.equal(canvas.width,1);assert.equal(canvas.height,1);
+ calls=[];mode='large';
+ const adapted=await page.context.preparePhoto({type:'image/png',size:9000000},'blob:test');
+ assert.ok(adapted.size<=2097152);assert.equal(calls.length,4);assert.equal(calls[3].width,3276);assert.equal(calls[3].quality,.95);
+});
+
+test('photo preparation never enlarges small images and reports unsupported photos',async()=>{
+ const page=pageSession(new Map());let drawn;
+ page.context.Image=class{constructor(){this.naturalWidth=800;this.naturalHeight=1200;}async decode(){}};
+ const canvas={getContext:()=>({fillRect(){},drawImage(){drawn=[canvas.width,canvas.height];}}),toBlob(done){done({size:500000});}};
+ page.context.document.createElement=()=>canvas;
+ await page.context.preparePhoto({type:'image/png',size:500000},'blob:test');assert.deepEqual(drawn,[800,1200]);
+ page.context.Image=class{async decode(){throw Error('unsupported');}};
+ await assert.rejects(page.context.preparePhoto({},'blob:test'),/Choose a JPEG from Photos/);
+});
+
+test('brightness correction changes saved pixels without changing alpha',async()=>{
+ const page=pageSession(new Map());const pixels={data:new Uint8ClampedArray([40,60,80,255,200,220,240,128])};let saved;
+ page.context.Image=class{constructor(){this.naturalWidth=2;this.naturalHeight=1;}async decode(){}};
+ page.context.document.createElement=()=>({getContext:()=>({fillRect(){},drawImage(){},getImageData:()=>pixels,putImageData(p){saved=p.data;}}),toBlob(done){done({size:100,type:'image/jpeg'});}});
+ await page.context.preparePhoto({type:'image/jpeg',size:100},'blob:test',1);
+ assert.deepEqual([...saved],[80,120,160,255,255,255,255,128]);
+});
+
+test('live camera handles denial and cancellation while permission is pending',async()=>{
+ const page=pageSession(new Map());let resolve,stopped=0;
+ page.context.navigator={mediaDevices:{getUserMedia:()=>new Promise(ok=>{resolve=ok;})}};
+ const opening=page.elements.get('openCamera').onclick();page.elements.get('closeCamera').onclick();
+ resolve({getTracks:()=>[{stop(){stopped++;}}]});await opening;
+ assert.equal(stopped,1);assert.equal(page.elements.get('photoCamera').hidden,true);assert.equal(page.elements.get('openCamera').disabled,false);
+ page.context.navigator.mediaDevices.getUserMedia=async()=>{const e=Error();e.name='NotAllowedError';throw e;};
+ await page.elements.get('openCamera').onclick();assert.match(page.elements.get('status').textContent,/Allow camera access/);assert.equal(page.elements.get('openCamera').disabled,false);
+});
+
+test('live capture uses delivered resolution, keeps brightness for review and stops the camera',async()=>{
+ const page=pageSession(new Map());let stopped=0,dimensions;
+ for(const id of ['photoVideo','preview'])page.elements.get(id).style={};
+ page.context.navigator={mediaDevices:{getUserMedia:async constraints=>{assert.equal(constraints.video.facingMode.ideal,'environment');return {getVideoTracks:()=>[{}],getTracks:()=>[{stop(){stopped++;}}]};}}};
+ Object.assign(page.elements.get('photoVideo'),{play:async()=>{},readyState:2,videoWidth:3024,videoHeight:4032});
+ page.context.crypto={randomUUID:()=>id};page.context.URL={createObjectURL:()=> 'blob:captured',revokeObjectURL(){}};
+ const canvas={getContext:()=>({drawImage(){dimensions=[canvas.width,canvas.height];}}),toBlob(done){done({size:100,type:'image/jpeg'});}};
+ page.context.document.createElement=()=>canvas;
+ await page.elements.get('openCamera').onclick();
+ page.elements.get('photoLight').oninput({target:{value:'0.5'}});
+ await page.elements.get('shutter').onclick();
+ assert.deepEqual(dimensions,[3024,4032]);assert.equal(stopped,1);assert.equal(page.elements.get('preview').hidden,false);assert.equal(page.elements.get('send').disabled,false);
+ assert.equal(page.elements.get('photoLight').value,'0.5');assert.match(page.elements.get('preview').style.filter,/brightness\(1.414/);
 });

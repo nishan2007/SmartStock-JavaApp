@@ -16,7 +16,6 @@ import ui.helpers.ResponsiveTask;
 import ui.helpers.WindowHelper;
 import ui.helpers.WhatsAppActions;
 
-import javax.print.PrintException;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
@@ -204,12 +203,23 @@ public class ReceiptPreview extends JFrame {
     }
 
     private void printReceipt() {
+        if (receiptSettings == null) {
+            JOptionPane.showMessageDialog(this, "Receipt settings have not loaded. Use Retry before printing.",
+                    "Receipt Not Ready", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         try {
             PrinterOption selected = (PrinterOption) printerBox.getSelectedItem();
-            ReceiptPrinter.printToPosPrinter(receiptData, selected == null ? null : selected.printer,
-                    getSelectedPrintFormat(), reprint);
+            HardwareSettingsManager.PrintFormat format = getSelectedPrintFormat();
+            CompanyCustomizationManager.ReceiptSettings settings = receiptSettings;
+            Boolean printed = ResponsiveTask.await(this, "Printing receipt...", () -> {
+                ReceiptPrinter.printToPosPrinter(receiptData, selected == null ? null : selected.printer,
+                        format, reprint, settings);
+                return Boolean.TRUE;
+            });
+            if (!Boolean.TRUE.equals(printed)) return;
             JOptionPane.showMessageDialog(this, "Receipt sent to " + (selected == null ? "the printer" : selected) + ".");
-        } catch (PrintException ex) {
+        } catch (Exception ex) {
             JOptionPane.showMessageDialog(
                     this,
                     "Failed to print receipt.\n\n" + ex.getMessage(),

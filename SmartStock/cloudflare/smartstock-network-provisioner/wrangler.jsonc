@@ -1,0 +1,25 @@
+{
+  "name": "smartstock-network-provisioner",
+  "account_id": "5a56ab6770eaa3b32509b0594417e9dc",
+  "main": "src/index.mjs",
+  "compatibility_date": "2026-11-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{"pattern":"networking.deckers.gy","custom_domain":true}],
+  "durable_objects": {"bindings":[{"name":"STORES","class_name":"StoreNetwork"}]},
+  "migrations": [{"tag":"v1","new_sqlite_classes":["StoreNetwork"]}],
+  "vars": {
+    "BASE_DOMAIN":"deckers.gy",
+    "CF_ACCOUNT_ID":"5a56ab6770eaa3b32509b0594417e9dc",
+    "CF_ZONE_ID":"e0c3eb369e683f46a476c648aa05eaec",
+    "SUPABASE_URL":"https://pxdqngbpdnpiazwuagvb.supabase.co",
+    "ADMIN_ACCESS_POLICY_ID":"deb7e5a2-9cf7-4583-b104-fb3510a8b347",
+    "ADMIN_ACCESS_TEAM":"deckers23",
+    "PROVISION_LAN":"true",
+    "PROVISION_REMOTE_ACCESS":"true"
+  }
+  // Deployment also requires CF_ACCOUNT_ID, CF_ZONE_ID, SUPABASE_URL,
+  // and secrets CF_API_TOKEN, SUPABASE_SERVER_KEY. Remote provisioning requires
+  // ADMIN_ACCESS_POLICY_ID and ADMIN_ACCESS_TEAM after administrator review.
+}

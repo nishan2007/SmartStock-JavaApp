@@ -87,6 +87,8 @@ public class BalanceSheet extends JFrame {
     private final JLabel cfExpectedLabel = metricLabel("Expected CF: $0");
     private final JLabel cfCountedLabel = metricLabel("Counted Cash: $0");
     private final JLabel cfVarianceLabel = metricLabel("Missing: $0");
+    private boolean liveRefreshing;
+    private final ui.helpers.BalanceSheetDraftTracker draftTracker;
     private services.BalanceSheetService.BalanceSheet currentSheet;
     private SwingWorker<services.BalanceSheetService.BalanceSheet, Void> sheetWorker;
     private SwingWorker<List<SubmissionOption>, Void> historyWorker;
@@ -114,16 +116,19 @@ public class BalanceSheet extends JFrame {
     private void showOverseasWithdrawal(){
         if(currentSheet==null||currentSheet.submissionId()!=null){JOptionPane.showMessageDialog(this,"Refresh the current report before entering a withdrawal.");return;}
         JTextField amount=new JTextField(),reason=new JTextField();JPanel p=new JPanel(new GridLayout(2,2,8,8));p.add(new JLabel("Amount removed (GYD)"));p.add(amount);p.add(new JLabel("Payee / purpose"));p.add(reason);
-        if(JOptionPane.showConfirmDialog(this,p,"Withdraw overseas cash",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
+        if(draftTracker.confirm(this,p,"Withdraw overseas cash",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
         try{BigDecimal value=new BigDecimal(amount.getText().trim());String description=reason.getText().trim();if(value.signum()<=0||description.isBlank())throw new IllegalArgumentException("Enter a positive amount and purpose.");
             String fingerprint=value.toPlainString()+"|"+description;if(!fingerprint.equals(overseasWithdrawalFingerprint)){overseasWithdrawalFingerprint=fingerprint;overseasWithdrawalKey=java.util.UUID.randomUUID().toString();}
             String requestKey=overseasWithdrawalKey;overseasWithdrawalButton.setEnabled(false);
-            ui.helpers.UiTaskRunner.submit(this,"overseas-cash.withdraw",()->{BalanceSheetService.withdrawOverseasCash(value,description,requestKey);return true;},ignored->{overseasWithdrawalKey=null;overseasWithdrawalFingerprint=null;overseasWithdrawalButton.setEnabled(true);loadSheet();},error->{overseasWithdrawalButton.setEnabled(true);JOptionPane.showMessageDialog(this,error.getMessage(),"Overseas cash withdrawal",JOptionPane.ERROR_MESSAGE);});
+            ui.helpers.UiTaskRunner.submit(this,"overseas-cash.withdraw",()->{draftTracker.prepareMutation();BalanceSheetService.withdrawOverseasCash(value,description,requestKey);return true;},ignored->{overseasWithdrawalKey=null;overseasWithdrawalFingerprint=null;overseasWithdrawalButton.setEnabled(true);loadSheet();},error->{overseasWithdrawalButton.setEnabled(true);JOptionPane.showMessageDialog(this,error.getMessage(),"Overseas cash withdrawal",JOptionPane.ERROR_MESSAGE);});
         }catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Overseas cash withdrawal",JOptionPane.ERROR_MESSAGE);}
     }
     private String overseasWithdrawalFingerprint;
 
     public BalanceSheet() {
+        draftTracker=new ui.helpers.BalanceSheetDraftTracker(this,()->{
+            com.google.gson.JsonObject range=new com.google.gson.JsonObject();range.addProperty("from",fromField.getText().trim());range.addProperty("to",toField.getText().trim());range.add("cashDrawerSessionIds",services.LanJson.create().toJsonTree(List.copyOf(matchedDrawerSessionIds)));return range;
+        },updated->{if(currentSheet==null||currentSheet.submissionId()==null){currentSheet=services.LanJson.create().fromJson(updated.get("sheet"),services.BalanceSheetService.BalanceSheet.class);liveRefreshing=true;try{renderSheet(currentSheet);}finally{liveRefreshing=false;}}});
         setTitle("Balance Sheet");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(14, 14));
@@ -175,6 +180,8 @@ public class BalanceSheet extends JFrame {
         filters.add(addExpenseButton);
         filters.add(exportButton);
         filters.add(refreshButton);
+        JButton webApp=new JButton("Web App");webApp.addActionListener(e->{try{java.awt.Desktop.getDesktop().browse(java.net.URI.create(services.BalanceSheetWorkspaceService.PUBLIC_URL));}catch(Exception ex){JOptionPane.showMessageDialog(this,"Open https://balancesheet.deckers.gy in your browser.");}});filters.add(webApp);
+        if(PermissionManager.hasPermission("DEVICE_MANAGEMENT")){JButton pairDevice=new JButton("Pair Balance Sheet Device");pairDevice.addActionListener(e->new EmployeeWebDialog(this,"balance-sheet").setVisible(true));filters.add(pairDevice);}
 
         savedSheetBox.setPreferredSize(new Dimension(310, 30));
         JPanel savedPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
@@ -183,7 +190,7 @@ public class BalanceSheet extends JFrame {
         savedPanel.add(savedSheetBox);
         savedPanel.add(openSavedButton);
         if (PermissionManager.hasPermission("EDIT_BALANCE_SHEET")) savedPanel.add(editSavedButton);
-        savedPanel.add(auditButton);
+        if(PermissionManager.hasPermission("VIEW_BALANCE_SHEET_HISTORY")){savedPanel.add(auditButton);JButton timeline=new JButton("Entry History");timeline.addActionListener(e->draftTracker.showHistory());savedPanel.add(timeline);}
 
         JPanel header = new JPanel(new BorderLayout(12, 12));
         header.setOpaque(false);
@@ -197,6 +204,7 @@ public class BalanceSheet extends JFrame {
         headerStack.setOpaque(false);
         headerStack.add(header, BorderLayout.NORTH);
         headerStack.add(statusLabel, BorderLayout.WEST);
+        headerStack.add(draftTracker.statusLabel(), BorderLayout.SOUTH);
         headerStack.add(savedPanel, BorderLayout.EAST);
 
         JPanel metrics = new JPanel(new GridLayout(1, 4, 10, 0));
@@ -288,13 +296,13 @@ public class BalanceSheet extends JFrame {
         JTextField id=new JTextField(14),reason=new JTextField(30);JPanel form=new JPanel(new GridLayout(0,2,8,8));
         form.add(new JLabel("Source table:"));form.add(source);form.add(new JLabel("Primary ID:"));form.add(id);
         form.add(new JLabel("Audit reason:"));form.add(reason);
-        int answer=JOptionPane.showConfirmDialog(this,form,"Attach NULL-session legacy cash to this register's open drawer",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE);
+        int answer=draftTracker.confirm(this,form,"Attach NULL-session legacy cash to this register's open drawer",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE);
         if(answer!=JOptionPane.OK_OPTION)return;
         long sourceId;try{sourceId=Long.parseLong(id.getText().trim());}catch(Exception ex){JOptionPane.showMessageDialog(this,"Enter a valid primary ID.","Recovery",JOptionPane.ERROR_MESSAGE);return;}
         String why=reason.getText().trim();if(why.length()<10){JOptionPane.showMessageDialog(this,"Enter an audit reason of at least 10 characters.","Recovery",JOptionPane.ERROR_MESSAGE);return;}
         String key=UUID.randomUUID().toString(),sourceType=(String)source.getSelectedItem();
         new SwingWorker<services.BalanceSheetService.LegacyCashRecovery,Void>(){
-            protected services.BalanceSheetService.LegacyCashRecovery doInBackground()throws Exception{return BalanceSheetService.recoverLegacyCash(sourceType,sourceId,why,key);}
+            protected services.BalanceSheetService.LegacyCashRecovery doInBackground()throws Exception{draftTracker.prepareMutation();return BalanceSheetService.recoverLegacyCash(sourceType,sourceId,why,key);}
             protected void done(){try{var r=get();JOptionPane.showMessageDialog(BalanceSheet.this,"Attached "+r.sourceType()+" #"+r.sourceId()+" to open session "+r.afterSessionId()+" ("+r.drawerName()+"). The session remains open.","Recovery complete",JOptionPane.INFORMATION_MESSAGE);loadSheet();}catch(Exception ex){JOptionPane.showMessageDialog(BalanceSheet.this,"Recovery was not applied: "+rootMessage(ex),"Recovery",JOptionPane.ERROR_MESSAGE);}}
         }.execute();
     }
@@ -325,7 +333,7 @@ public class BalanceSheet extends JFrame {
         if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
         File output = chooser.getSelectedFile();
         if (!output.getName().toLowerCase(Locale.ROOT).endsWith("." + extension)) output = new File(output.getParentFile(), output.getName() + "." + extension);
-        if (output.exists() && JOptionPane.showConfirmDialog(this, "Replace the existing file?\n" + output.getAbsolutePath(), "Replace Export", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
+        if (output.exists() && draftTracker.confirm(this, "Replace the existing file?\n" + output.getAbsolutePath(), "Replace Export", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.YES_OPTION) return;
         File exportOutput = output; services.BalanceSheetService.BalanceSheet sheet = currentSheet;
         try {
             ResponsiveTask.await(this, "Exporting balance sheet...", () -> { if (pdf) BalanceSheetExportService.writePdf(exportOutput, sheet); else BalanceSheetExportService.writePng(exportOutput, sheet); return exportOutput; });
@@ -518,6 +526,7 @@ public class BalanceSheet extends JFrame {
     }
 
     private void loadSheet() {
+        draftTracker.captureCashChecks();
         LocalDate from = parseDate(fromField.getText().trim(), "From");
         LocalDate to = parseDate(toField.getText().trim(), "To");
         if (from == null || to == null) {
@@ -535,9 +544,12 @@ public class BalanceSheet extends JFrame {
         List<Long> cashDrawerSessionIds = List.copyOf(matchedDrawerSessionIds);
         showLoadingState("Loading balance sheet...");
         sheetWorker = new SwingWorker<>() {
+            private com.google.gson.JsonObject workspaceResult;
             @Override
             protected services.BalanceSheetService.BalanceSheet doInBackground() throws Exception {
-                return BalanceSheetService.loadBalanceSheet(from, to, storeZoneId, cashDrawerSessionIds);
+                com.google.gson.JsonObject range=new com.google.gson.JsonObject();range.addProperty("from",from.toString());range.addProperty("to",to.toString());range.add("cashDrawerSessionIds",services.LanJson.create().toJsonTree(cashDrawerSessionIds));
+                com.google.gson.JsonObject workspace=BalanceSheetService.workspace("OPEN",range);workspaceResult=workspace;
+                return services.LanJson.create().fromJson(workspace.get("sheet"),services.BalanceSheetService.BalanceSheet.class);
             }
 
             @Override
@@ -546,8 +558,9 @@ public class BalanceSheet extends JFrame {
                     return;
                 }
                 try {
-                    currentSheet = get();loadedFrom=from;loadedTo=to;
+                    currentSheet = get();loadedFrom=from;loadedTo=to;draftTracker.setWorkspace(workspaceResult);
                     renderSheet(currentSheet);
+                    draftTracker.watchCashChecks(cfCheckerTable,overseasCashChecker);
                     String sessionText = cashDrawerSessionIds.isEmpty() ? "" : " filtered to " + cashDrawerSessionIds.size() + " draw session(s)";
                     statusLabel.setText("Current draft for " + from + " to " + to + sessionText);
                 } catch (Exception ex) {
@@ -560,7 +573,7 @@ public class BalanceSheet extends JFrame {
 
     private void renderSheet(services.BalanceSheetService.BalanceSheet sheet) {
         overseasFundModel.setRowCount(0);var fund=sheet.overseasCash();
-        overseasCashChecker.display(fund,sheet.submissionId()!=null);
+        overseasCashChecker.display(fund,sheet.submissionId()!=null,liveRefreshing);
         overseasWithdrawalButton.setEnabled(sheet.submissionId()==null);
         overseasFundTotals.setText(fund==null?"No separate overseas cash snapshot":"B/F: "+fund.broughtForward()+"   Received: "+fund.received()+"   Expenses: "+fund.expenses()+"   C/F: "+fund.carriedForward()+" GYD");
         if(fund!=null)for(var l:fund.lines())overseasFundModel.addRow(new Object[]{l.date(),l.description(),l.received(),l.expense()});
@@ -650,7 +663,7 @@ public class BalanceSheet extends JFrame {
         panel.add(new JLabel("Balance B/F for the period starting " + periodStart + ":"));
         panel.add(amountField);
         panel.add(new JLabel("This overrides the automatically carried-forward balance for this start date."));
-        int result = JOptionPane.showConfirmDialog(this, panel, "Set Balance B/F",
+        int result = draftTracker.confirm(this, panel, "Set Balance B/F",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (result != JOptionPane.OK_OPTION) return;
 
@@ -665,7 +678,7 @@ public class BalanceSheet extends JFrame {
         try {
             BigDecimal savedAmount = amount;
             Boolean updated = ResponsiveTask.await(this, "Saving Balance B/F...", () -> {
-                BalanceSheetService.setBalanceBf(periodStart, savedAmount);
+                draftTracker.prepareMutation();BalanceSheetService.setBalanceBf(periodStart, savedAmount);
                 return Boolean.TRUE;
             });
             if (updated == null) return;
@@ -684,7 +697,7 @@ public class BalanceSheet extends JFrame {
         }
 
         JTextArea notesArea = new JTextArea(3, 28);
-        int confirm = JOptionPane.showConfirmDialog(
+        int confirm = draftTracker.confirm(
                 this,
                 new JScrollPane(notesArea),
                 "Submit Balance Sheet",
@@ -702,7 +715,7 @@ public class BalanceSheet extends JFrame {
             if(currentSheet==null||currentSheet.submissionId()!=null||!from.equals(loadedFrom)||!to.equals(loadedTo))throw new IllegalArgumentException("Refresh the selected Balance Sheet dates before verifying overseas cash.");
             com.google.gson.JsonObject overseasCheck=overseasCashChecker.submission();
             SubmissionResult submitted = ResponsiveTask.await(this, "Submitting balance sheet...", () -> {
-                long submissionId = BalanceSheetService.submitBalanceSheet(
+                draftTracker.prepareMutation();long submissionId = BalanceSheetService.submitBalanceSheet(
                         from, to, storeZoneId, notes, drawerSessionIds,overseasCheck);
                 services.EmailOutboxService.QueueResult emailResult;
                 try {
@@ -830,6 +843,7 @@ public class BalanceSheet extends JFrame {
     private void showSelectedRevisionHistory(){SubmissionOption selected=(SubmissionOption)savedSheetBox.getSelectedItem();if(selected==null){JOptionPane.showMessageDialog(this,"Select a submitted Balance Sheet first.","Revision History",JOptionPane.INFORMATION_MESSAGE);return;}try{List<services.BalanceSheetService.RevisionAudit> rows=ResponsiveTask.await(this,"Loading revision history...",()->BalanceSheetService.loadRevisionHistory(selected.submissionId()));if(rows==null)return;EditContext display=new EditContext(selected.submissionId(),selected.periodStart(),selected.periodEnd(),"",new services.BalanceSheetService.EditEligibility(false,selected.editExpiresAt(),selected.revisionNo(),""),List.of(),List.of(),rows);JTextArea area=auditText(display);JScrollPane scroll=new JScrollPane(area);scroll.setPreferredSize(new Dimension(700,420));JOptionPane.showMessageDialog(this,scroll,"Balance Sheet Revision History",JOptionPane.INFORMATION_MESSAGE);}catch(Exception ex){JOptionPane.showMessageDialog(this,"Unable to load revision history: "+ex.getMessage(),"Revision History",JOptionPane.ERROR_MESSAGE);}}
 
     private void showSubmissionEditor(EditContext context) {
+        fromField.setText(context.periodStart().toString());toField.setText(context.periodEnd().toString());matchedDrawerSessionIds=List.of();
         DefaultTableModel expenses=new DefaultTableModel(new Object[]{"ID","Date","Category","Payee","Description","Amount","Method","Reference","Status"},0);
         for(EditableExpense e:context.expenses())expenses.addRow(new Object[]{e.expenseId(),e.expenseDate(),e.category(),e.payee(),e.description(),e.amount(),e.paymentMethod(),e.paymentReference(),e.status()});
         DefaultTableModel income=new DefaultTableModel(new Object[]{"ID","Date","Source","Description","Amount","Reference"},0);
@@ -842,14 +856,14 @@ public class BalanceSheet extends JFrame {
         JLabel window=new JLabel("Editable until "+context.eligibility().expiresAt().format(DATE_TIME_FORMAT)+"  |  Revision "+context.eligibility().currentRevision());
         panel.add(window,BorderLayout.NORTH);panel.add(tabs,BorderLayout.CENTER);
         JPanel fields=new JPanel(new GridLayout(0,1,0,4));fields.add(new JLabel("Submission notes:"));fields.add(new JScrollPane(notes));fields.add(new JLabel("Reason for changes (required):"));fields.add(new JScrollPane(reason));panel.add(fields,BorderLayout.SOUTH);
-        int choice=JOptionPane.showConfirmDialog(this,panel,"Edit Latest Submitted Balance Sheet",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE);
+        int choice=draftTracker.confirm(this,panel,"Edit Latest Submitted Balance Sheet",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE);
         if(choice!=JOptionPane.OK_OPTION)return;
         try{
             String why=reason.getText().trim();if(why.isEmpty())throw new IllegalArgumentException("A reason for the changes is required.");
             List<EditableExpense> expenseRows=readExpenseRows(expenses);List<EditableOtherIncome> incomeRows=readIncomeRows(income);
             EditRequest request=new EditRequest(context.submissionId(),context.eligibility().currentRevision(),notes.getText(),why,expenseRows,incomeRows);
             RevisionSave saved=ResponsiveTask.await(this,"Saving Balance Sheet revision...",()->{
-                EditResult edit=BalanceSheetService.reviseSubmission(request);services.EmailOutboxService.QueueResult email;
+                draftTracker.prepareMutation();EditResult edit=BalanceSheetService.reviseSubmission(request);services.EmailOutboxService.QueueResult email;
                 try{email=services.EmailOutboxService.queueRevisedBalanceSheet(edit.submissionId(),edit.revisionNo());}
                 catch(Exception emailEx){email=services.EmailOutboxService.QueueResult.skipped("The revised email could not be queued: "+emailEx.getMessage());}
                 return new RevisionSave(edit,email);
@@ -1009,7 +1023,7 @@ public class BalanceSheet extends JFrame {
         addRow(panel, gbc, 6, "Reference:", referenceField);
         addRow(panel, gbc, 7, "Description:", new JScrollPane(descriptionArea));
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "Log Expense", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int result = draftTracker.confirm(this, panel, "Log Expense", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -1036,7 +1050,7 @@ public class BalanceSheet extends JFrame {
                     String.valueOf(statusBox.getSelectedItem())
             );
             Boolean saved = ResponsiveTask.await(this, "Saving expense...", () -> {
-                BalanceSheetService.addManualExpense(expense);
+                draftTracker.prepareMutation();BalanceSheetService.addManualExpense(expense);
                 return Boolean.TRUE;
             });
             if (saved == null) return;
@@ -1070,7 +1084,7 @@ public class BalanceSheet extends JFrame {
         addRow(panel, gbc, 4, "Description:", new JScrollPane(descriptionArea));
         addRow(panel, gbc, 5, "Payment method:", new JLabel("Cash"));
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "Log Other Cash Income",
+        int result = draftTracker.confirm(this, panel, "Log Other Cash Income",
                 JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (result != JOptionPane.OK_OPTION) return;
 
@@ -1091,7 +1105,7 @@ public class BalanceSheet extends JFrame {
             OtherIncomeEntry entry = new OtherIncomeEntry(date, source, blankToNull(descriptionArea.getText()),
                     amount, blankToNull(referenceField.getText()));
             Boolean saved = ResponsiveTask.await(this, "Saving Other income...", () -> {
-                BalanceSheetService.addOtherIncome(entry);
+                draftTracker.prepareMutation();BalanceSheetService.addOtherIncome(entry);
                 return Boolean.TRUE;
             });
             if (saved != null) loadSheet();
@@ -1120,16 +1134,16 @@ public class BalanceSheet extends JFrame {
                 return;
             }
             JComboBox<OtherIncomeOption> incomeBox = new JComboBox<>(rows.toArray(new OtherIncomeOption[0]));
-            int result = JOptionPane.showConfirmDialog(this, incomeBox, "Delete Other Income",
+            int result = draftTracker.confirm(this, incomeBox, "Delete Other Income",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
             if (result != JOptionPane.OK_OPTION) return;
             OtherIncomeOption selected = (OtherIncomeOption) incomeBox.getSelectedItem();
             if (selected == null) return;
-            int confirm = JOptionPane.showConfirmDialog(this, "Delete this Other income entry?\n\n" + selected,
+            int confirm = draftTracker.confirm(this, "Delete this Other income entry?\n\n" + selected,
                     "Delete Other Income", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
             if (confirm != JOptionPane.YES_OPTION) return;
             Boolean deleted = ResponsiveTask.await(this, "Deleting Other income...", () -> {
-                BalanceSheetService.deleteOtherIncome(selected.otherIncomeId(), from, to);
+                draftTracker.prepareMutation();BalanceSheetService.deleteOtherIncome(selected.otherIncomeId(), from, to);
                 return Boolean.TRUE;
             });
             if (deleted != null) loadSheet();
@@ -1154,7 +1168,7 @@ public class BalanceSheet extends JFrame {
         addRow(panel, gbc, 2, "Amount:", amountField);
         addRow(panel, gbc, 3, "Description:", new JScrollPane(descriptionArea));
 
-        int result = JOptionPane.showConfirmDialog(this, panel, "Log Account Payable", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int result = draftTracker.confirm(this, panel, "Log Account Payable", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -1181,7 +1195,7 @@ public class BalanceSheet extends JFrame {
                     "UNPAID"
             );
             Boolean saved = ResponsiveTask.await(this, "Saving account payable...", () -> {
-                BalanceSheetService.addManualExpense(payable);
+                draftTracker.prepareMutation();BalanceSheetService.addManualExpense(payable);
                 return Boolean.TRUE;
             });
             if (saved == null) return;
@@ -1224,7 +1238,7 @@ public class BalanceSheet extends JFrame {
             addRow(panel, gbc, 3, "Method:", methodBox);
             addRow(panel, gbc, 4, "Reference:", referenceField);
 
-            int result = JOptionPane.showConfirmDialog(this, panel, "Pay Account Payable", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            int result = draftTracker.confirm(this, panel, "Pay Account Payable", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (result != JOptionPane.OK_OPTION) {
                 return;
             }
@@ -1243,7 +1257,7 @@ public class BalanceSheet extends JFrame {
             String method = String.valueOf(methodBox.getSelectedItem());
             String reference = blankToNull(referenceField.getText());
             Boolean paid = ResponsiveTask.await(this, "Recording payable payment...", () -> {
-                BalanceSheetService.recordPayablePayment(
+                draftTracker.prepareMutation();BalanceSheetService.recordPayablePayment(
                         selected.expenseId(), paymentDate, amount, method, reference);
                 return Boolean.TRUE;
             });
@@ -1294,7 +1308,7 @@ public class BalanceSheet extends JFrame {
             gbc.anchor = GridBagConstraints.WEST;
             addRow(panel, gbc, 0, "Row:", rowBox);
 
-            int result = JOptionPane.showConfirmDialog(this, panel, title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            int result = draftTracker.confirm(this, panel, title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (result != JOptionPane.OK_OPTION) {
                 return;
             }
@@ -1303,7 +1317,7 @@ public class BalanceSheet extends JFrame {
             if (selected == null) {
                 return;
             }
-            int confirm = JOptionPane.showConfirmDialog(
+            int confirm = draftTracker.confirm(
                     this,
                     "Delete this row from the current balance sheet?\n\n" + selected,
                     title,
@@ -1315,7 +1329,7 @@ public class BalanceSheet extends JFrame {
             }
 
             Boolean deleted = ResponsiveTask.await(this, "Deleting balance-sheet row...", () -> {
-                BalanceSheetService.deleteManualExpense(selected.expenseId(), from, to, status);
+                draftTracker.prepareMutation();BalanceSheetService.deleteManualExpense(selected.expenseId(), from, to, status);
                 return Boolean.TRUE;
             });
             if (deleted == null) return;
@@ -1354,7 +1368,7 @@ public class BalanceSheet extends JFrame {
             addRow(panel, gbc, 0, "Cheque:", chequeBox);
             addRow(panel, gbc, 1, "Notes:", new JScrollPane(notesArea));
 
-            int result = JOptionPane.showConfirmDialog(this, panel, "Deposit Cheque", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            int result = draftTracker.confirm(this, panel, "Deposit Cheque", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (result != JOptionPane.OK_OPTION) {
                 return;
             }
@@ -1363,7 +1377,7 @@ public class BalanceSheet extends JFrame {
             if (selected == null) {
                 return;
             }
-            int confirm = JOptionPane.showConfirmDialog(
+            int confirm = draftTracker.confirm(
                     this,
                     "Mark this cheque as deposited in bank?\n\n" + selected,
                     "Deposit Cheque",
@@ -1376,7 +1390,7 @@ public class BalanceSheet extends JFrame {
 
             String notes = notesArea.getText();
             Boolean deposited = ResponsiveTask.await(this, "Recording cheque deposit...", () -> {
-                BalanceSheetService.markChequeDeposited(selected, notes);
+                draftTracker.prepareMutation();BalanceSheetService.markChequeDeposited(selected, notes);
                 return Boolean.TRUE;
             });
             if (deposited == null) return;

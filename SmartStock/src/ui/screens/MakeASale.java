@@ -90,6 +90,7 @@ public class MakeASale extends JFrame {
     private JToggleButton chequePaymentButton;
     private JToggleButton mmgPaymentButton;
     private JToggleButton accountPaymentButton;
+    private JButton loyaltyButton;
     private JTextField paymentReferenceField;
     private String selectedPaymentMethod;
     private JComboBox<CustomerAccountOption> customerAccountBox;
@@ -162,6 +163,7 @@ public class MakeASale extends JFrame {
     private boolean salesSettingsLoaded;
     private boolean alwaysPrintSaleReceipt;
     private String pendingCheckoutKey;
+    private PendingExpenseCheckout pendingExpenseCheckout;
     private String pendingCheckoutFingerprint;
     private String pendingHoldKey;
     private String pendingHoldFingerprint;
@@ -376,7 +378,7 @@ public class MakeASale extends JFrame {
        customerAccountBox.setBackground(DeckersPalette.fieldBackground());
        customerAccountBox.setForeground(DeckersPalette.text());
        customerAccountBox.setFont(new Font("SansSerif", Font.PLAIN, 14));
-       customerAccountBox.setPrototypeDisplayValue(new CustomerAccountOption(0, "0000000000", "Enter customer name", BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, false, "",false,false,BigDecimal.ZERO));
+       customerAccountBox.setPrototypeDisplayValue(new CustomerAccountOption(0, "0000000000", "Enter customer name", BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, "",false,false,BigDecimal.ZERO));
        setFixedControlHeight(customerAccountBox, 360);
        customerAccountBox.setRenderer(new CustomerAccountRenderer());
        addCustomerAccountButton = createUtilityButton("New Customer", DeckersPalette.MAGENTA);
@@ -403,7 +405,7 @@ public class MakeASale extends JFrame {
        customerControlsPanel.setOpaque(false);
        customerControlsPanel.add(customerAccountBox);
        customerControlsPanel.add(addCustomerAccountButton);
-       JButton loyaltyButton=new JButton("Loyalty points");
+       loyaltyButton=new JButton("Loyalty points");
        loyaltyButton.addActionListener(e->chooseLoyalty());
        customerControlsPanel.add(loyaltyButton);
        searchRow.add(customerControlsPanel, BorderLayout.EAST);
@@ -708,27 +710,33 @@ public class MakeASale extends JFrame {
 
     private void loadStartupData() {
         CachedUiLoader.load(this,"make-sale:startup",SalesStartupSnapshot.class,SessionDataCache.SCREEN_TTL,
-                loadingState,()->{var settings=UiTaskRunner.supplyAsync(LanApiClient::loadSalesSettings);var customers=UiTaskRunner.supplyAsync(LanApiClient::loadCustomerAccounts);var receipt=UiTaskRunner.supplyAsync(CompanyCustomizationManager::loadReceiptSettings);return new SalesStartupSnapshot(settings.join(),customers.join(),receipt.join().alwaysPrintSaleReceipt());},snapshot->{salesSettings=snapshot.settings();salesSettingsLoaded=true;alwaysPrintSaleReceipt=snapshot.alwaysPrintSaleReceipt();applyRequiredPrintPreference();applyCustomerAccounts(snapshot.customers());updateOverallTotal();updateCustomerAccountEnabled();});
+                loadingState,()->{var settings=UiTaskRunner.supplyAsync(LanApiClient::loadSalesSettings);var customers=UiTaskRunner.supplyAsync(LanApiClient::loadSaleAccounts);var receipt=UiTaskRunner.supplyAsync(CompanyCustomizationManager::loadReceiptSettings);return new SalesStartupSnapshot(settings.join(),customers.join(),receipt.join().alwaysPrintSaleReceipt());},snapshot->{salesSettings=snapshot.settings();salesSettingsLoaded=true;alwaysPrintSaleReceipt=snapshot.alwaysPrintSaleReceipt();applyRequiredPrintPreference();applyCustomerAccounts(snapshot.customers());updateOverallTotal();updateCustomerAccountEnabled();});
     }
 
     private void applyRequiredPrintPreference() {
         if (checkoutBtn != null) {
-            checkoutBtn.setVisible(!alwaysPrintSaleReceipt);
+            var customer = getSelectedCustomerAccount();
+            checkoutBtn.setVisible(!alwaysPrintSaleReceipt && (customer == null || customer.expenseStoreId == null));
         }
     }
 
-    private void applyCustomerAccounts(java.util.List<LanApiClient.CustomerAccount> accounts) {
+    private void applyCustomerAccounts(LanApiClient.SaleAccounts accounts) {
         CustomerAccountOption selectedBeforeReload = getSelectedCustomerAccount();
         customerAccountOptions = new java.util.ArrayList<>();
         customerAccountBox.removeAllItems();
-        for (LanApiClient.CustomerAccount account : accounts) customerAccountOptions.add(new CustomerAccountOption(account.customerId(), account.accountNumber(),account.customerName(), account.creditLimit(), account.currentBalance(),account.availableCredit(), account.business(), account.customerTypeName(),account.requireChargeAuthorization(),account.salesDiscountEnabled(),account.salesDiscountPercent()));
+        if (accounts.expenseAccount() != null) {
+            customerAccountOptions.add(new CustomerAccountOption(accounts.expenseAccount()));
+        }
+        for (LanApiClient.CustomerAccount account : accounts.customers()) customerAccountOptions.add(new CustomerAccountOption(account.customerId(), account.accountNumber(),account.customerName(), account.creditLimit(), account.currentBalance(),account.availableCredit(), account.customerTypeName(),account.requireChargeAuthorization(),account.salesDiscountEnabled(),account.salesDiscountPercent()));
         applyCustomerAccountFilter("", false);
         if (selectedBeforeReload != null) selectCustomerById(selectedBeforeReload.customerId);
     }
 
     private record SalesStartupSnapshot(LanApiClient.SalesSettings settings,
-                                        java.util.List<LanApiClient.CustomerAccount> customers,
+                                        LanApiClient.SaleAccounts customers,
                                         boolean alwaysPrintSaleReceipt) { }
+    private record PendingExpenseCheckout(LanApiClient.ExpenseCheckoutRequest request, String key) {}
+
     private record CheckoutSnapshot(LanApiClient.CheckoutResult result, ReceiptData receipt,
                                     String receiptError, String printError, String printMessage,
                                     String drawerError) { }
@@ -3156,7 +3164,7 @@ public class MakeASale extends JFrame {
         if (customerAccountBox == null) {
             return;
         }
-        UiTaskRunner.submit(this, "sale.customer-accounts", LanApiClient::loadCustomerAccounts,
+        UiTaskRunner.submit(this, "sale.customer-accounts", LanApiClient::loadSaleAccounts,
                 this::applyCustomerAccounts,
                 failure -> loadingState.failed(failure.getMessage(), true, this::loadCustomerAccounts));
     }
@@ -3326,6 +3334,12 @@ public class MakeASale extends JFrame {
         if(applyCustomerDiscountBox==null)return;
         CustomerAccountOption customer=getSelectedCustomerAccount();
         boolean available=customer!=null&&customer.salesDiscountEnabled&&customer.salesDiscountPercent.signum()>0;
+        boolean expense = customer != null && customer.expenseStoreId != null;
+        accountPaymentButton.setText(expense ? "Charge to Account" : "Account");
+        loyaltyButton.setEnabled(!expense);
+        checkoutPrintBtn.setText(expense ? "Post Expense" : "Checkout & Print");
+        applyRequiredPrintPreference();
+        if (expense && !updatingCustomerAccountFilter) selectPaymentMethod("ACCOUNT");
         applyCustomerDiscountBox.setVisible(available);
         applyCustomerDiscountBox.setSelected(available);
         applyCustomerDiscountBox.setText(available?"Apply customer discount ("+customer.salesDiscountPercent.stripTrailingZeros().toPlainString()+"%)":"Apply customer discount");
@@ -3343,6 +3357,16 @@ public class MakeASale extends JFrame {
         }
         if (cartModel.getRowCount() == 0) {
             JOptionPane.showMessageDialog(this, "Cart is empty.");
+            return;
+        }
+        if (pendingExpenseCheckout != null) return;
+        CustomerAccountOption selectedAccount = getSelectedCustomerAccount();
+        if (selectedAccount != null && selectedAccount.expenseStoreId != null) {
+            if (!"ACCOUNT".equals(selectedPaymentMethod)) {
+                JOptionPane.showMessageDialog(this, "Choose Charge to Account to post this expense.");
+                return;
+            }
+            startExpenseCheckout(selectedAccount);
             return;
         }
         if (!salesSettingsLoaded) {
@@ -3420,6 +3444,63 @@ public class MakeASale extends JFrame {
                 discountPercent, cashCollected, saleDiscountApprovalToken, saleDiscountOverrideReason,authorization);
     }
 
+    private void startExpenseCheckout(CustomerAccountOption account) {
+        var lines = buildCheckoutLines();
+        if (lines.stream().anyMatch(LanApiClient.CheckoutLine::miscItem)) {
+            JOptionPane.showMessageDialog(this, "Remove miscellaneous items before posting a stock expense.");
+            return;
+        }
+        var authorization = ui.helpers.CustomerChargeAuthorizationDialog.captureExpense(
+                this, account.name, SessionManager.getCurrentUserDisplayName());
+        if (authorization == null) return;
+        var request = new LanApiClient.ExpenseCheckoutRequest(account.expenseStoreId, authorization.representativeName(),
+                authorization.signaturePngBase64(), lines.stream().map(line ->
+                        new LanApiClient.ExpenseCheckoutLine(line.productId(), line.quantity())).toList());
+        pendingExpenseCheckout = new PendingExpenseCheckout(request, UUID.randomUUID().toString());
+        submitExpenseCheckout();
+    }
+
+    private void submitExpenseCheckout() {
+        PendingExpenseCheckout pending = pendingExpenseCheckout;
+        checkoutBtn.setEnabled(false);
+        checkoutPrintBtn.setEnabled(false);
+        loadingState.loading(false, java.time.Instant.now());
+        UiTaskRunner.submit(this, "sale.expense-checkout",
+                () -> LanApiClient.checkoutExpense(pending.request(), pending.key()), result -> {
+            pendingExpenseCheckout = null;
+            InventoryCatalogCache.refreshAfterMutation().exceptionally(failure -> null);
+            SessionDataCache.invalidate("reports:");
+            var cart = buildCheckoutLines().stream().map(line ->
+                    new LanApiClient.ExpenseCheckoutLine(line.productId(), line.quantity())).toList();
+            if (cart.equals(pending.request().lines())) {
+                cartModel.setRowCount(0);
+                clearPendingManagerApprovals();
+                setDiscountFieldValue("0");
+                clearHeldCartSelection();
+                searchField.setText("");
+                updateOverallTotal();
+            }
+            checkoutBtn.setEnabled(true);
+            checkoutPrintBtn.setEnabled(true);
+            loadingState.ready(java.time.Instant.now());
+            JOptionPane.showMessageDialog(this, result.accountName() + " recorded."
+                    + "\nExpense value: " + utils.CurrencyFormatter.format(result.total())
+                    + "\nReference: " + result.checkoutId());
+            focusProductSearch();
+        }, failure -> {
+            if (failure instanceof LanApiClient.LanApiException api && !api.retryable()) {
+                pendingExpenseCheckout = null;
+                checkoutBtn.setEnabled(true);
+                checkoutPrintBtn.setEnabled(true);
+                loadingState.ready(java.time.Instant.now());
+                JOptionPane.showMessageDialog(this, api.getMessage(), "Expense Not Posted", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            loadingState.actionFailed("Expense checkout", "Retry the signed checkout to confirm the result.",
+                    this::submitExpenseCheckout);
+        });
+    }
+
     private java.util.List<LanApiClient.CheckoutLine> buildCheckoutLines(){
         java.util.List<LanApiClient.CheckoutLine> lines = new java.util.ArrayList<>();
         for (int row = 0; row < cartModel.getRowCount(); row++) {
@@ -3443,7 +3524,7 @@ public class MakeASale extends JFrame {
     }
     private String loyaltyCartFingerprint(){var customer=getSelectedCustomerAccount();return (customer==null?"":customer.customerId)+":"+getDiscountPercent()+":"+(applyCustomerDiscountBox!=null&&applyCustomerDiscountBox.isSelected())+":"+buildCheckoutLines();}
     private void chooseLoyalty(){
-        if(!commitCurrentCartEdit())return;var customer=getSelectedCustomerAccount();if(customer==null){JOptionPane.showMessageDialog(this,"Select a customer account first.");return;}
+        if(!commitCurrentCartEdit())return;var customer=getSelectedCustomerAccount();if(customer==null || customer.expenseStoreId!=null){JOptionPane.showMessageDialog(this,"Select a customer account first.");return;}
         ui.helpers.LoyaltyDialog.open(this,customer.customerId,points->{
             var current=getSelectedCustomerAccount();if(current==null||current.customerId!=customer.customerId)return;
             if(points==0){loyaltyPoints=0;loyaltyPreviewTotal=null;loyaltyFingerprint=null;updateOverallTotal();return;}
@@ -3589,6 +3670,11 @@ public class MakeASale extends JFrame {
         }
         if (cartModel.getRowCount() == 0) {
             JOptionPane.showMessageDialog(this, "Cart is empty.");
+            return;
+        }
+        CustomerAccountOption selected = getSelectedCustomerAccount();
+        if (selected != null && selected.expenseStoreId != null) {
+            JOptionPane.showMessageDialog(this, "Select the store expense account after resuming a held cart.");
             return;
         }
         String holdName = JOptionPane.showInputDialog(this, "Hold name / note:", "Hold Cart",
@@ -3801,6 +3887,15 @@ public class MakeASale extends JFrame {
     }
 
     private void updateOverallTotal() {
+        var account = getSelectedCustomerAccount();
+        boolean expense = account != null && account.expenseStoreId != null;
+        if (subtotalLabel != null) subtotalLabel.setVisible(!expense);
+        if (discountAmountLabel != null) discountAmountLabel.setVisible(!expense);
+        if (vatAmountLabel != null) vatAmountLabel.setVisible(!expense);
+        if (expense) {
+            totalLabel.setText("Expense value confirmed on posting");
+            return;
+        }
         if(loyaltyPoints>0&&!java.util.Objects.equals(loyaltyFingerprint,loyaltyCartFingerprint())){loyaltyPoints=0;loyaltyPreviewTotal=null;loyaltyFingerprint=null;}
         BigDecimal subtotal = getCartGrossSubtotal();
         BigDecimal afterItemDiscounts = utils.CurrencyFormatter.normalize(BigDecimal.valueOf(getCartSubtotal()));
@@ -3994,24 +4089,38 @@ public class MakeASale extends JFrame {
 
     private static class CustomerAccountOption {
         private final int customerId;
+        private final Integer expenseStoreId;
         private final String accountNumber;
         private final String name;
         private final BigDecimal creditLimit;
         private final BigDecimal currentBalance;
         private final BigDecimal availableCredit;
-        private final boolean businessAccount;
+
         private final String customerTypeName;
         private final boolean requireChargeAuthorization;
         private final boolean salesDiscountEnabled;private final BigDecimal salesDiscountPercent;
 
-        private CustomerAccountOption(int customerId, String accountNumber, String name, BigDecimal creditLimit, BigDecimal currentBalance, BigDecimal availableCredit, boolean businessAccount, String customerTypeName,boolean requireChargeAuthorization,boolean salesDiscountEnabled,BigDecimal salesDiscountPercent) {
+        private CustomerAccountOption(int customerId, String accountNumber, String name, BigDecimal creditLimit, BigDecimal currentBalance, BigDecimal availableCredit, String customerTypeName,boolean requireChargeAuthorization,boolean salesDiscountEnabled,BigDecimal salesDiscountPercent) {
+            this(customerId, null, accountNumber, name, creditLimit, currentBalance, availableCredit, customerTypeName,
+                    requireChargeAuthorization, salesDiscountEnabled, salesDiscountPercent);
+        }
+
+        private CustomerAccountOption(LanApiClient.StoreExpenseAccount expense) {
+            this(0, expense.storeId(), "", expense.name(), null, null, null, "", true, false, null);
+        }
+
+        private CustomerAccountOption(int customerId, Integer expenseStoreId, String accountNumber, String name,
+                                      BigDecimal creditLimit, BigDecimal currentBalance, BigDecimal availableCredit,
+                                      String customerTypeName, boolean requireChargeAuthorization,
+                                      boolean salesDiscountEnabled, BigDecimal salesDiscountPercent) {
             this.customerId = customerId;
+            this.expenseStoreId = expenseStoreId;
             this.accountNumber = accountNumber == null ? "" : accountNumber;
             this.name = name == null ? "" : name;
             this.creditLimit = creditLimit == null ? BigDecimal.ZERO : creditLimit;
             this.currentBalance = currentBalance == null ? BigDecimal.ZERO : currentBalance;
             this.availableCredit = availableCredit == null ? BigDecimal.ZERO : availableCredit;
-            this.businessAccount = businessAccount;
+
             this.customerTypeName = customerTypeName == null ? "" : customerTypeName;
             this.requireChargeAuthorization=requireChargeAuthorization;
             this.salesDiscountEnabled=salesDiscountEnabled;this.salesDiscountPercent=salesDiscountPercent==null?BigDecimal.ZERO:salesDiscountPercent;
@@ -4019,8 +4128,9 @@ public class MakeASale extends JFrame {
 
         @Override
         public String toString() {
+            if (expenseStoreId != null) return name;
             String accountLabel = accountNumber.isBlank() ? "" : accountNumber + " - ";
-            String typeLabel = businessAccount ? "Business" : "Personal";
+            String typeLabel = utils.CustomerAccountTypes.isBusiness(customerTypeName) ? "Business" : "Personal";
             String customerTypeLabel = customerTypeName.isBlank() ? "" : " / " + customerTypeName;
             return accountLabel + name + " [" + typeLabel + customerTypeLabel + "] (Available: $" + availableCredit + ")";
         }

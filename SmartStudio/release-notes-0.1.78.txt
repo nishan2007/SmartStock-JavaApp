@@ -1,0 +1,4 @@
+SmartStudio 0.1.78 — Shared template save compatibility
+
+Fixes shared template saves when Studio and the store server calculate different content fingerprints. Studio verifies the committed file byte for byte before confirming a compatible save, preserving numbering fields, records and layout. Changed or corrupt downloads remain unsaved.
+Windows update only; requires an existing SmartStudio installation. Java runtime and AI model weights are excluded. Does not change bill-book number positions or install a store-server update.

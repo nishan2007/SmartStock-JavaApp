@@ -57,6 +57,8 @@ public class MainMenu extends JFrame {
     private static final Color RIBBON_TITLE = new Color(248, 250, 252);
     private static final Color RIBBON_SUBTITLE = new Color(203, 213, 225);
     private final JButton makeSaleButton;
+    private final JButton salesTasksButton;
+    private final JButton workQueueButton;
     private final JButton returnSaleButton;
     private final JButton balanceDrawButton;
     private final JButton changeBasketButton;
@@ -72,6 +74,7 @@ public class MainMenu extends JFrame {
     private final JButton viewSalesButton;
     private final JButton onlineOrdersButton;
     private final JButton customerAccountsButton;
+    private final JButton phoneMinutesButton;
     private final JButton customerTransactionHistoryButton;
     private final JButton invoicesButton;
     private final JButton customOrdersButton;
@@ -82,6 +85,7 @@ public class MainMenu extends JFrame {
     private final JButton addItemButton;
     private final JButton editItemsButton;
     private final JButton timeClockButton;
+    private final JButton storeKeysButton;
     private final JButton payrollDashboardButton;
     private final JButton weeklyScheduleButton;
     private final JButton employeeManagementButton;
@@ -104,6 +108,7 @@ public class MainMenu extends JFrame {
     private boolean navigationInProgress;
 
     public MainMenu() {
+        services.SharedLabelPrinting.start();
         setTitle("SmartStock - Main Menu");
         setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         setSize(1800, 850);
@@ -137,6 +142,10 @@ public class MainMenu extends JFrame {
         JPanel headerPanel = createHeaderPanel(mainGreetingLabel, subtitleLabel);
 
         makeSaleButton = createMenuButtonLazy("Make a Sale", "Create a new sale transaction", "src/ICONS/MainMenuMakeSale.png");
+        salesTasksButton = createMenuButtonLazy("Sales Tasks", "Copying, printing and service work for later pickup", "src/ICONS/MainMenuOrders.png");
+        salesTasksButton.addActionListener(e->{if(PermissionManager.requirePermission("MANAGE_SALES_TASKS",this,"Sales Tasks"))NavigationManager.openSalesTasks(this);});
+        workQueueButton = createMenuButtonLazy("Work Queue", "Custom orders and sales tasks in production or ready for pickup", "src/ICONS/MainMenuOrders.png");
+        workQueueButton.addActionListener(e->NavigationManager.openWorkQueue(this));
         returnSaleButton = createMenuButtonLazy("Returns", "Return items from a completed sale", "src/ICONS/MainMenuReturns.png");
         balanceDrawButton = createMenuButtonLazy("Balance Draw", "Start, count, and close the cash drawer", "src/ICONS/MainMenuBalanceDraw.png");
         changeBasketButton = createMenuButtonLazy("Change Basket", "Count the store change basket against its target", "src/ICONS/MainMenuBalanceDraw.png");
@@ -151,6 +160,7 @@ public class MainMenu extends JFrame {
         vendorListButton = createMenuButtonLazy("Vendors", "Manage product vendors", "src/ICONS/MainMenuVendors.png");
         onlineOrdersButton = createMenuButtonLazy("Online pickup orders", "Prepare and collect website orders", "src/ICONS/MainMenuOrders.png");
         viewSalesButton = createMenuButtonLazy("View Sales", "Review previous transactions", "src/ICONS/MainMenuViewSales.png");
+        phoneMinutesButton = createMenuButtonLazy("Phone Minutes", "Record cash or credit phone minutes", "src/ICONS/MainMenuCustomers.png");
         customerAccountsButton = createMenuButtonLazy("Customers", "Manage customer credit accounts", "src/ICONS/MainMenuCustomers.png");
         customerTransactionHistoryButton = createMenuButtonLazy("Customer History", "Open full transaction history for a customer", "src/ICONS/MainMenuCustomerHistory.png");
         invoicesButton = createMenuButtonLazy("Quotations & Invoices", "Create quotes, take payments, and post deliveries", "src/ICONS/MainMenuInvoices.png");
@@ -161,6 +171,7 @@ public class MainMenu extends JFrame {
         priceTagPrintingButton = createMenuButtonLazy("Price Tag Printing", "Select normal or custom items and print sticker tags", "src/ICONS/MainMenuViewInventory.png");
         addItemButton = createMenuButtonLazy("Add Item", "Add a new product to inventory", "src/ICONS/MainMenuAddItem.png");
         editItemsButton = createMenuButtonLazy("Edit Items", "Update product information", "src/ICONS/MainMenuEditItems.png");
+        storeKeysButton = createMenuButtonLazy("Store Keys", "Sign keys out, return and recover keys", "src/ICONS/MainMenuTimeClock.png");
         timeClockButton = createMenuButtonLazy("Time Clock", "Clock employees in and out", "src/ICONS/MainMenuTimeClock.png");
         payrollDashboardButton = createMenuButtonLazy("Payroll", "Review pay periods and time records", "src/ICONS/MainMenuPayroll.png");
         weeklyScheduleButton = createMenuButtonLazy("Employee Schedule", "See who is working each day", "src/ICONS/MainMenuEmployees.png");
@@ -206,6 +217,7 @@ public class MainMenu extends JFrame {
                 "Point of Sale",
                 DeckersPalette.ORANGE,
                 makeSaleButton,
+                salesTasksButton,
                 returnSaleButton,
                 invoicesButton,
                 viewSalesButton, onlineOrdersButton
@@ -214,6 +226,7 @@ public class MainMenu extends JFrame {
         leftSectionStackPanel.add(createSectionPanel(
                 "Orders",
                 DeckersPalette.MAGENTA,
+                workQueueButton,
                 ordersManagerDashboardButton,
                 customOrdersButton,
                 overseasOrdersButton,
@@ -237,6 +250,7 @@ public class MainMenu extends JFrame {
                 "Employee",
                 DeckersPalette.YELLOW,
                 timeClockButton,
+                storeKeysButton,
                 payrollDashboardButton,
                 weeklyScheduleButton,
                 employeeManagementButton
@@ -268,6 +282,7 @@ public class MainMenu extends JFrame {
                 balanceSheetButton,
                 reportsButton,
                 customerAccountsButton,
+                phoneMinutesButton,
                 customerTransactionHistoryButton,
                 maintenanceManagementButton
         ), BorderLayout.NORTH);
@@ -1196,7 +1211,8 @@ public class MainMenu extends JFrame {
         boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER");
         boolean canOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")
-                || PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
+                || PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS")
+                || PermissionManager.hasPermission("MANAGE_SALES_TASKS");
         boolean canViewInventory = PermissionManager.hasPermission("VIEW_INVENTORY");
         boolean canAddItem = PermissionManager.hasPermission("NEW_ITEM");
         boolean canEditItem = PermissionManager.hasPermission("EDIT_ITEM");
@@ -1214,6 +1230,7 @@ public class MainMenu extends JFrame {
         boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
 
         setMenuButtonAuthorized(makeSaleButton, canMakeSale);
+        setMenuButtonAuthorized(salesTasksButton, PermissionManager.hasPermission("MANAGE_SALES_TASKS"));
         setMenuButtonAuthorized(returnSaleButton, canProcessReturns);
         setMenuButtonAuthorized(balanceDrawButton, canBalanceDrawer);
         setMenuButtonAuthorized(changeBasketButton, canBalanceDrawer);
@@ -1229,17 +1246,22 @@ public class MainMenu extends JFrame {
         setMenuButtonAuthorized(viewSalesButton, canViewSales);
         setMenuButtonAuthorized(onlineOrdersButton, PermissionManager.hasPermission("MAKE_SALE"));
         setMenuButtonAuthorized(customerAccountsButton, canCustomerAccounts);
+        setMenuButtonAuthorized(phoneMinutesButton, canCustomerAccounts);
         setMenuButtonAuthorized(customerTransactionHistoryButton, canCustomerAccounts);
         setMenuButtonAuthorized(invoicesButton, canQuotationsInvoices);
         setMenuButtonAuthorized(customOrdersButton, canCustomOrders);
         // Overseas permissions are resolved by the workflow server, including mobile role grants.
         setMenuButtonAuthorized(overseasOrdersButton, true);
         setMenuButtonAuthorized(ordersButton, canOrders);
+        setMenuButtonAuthorized(workQueueButton, canOrders || canOrdersManagerDashboard || PermissionManager.hasPermission("MANAGE_SALES_TASKS") || PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS"));
         setMenuButtonAuthorized(viewInventoryButton, canViewInventory);
         setMenuButtonAuthorized(priceTagPrintingButton, canViewInventory);
         setMenuButtonAuthorized(addItemButton, canAddItem);
         setMenuButtonAuthorized(editItemsButton, canEditItem);
         setMenuButtonAuthorized(timeClockButton, canTimeClock);
+        setMenuButtonAuthorized(storeKeysButton, PermissionManager.hasPermission("STORE_KEYS_SELF")
+                || PermissionManager.hasPermission("STORE_KEYS_ASSIST") || PermissionManager.hasPermission("STORE_KEYS_CONFIGURE")
+                || PermissionManager.hasPermission("STORE_KEYS_FORCE_RETURN") || PermissionManager.hasPermission("STORE_KEYS_HISTORY"));
         setMenuButtonAuthorized(payrollDashboardButton, canPayrollDashboard);
         setMenuButtonAuthorized(weeklyScheduleButton, canViewEmployeeSchedule);
         setMenuButtonAuthorized(employeeManagementButton, canEmployeeManagement);
@@ -1284,13 +1306,13 @@ public class MainMenu extends JFrame {
 
     private JButton[] menuButtons() {
         return new JButton[] {
-                makeSaleButton, returnSaleButton, balanceDrawButton, changeBasketButton,
+                makeSaleButton, salesTasksButton, workQueueButton, returnSaleButton, balanceDrawButton, changeBasketButton,
                 balanceSheetButton, ordersManagerDashboardButton, reportsButton,
                 enterInventoryButton, receivingHistoryButton, storeTransferButton,
                 customOrderItemsButton, departmentListButton, vendorListButton,
                 viewSalesButton, onlineOrdersButton, customerAccountsButton, customerTransactionHistoryButton,
                 invoicesButton, customOrdersButton, overseasOrdersButton, ordersButton, viewInventoryButton,
-                priceTagPrintingButton, addItemButton, editItemsButton, timeClockButton,
+                priceTagPrintingButton, addItemButton, editItemsButton, timeClockButton, storeKeysButton,
                 payrollDashboardButton, weeklyScheduleButton, employeeManagementButton,
                 rolesPermissionsButton, deviceManagementButton, machineManagementButton,
                 partsManagementButton, maintenanceManagementButton,
@@ -1399,6 +1421,11 @@ public class MainMenu extends JFrame {
             }
             NavigationManager.openViewSales(this);
         });
+        phoneMinutesButton.addActionListener(e -> {
+            if (PermissionManager.requirePermission("CUSTOMER_ACCOUNTS", this, "Phone Minutes")) {
+                NavigationManager.openPhoneMinutes(this, null);
+            }
+        });
         customerAccountsButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("CUSTOMER_ACCOUNTS", this, "Customer Accounts")) {
                 return;
@@ -1423,7 +1450,7 @@ public class MainMenu extends JFrame {
             NavigationManager.openInvoices(this);
         });
         overseasOrdersButton.addActionListener(e -> {
-            if (!WindowHelper.focusIfAlreadyOpen(OverseasOrders.class)) new OverseasOrders().setVisible(true);
+            NavigationManager.openOverseasOrders(this);
         });
         customOrdersButton.addActionListener(e -> {
             if (!PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")) {
@@ -1435,7 +1462,8 @@ public class MainMenu extends JFrame {
         ordersButton.addActionListener(e -> {
             boolean canOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
                     || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")
-                    || PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
+                    || PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS")
+                || PermissionManager.hasPermission("MANAGE_SALES_TASKS");
             if (!canOrders) {
                 JOptionPane.showMessageDialog(this, "You do not have permission to access Orders.", "Access Denied", JOptionPane.WARNING_MESSAGE);
                 return;
@@ -1463,6 +1491,10 @@ public class MainMenu extends JFrame {
                 return;
             }
             NavigationManager.openEditItem(this);
+        });
+        storeKeysButton.addActionListener(e -> {
+            Integer location=managers.SessionManager.getCurrentLocationId();
+            if(location!=null)new StoreKeysDialog(this,location).setVisible(true);
         });
         timeClockButton.addActionListener(e -> {
             if (!PermissionManager.requirePermission("TIME_CLOCK", this, "Time Clock")) {

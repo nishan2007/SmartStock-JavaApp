@@ -1,0 +1,9 @@
+SmartStock 1.1.113 - Orders and shared application updates
+
+Adds administrator-only order item exchanges: choose the replacement and whether to return the original item to stock, preview the price difference, update the balance, and record any required refund. Exchanges maintain inventory reservations, stock movements and audit history, restart production for the replacement, and protect against duplicate network retries.
+
+Adds selected-payment reversals in Orders as refund transactions. The permission defaults to administrators and can be assigned to other roles through role management.
+
+Includes the current shared workspace improvements for order details and production, inventory and reference synchronization, receipts, customer account history, photo queues and templates, and the bundled web interfaces.
+
+Model-free Windows quick update for existing installations. Update the store server before registers. AI models remain in the store profile; inference runtime and licences are retained. Physical hardware and live operational checks remain separate.

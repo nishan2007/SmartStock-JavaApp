@@ -20,7 +20,7 @@ class OverseasOrderDatabaseTest {
         String selected=System.getProperty("smartstock.overseas.test.jdbc","");assumeTrue(!selected.isBlank());
         if(!selected.equals(URL))throw new IllegalArgumentException("Use the isolated overseas test cluster on port 55443.");
         try(Connection c=DriverManager.getConnection(URL,"overseas_test","")) {
-            try(var p=c.prepareStatement("SELECT to_regclass('public.overseas_orders') IS NOT NULL");var r=p.executeQuery()){r.next();if(r.getBoolean(1)){SqlScriptRunner.runSql(c,SqlScriptRunner.readResource("database/migrations/v1_after/20261021120000_overseas_orders.sql"));SqlScriptRunner.runSql(c,SqlScriptRunner.readResource("database/migrations/v1_after/20261021130000_overseas_sellers.sql"));SchemaContractService.ensureOverseasCashUpgrade(c);return;}}
+            try(var p=c.prepareStatement("SELECT to_regclass('public.overseas_orders') IS NOT NULL");var r=p.executeQuery()){r.next();if(r.getBoolean(1)){SqlScriptRunner.runSql(c,SqlScriptRunner.readResource("database/migrations/v1_after/20261021120000_overseas_orders.sql"));SqlScriptRunner.runSql(c,SqlScriptRunner.readResource("database/migrations/v1_after/20261021130000_overseas_sellers.sql"));SchemaContractService.ensureOverseasCashUpgrade(c);SchemaContractService.ensureOverseasDigitalUpgrade(c);return;}}
             SchemaContractService.installLocalBaseline(c);
         }
     }
@@ -53,6 +53,19 @@ class OverseasOrderDatabaseTest {
     }
     private JsonObject payment(String amount){JsonObject p=new JsonObject();p.addProperty("amount",amount);p.addProperty("method","CARD");p.addProperty("reference","test terminal reference");return p;}
 
+    @Test void digitalItemsCompleteAfterOrderingAndPaymentWithoutArrivalOrCollection()throws Exception {
+        for(boolean payFirst:List.of(false,true)) {
+            JsonObject d=draft(),order=d.getAsJsonObject("order").deepCopy();
+            order.getAsJsonArray("lines").get(0).getAsJsonObject().addProperty("digital",true);
+            JsonObject save=new JsonObject();save.add("order",order);d=execute("SAVE",d,save);d=execute("ISSUE",d,null);
+            if(payFirst)d=execute("PAYMENT",d,payment("2100"));
+            JsonObject track=new JsonObject();track.addProperty("stage","ORDERED");JsonArray ids=new JsonArray();ids.add(d.getAsJsonObject("order").getAsJsonArray("lines").get(0).getAsJsonObject().get("line_id"));track.add("lineIds",ids);
+            d=execute("TRACK",d,track);
+            if(!payFirst){assertEquals("ISSUED",d.getAsJsonObject("order").get("state").getAsString());d=execute("PAYMENT",d,payment("2100"));}
+            assertEquals("COMPLETED",d.getAsJsonObject("order").get("state").getAsString());
+            assertEquals("DIGITAL_FULFILLED",d.getAsJsonObject("order").getAsJsonArray("lines").get(0).getAsJsonObject().get("tracking").getAsString());
+        }
+    }
     @Test void draftAndIssuedQuoteUseManualGydPricesAndNoPayment()throws Exception {
         JsonObject d=issued(),o=d.getAsJsonObject("order");assertEquals(new BigDecimal("2100.00"),o.get("total").getAsBigDecimal());
         assertTrue(o.get("number").getAsString().startsWith("OS-"));assertEquals(0,d.getAsJsonArray("payments").size());

@@ -6,6 +6,16 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class StorefrontImagePrefetchTest {
+    @Test void mainServicePhotosJoinRemotePrefetchWithoutNeedingVariants(){
+        var snapshots=snapshots();var remote=snapshots.get(1).getAsJsonObject();
+        for(String group:ServiceProductPhotos.GROUPS){
+            var item=new JsonObject();var manifest=new JsonObject();manifest.addProperty("sha256","f".repeat(64));
+            item.add("_imageManifest",manifest);var items=new JsonArray();items.add(item);remote.add(group,items);
+        }
+        var prefetch=new StorefrontImagePrefetch();prefetch.replace(snapshots,1);
+        var hashes=new ArrayList<String>();prefetch.batch(10,()->{},m->hashes.add(m.get("sha256").getAsString().substring(0,1)));
+        assertEquals(List.of("a","b","c","f"),hashes);
+    }
     private JsonArray snapshots(){
         JsonArray snapshots=new JsonArray();
         for(int store=1;store<=2;store++){

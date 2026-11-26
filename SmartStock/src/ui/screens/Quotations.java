@@ -1,5 +1,7 @@
 package ui.screens;
 
+import ui.design.DeckersPalette;
+
 import managers.PermissionManager;
 import services.ManagerApprovalService;
 import services.QuotationInvoiceService;
@@ -28,6 +30,7 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 public class Quotations extends JFrame {
     private static final String CHANGE_SALE_ITEM_PRICE_PERMISSION = "CHANGE_SALE_ITEM_PRICE";
@@ -48,8 +51,8 @@ public class Quotations extends JFrame {
     private static final int LINE_COL_CUSTOM = 13;
     private static final Color INPUT_BACKGROUND = new Color(248, 250, 252);
     private static final Color INPUT_FOREGROUND = new Color(17, 24, 39);
-    private static final Color INPUT_SELECTION = new Color(37, 99, 235);
-    private static final Color BUTTON_PRIMARY = new Color(37, 99, 235);
+    private static final Color INPUT_SELECTION = DeckersPalette.PURPLE;
+    private static final Color BUTTON_PRIMARY = DeckersPalette.ORANGE;
     private static final Color BUTTON_SECONDARY = new Color(75, 85, 99);
     private final DefaultTableModel quotationModel = readOnlyModel("ID", "Quotation #", "Customer", "Status", "Valid Until", "Total");
     private final JTable quotationTable = new JTable(quotationModel);
@@ -57,20 +60,21 @@ public class Quotations extends JFrame {
 
     public Quotations() {
         setTitle("Quotations");
+        getRootPane().putClientProperty("SmartStock.responsiveMinimumSize", new Dimension(800, 560));
         setSize(1120, 720);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setJMenuBar(AppMenuBar.create(this, "Quotations"));
 
         JPanel mainPanel = new JPanel(new BorderLayout(12, 12));
-        mainPanel.setBorder(new EmptyBorder(14, 14, 14, 14));
-        add(mainPanel, BorderLayout.CENTER);
+        mainPanel.setBorder(null);
 
         JLabel title = new JLabel("Quotations");
         title.setFont(new Font("SansSerif", Font.BOLD, 26));
-        mainPanel.add(title, BorderLayout.NORTH);
         mainPanel.add(tablePanel(quotationTable, quotationButtons()), BorderLayout.CENTER);
         mainPanel.add(loadingState, BorderLayout.SOUTH);
+        add(DocumentStudio.shell(mainPanel, 0, null, this::openQuotationDialog, null,
+                () -> WindowHelper.showPosWindow(new Invoices(Invoices.InitialTab.INVOICES), this)), BorderLayout.CENTER);
 
         refreshQuotations();
         WindowHelper.configurePosWindow(this);
@@ -79,8 +83,10 @@ public class Quotations extends JFrame {
     private JPanel quotationButtons() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         JButton newQuotation = new JButton("New Quotation");
-        JButton editDraft = new JButton("Edit Draft");
+        JButton editDraft = new JButton("Edit Quotation");
         JButton issue = new JButton("Issue");
+        JButton cancelQuotation = new JButton("Cancel Quotation");
+        cancelQuotation.setEnabled(PermissionManager.hasPermission("CANCEL_QUOTATIONS"));
         JButton accept = new JButton("Accept Quotation");
         JButton preview = new JButton("Preview Quotation");
         JButton refresh = new JButton("Refresh");
@@ -88,31 +94,31 @@ public class Quotations extends JFrame {
         panel.add(editDraft);
         panel.add(issue);
         panel.add(accept);
+        panel.add(cancelQuotation);
         panel.add(preview);
         panel.add(refresh);
         stylePrimaryButton(newQuotation);
         styleSecondaryButton(editDraft);
         styleSecondaryButton(issue);
         styleSecondaryButton(accept);
+        styleSecondaryButton(cancelQuotation);
         styleSecondaryButton(preview);
         styleSecondaryButton(refresh);
         newQuotation.addActionListener(e -> openQuotationDialog());
         editDraft.addActionListener(e -> editSelectedDraftQuotation());
         issue.addActionListener(e -> issueSelectedQuotation());
         accept.addActionListener(e -> acceptSelectedQuotation());
+        cancelQuotation.addActionListener(e -> cancelSelectedQuotation());
         preview.addActionListener(e -> previewQuotation());
         refresh.addActionListener(e -> refreshQuotations());
         return panel;
     }
 
-    private JPanel tablePanel(JTable table, JPanel buttons) {
+    private JComponent tablePanel(JTable table, JPanel buttons) {
         table.setAutoCreateRowSorter(true);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         styleTable(table);
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
-        panel.add(buttons, BorderLayout.NORTH);
-        panel.add(new JScrollPane(table), BorderLayout.CENTER);
-        return panel;
+        return SalesDocumentWorkspace.create(this, table, buttons, "QUOTATION");
     }
 
     void refreshQuotations() {
@@ -143,6 +149,24 @@ public class Quotations extends JFrame {
         }
     }
 
+    private void cancelSelectedQuotation() {
+        if (!PermissionManager.hasPermission("CANCEL_QUOTATIONS")) return;
+        Long quotationId = selectedId(quotationTable);
+        if (quotationId == null) return;
+        String reason = JOptionPane.showInputDialog(this,
+                "Cancel this quotation? Enter an optional reason:", "Cancel Quotation", JOptionPane.WARNING_MESSAGE);
+        if (reason == null) return;
+        try {
+            Boolean cancelled = ResponsiveTask.await(this, "Cancelling quotation...", () -> {
+                QuotationInvoiceService.cancelQuotation(quotationId, reason.trim());
+                return Boolean.TRUE;
+            });
+            if (Boolean.TRUE.equals(cancelled)) refreshQuotations();
+        } catch (Exception ex) {
+            showError("Failed to cancel quotation", ex);
+        }
+    }
+
     void editSelectedDraftQuotation() {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
@@ -150,8 +174,8 @@ public class Quotations extends JFrame {
             QuotationInvoiceViewService.QuotationEditData quotation = ResponsiveTask.await(this,
                     "Loading quotation...", () -> QuotationInvoiceViewService.loadQuotationForEdit(quotationId));
             if (quotation == null) return;
-            if (!"DRAFT".equals(quotation.status())) {
-                JOptionPane.showMessageDialog(this, "Only draft quotations can be edited.", "Quotations", JOptionPane.WARNING_MESSAGE);
+            if (!"DRAFT".equals(quotation.status()) && !"ISSUED".equals(quotation.status())) {
+                JOptionPane.showMessageDialog(this, "Only draft or issued quotations can be edited.", "Quotations", JOptionPane.WARNING_MESSAGE);
                 return;
             }
             QuotationEditor editor = new QuotationEditor(this, quotation);
@@ -160,7 +184,7 @@ public class Quotations extends JFrame {
                 refreshQuotations();
             }
         } catch (Exception ex) {
-            showError("Failed to load draft quotation", ex);
+            showError("Failed to load quotation", ex);
         }
     }
 
@@ -183,6 +207,10 @@ public class Quotations extends JFrame {
     void acceptSelectedQuotation() {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
+        acceptQuotation(quotationId);
+    }
+
+    void acceptQuotation(long quotationId) {
         try {
             QuotationInvoiceService.InvoiceResult result = ResponsiveTask.await(this,
                     "Accepting quotation...", () -> QuotationInvoiceService.acceptQuotation(quotationId));
@@ -342,11 +370,7 @@ public class Quotations extends JFrame {
             JOptionPane.showMessageDialog(this, "Select a row first.");
             return null;
         }
-        Object value = table.getValueAt(row, 0);
-        if (value instanceof Number number) {
-            return number.longValue();
-        }
-        return Long.parseLong(String.valueOf(value));
+        return SalesDocumentWorkspace.selectedModelId(table);
     }
 
     static DefaultTableModel readOnlyModel(String... columns) {
@@ -377,7 +401,7 @@ public class Quotations extends JFrame {
     }
 
     public static void stylePrimaryButton(JButton button) {
-        styleButton(button, BUTTON_PRIMARY, Color.WHITE);
+        styleButton(button, BUTTON_PRIMARY, new Color(15, 23, 42));
     }
 
     public static void styleSecondaryButton(JButton button) {
@@ -438,13 +462,15 @@ public class Quotations extends JFrame {
     }
 
     static void styleTable(JTable table) {
-        table.setForeground(Color.WHITE);
-        table.setBackground(new Color(31, 31, 31));
+        table.setForeground(DeckersPalette.text());
+        table.setBackground(DeckersPalette.surface());
+        table.setRowHeight(30);
+        table.setShowVerticalLines(false);
         table.setSelectionForeground(Color.WHITE);
         table.setSelectionBackground(INPUT_SELECTION);
-        table.setGridColor(new Color(85, 85, 85));
-        table.getTableHeader().setForeground(Color.WHITE);
-        table.getTableHeader().setBackground(new Color(38, 38, 38));
+        table.setGridColor(DeckersPalette.border());
+        table.getTableHeader().setForeground(DeckersPalette.text());
+        table.getTableHeader().setBackground(DeckersPalette.background());
         table.getTableHeader().setOpaque(true);
     }
 
@@ -465,6 +491,8 @@ public class Quotations extends JFrame {
     }
 
     private static void hideInternalLineColumns(JTable table) {
+        int idColumn = table.convertColumnIndexToView(LINE_COL_PRODUCT_ID);
+        if (idColumn >= 0) table.removeColumn(table.getColumnModel().getColumn(idColumn));
         for (int modelIndex = LINE_COL_ORIGINAL_UNIT; modelIndex <= LINE_COL_CUSTOM; modelIndex++) {
             int viewIndex = table.convertColumnIndexToView(modelIndex);
             if (viewIndex >= 0) {
@@ -504,25 +532,30 @@ public class Quotations extends JFrame {
 
         PaymentPrompt(JFrame owner, QuotationInvoiceViewService.InvoiceFinancials financials) {
             super(owner, "Accepted Quotation Payment", true);
-            setSize(520, 280);
+            ui.components.DocumentWorkspace.fitDialog(this, 1360, 800);
             setLocationRelativeTo(owner);
             setLayout(new BorderLayout(8, 8));
             amountField.setText(financials.balanceDue().toPlainString());
-            JPanel main = new JPanel(new BorderLayout(8, 8));
-            main.setBorder(new EmptyBorder(12, 12, 12, 12));
-            add(main, BorderLayout.CENTER);
+            JPanel main = DocumentStudio.surface(new BorderLayout(0, 18));
+            main.setBorder(new EmptyBorder(22, 22, 22, 22));
             JLabel summary = new JLabel("<html>Invoice " + financials.invoiceNumber()
                     + "<br>Total: " + financials.totalAmount()
                     + "<br>Balance: " + financials.balanceDue()
-                    + "<br>Any unpaid balance will be placed on the customer account.</html>");
-            main.add(summary, BorderLayout.NORTH);
-            main.add(formPanel(new String[]{"Amount Paid Now", "Method", "Reference"}, new JComponent[]{amountField, methodBox, referenceField}), BorderLayout.CENTER);
-            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+                    + "<br>Review any remaining balance after payment.</html>");
+            JPanel paymentFields = DocumentStudio.stack(DocumentStudio.workflow(2), summary,
+                    DocumentStudio.section("Record payment", DocumentStudio.stack(
+                            DocumentStudio.row(DocumentStudio.field("Amount paid now", amountField), DocumentStudio.field("Payment method", methodBox)),
+                            DocumentStudio.field("Reference · optional", referenceField))));
+            main.add(DocumentStudio.scroll(DocumentStudio.topAligned(paymentFields)), BorderLayout.CENTER);
+            JPanel buttons = DocumentStudio.surface(new FlowLayout(FlowLayout.RIGHT, 8, 0));
             JButton continueButton = new JButton("Continue");
             buttons.add(continueButton);
-            stylePrimaryButton(continueButton);
+            DocumentStudio.button(continueButton, true);
             main.add(buttons, BorderLayout.SOUTH);
             continueButton.addActionListener(e -> save());
+            SalesDocumentPanel preview = new SalesDocumentPanel(this);
+            preview.showDocument("INVOICE", financials.invoiceId(), "Invoice before this payment");
+            add(DocumentStudio.shell(new ui.components.DocumentWorkspace(main, preview), 3, this::dispose, null, null, null), BorderLayout.CENTER);
             ThemeManager.applyToWindow(this);
         }
 
@@ -562,11 +595,19 @@ public class Quotations extends JFrame {
         private final String editQuotationNumber;
         private final Timer customerSearchTimer;
         private final Timer catalogSearchTimer;
+        private final LetterDocumentView draftView = new LetterDocumentView();
+        private final JLabel draftTotal = new JLabel("Total: choose a customer and add items");
+        private final JComboBox<String> draftTemplate = new JComboBox<>(new String[]{"Grid", "Compact"});
+        private final Timer draftTimer = new Timer(500, e -> refreshDraftPreview());
+        private long draftGeneration;
+        private boolean acceptAfterSave;
+        private JButton reviewButton;
         private JButton createButton;
         private JButton cancelButton;
         private boolean updatingCustomerResults;
         private long customerSearchGeneration;
         private QuotationInvoiceViewService.CustomerOption rememberedCustomer;
+        private JPanel quickCatalogPanel;
         boolean created;
 
         QuotationEditor(JFrame owner) {
@@ -574,71 +615,218 @@ public class Quotations extends JFrame {
         }
 
         QuotationEditor(JFrame owner, QuotationInvoiceViewService.QuotationEditData editData) {
-            super(owner, editData == null ? "New Quotation" : "Edit Draft Quotation " + editData.quotationNumber(), true);
+            super(owner, editData == null ? "New Quotation" : "Edit Quotation " + editData.quotationNumber(), true);
             this.editQuotationId = editData == null ? null : editData.quotationId();
             this.editQuotationNumber = editData == null ? null : editData.quotationNumber();
             this.customerSearchTimer = new Timer(300, e -> refreshCustomerResults(editorText(customerBox)));
             customerSearchTimer.setRepeats(false);
             this.catalogSearchTimer = new Timer(250, e -> refreshCatalogSearch());
             catalogSearchTimer.setRepeats(false);
-            setSize(860, 620);
+            ui.components.DocumentWorkspace.fitDialog(this, 1440, 900);
             setLocationRelativeTo(owner);
             setLayout(new BorderLayout(8, 8));
             JPanel main = new JPanel(new BorderLayout(8, 8));
             main.setBorder(new EmptyBorder(12, 12, 12, 12));
-            add(main, BorderLayout.CENTER);
             customerBox.setEditable(true);
-            customerBox.setMaximumRowCount(12);
+            customerBox.setMaximumRowCount(6);
+            customerBox.setRenderer(new DefaultListCellRenderer() {
+                private String safe(String value) { return value == null ? "" : value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"); }
+                @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
+                    Object display = value;
+                    if (value instanceof QuotationInvoiceViewService.CustomerOption customer && index >= 0) {
+                        display = "<html><b>" + safe(customer.name()) + "</b><br>" + safe(customer.accountNumber())
+                                + (customer.phone() == null || customer.phone().isBlank() ? "" : " &nbsp; · &nbsp; " + safe(customer.phone())) + "</html>";
+                    }
+                    super.getListCellRendererComponent(list, display, index, selected, focus);
+                    setBorder(new EmptyBorder(6, 10, 6, 10));
+                    setBackground(selected ? DeckersPalette.tilePressed(DeckersPalette.PURPLE) : DeckersPalette.surface());
+                    setForeground(DeckersPalette.text()); return this;
+                }
+            });
             loadCustomers();
             installCustomerSearch();
             if (editData != null) {
                 loadExistingQuotation(editData);
             }
             productionDueDateField.setToolTipText("Optional; use YYYY-MM-DD.");
-            main.add(formPanel(new String[]{"Customer", "Valid Until", "Production Due Date", "Customer Discount", "Notes"}, new JComponent[]{customerBox, validUntilField, productionDueDateField,applyCustomerDiscountBox, new JScrollPane(notesArea)}), BorderLayout.NORTH);
-            customerBox.addActionListener(e->refreshCustomerDiscount());
-            JTable lineTable = new JTable(lineModel);
-            styleTable(lineTable);
-            hideInternalLineColumns(lineTable);
-            JPanel lineArea = new JPanel(new BorderLayout(8, 8));
-            lineArea.add(catalogSearchPanel(), BorderLayout.NORTH);
-            lineArea.add(new JScrollPane(lineTable), BorderLayout.CENTER);
-            main.add(lineArea, BorderLayout.CENTER);
-            JPanel southPanel = new JPanel(new BorderLayout(8, 8));
-            statusLabel.setForeground(new Color(248, 113, 113));
-            statusLabel.setFont(statusLabel.getFont().deriveFont(Font.BOLD, 13f));
-            southPanel.add(statusLabel, BorderLayout.WEST);
-            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-            JButton addLine = new JButton("Add Line");
-            JButton addCustomLine = new JButton("Add Custom Item");
-            JButton editLine = new JButton("Edit Line");
-            JButton removeLine = new JButton("Remove Line");
-            createButton = new JButton(editData == null ? "Create Quotation" : "Save Draft");
-            cancelButton = new JButton("Cancel");
-            buttons.add(addLine);
-            buttons.add(addCustomLine);
-            buttons.add(editLine);
-            buttons.add(removeLine);
-            buttons.add(createButton);
-            buttons.add(cancelButton);
-            styleSecondaryButton(addLine);
-            styleSecondaryButton(addCustomLine);
-            styleSecondaryButton(editLine);
-            styleSecondaryButton(removeLine);
-            stylePrimaryButton(createButton);
-            styleSecondaryButton(cancelButton);
-            southPanel.add(buttons, BorderLayout.EAST);
-            main.add(southPanel, BorderLayout.SOUTH);
-            addLine.addActionListener(e -> addLine());
-            addCustomLine.addActionListener(e -> addCustomLine());
+            notesArea.setLineWrap(true);
+            notesArea.setWrapStyleWord(true);
+            notesArea.setColumns(20);
+            customerBox.addActionListener(e->{if(!updatingCustomerResults)refreshCustomerDiscount();});
+            refreshCustomerDiscount();
+            JTable lineTable = studioLineTable(lineModel);
+            JButton addItem = new JButton("+ Add item"), editLine = new JButton("Edit"), removeLine = new JButton("Remove");
+            JPanel itemActions = DocumentStudio.surface(new FlowLayout(FlowLayout.LEFT, 8, 0));
+            for (JButton button : new JButton[]{addItem, editLine, removeLine}) { DocumentStudio.button(button, false); itemActions.add(button); }
+            JPopupMenu addMenu = new JPopupMenu();
+            JMenuItem stock = new JMenuItem("Stock catalogue…"), custom = new JMenuItem("Custom item…"), manual = new JMenuItem("Manual item…");
+            addMenu.add(stock); addMenu.add(custom); addMenu.add(manual);
+            addItem.addActionListener(e -> addMenu.show(addItem, 0, addItem.getHeight()));
+            stock.addActionListener(e -> openCatalogPicker()); custom.addActionListener(e -> addCustomLine()); manual.addActionListener(e -> addLine());
             editLine.addActionListener(e -> editSelectedLine(lineTable));
-            removeLine.addActionListener(e -> {
-                int row = lineTable.getSelectedRow();
-                if (row >= 0) lineModel.removeRow(lineTable.convertRowIndexToModel(row));
+            removeLine.addActionListener(e -> { int row = lineTable.getSelectedRow(); if (row >= 0) lineModel.removeRow(lineTable.convertRowIndexToModel(row)); });
+            JPanel items = DocumentStudio.surface(new BorderLayout(0, 12));
+            JScrollPane itemRows = new JScrollPane(lineTable) {
+                @Override public Dimension getPreferredSize() {
+                    Dimension size = super.getPreferredSize();
+                    if (main.getHeight() > 0) size.height = Math.max(120, Math.min(220, main.getHeight() - 410));
+                    return size;
+                }
+            };
+            itemRows.setBorder(null);
+            itemRows.setColumnHeaderView(lineTable.getTableHeader());
+            itemRows.setPreferredSize(new Dimension(500, 220));
+            items.add(itemRows, BorderLayout.CENTER); items.add(itemActions, BorderLayout.SOUTH);
+            JButton newCustomer = new JButton("New Customer");
+            DocumentStudio.button(newCustomer, false);
+            newCustomer.addActionListener(e -> openNewCustomerDialog());
+            JPanel customerPicker = DocumentStudio.surface(new BorderLayout(8, 0));
+            customerPicker.add(customerBox, BorderLayout.CENTER);
+            customerPicker.add(newCustomer, BorderLayout.EAST);
+            JLabel customerLabel = DocumentStudio.label("Customer");
+            customerLabel.setLabelFor(customerBox);
+            JPanel customerField = DocumentStudio.surface(new BorderLayout(0, 7));
+            customerField.add(customerLabel, BorderLayout.NORTH);
+            customerField.add(customerPicker, BorderLayout.CENTER);
+            JPanel customer = DocumentStudio.stack(customerField, applyCustomerDiscountBox);
+            JPanel dates = DocumentStudio.stack(DocumentStudio.field("Valid until", validUntilField), DocumentStudio.field("Production due date", productionDueDateField));
+            JPanel customerDates = DocumentStudio.surface(new GridBagLayout());
+            GridBagConstraints group = new GridBagConstraints(); group.gridy = 0; group.fill = GridBagConstraints.HORIZONTAL;
+            group.anchor = GridBagConstraints.NORTH; group.gridx = 0; group.weightx = 0.65; group.insets = new Insets(0, 0, 0, 18); customerDates.add(customer, group);
+            group.gridx = 1; group.weightx = 0.35; group.insets = new Insets(0, 0, 0, 0); customerDates.add(dates, group);
+            JPanel noteFields = DocumentStudio.field("Quotation notes", DocumentStudio.scroll(notesArea));
+            noteFields.setVisible(!notesArea.getText().isBlank());
+            JButton notesToggle = new JButton("Notes"); DocumentStudio.button(notesToggle, false);
+            notesToggle.addActionListener(e -> { noteFields.setVisible(!noteFields.isVisible()); main.revalidate(); });
+            itemActions.add(notesToggle);
+            JPanel content = DocumentStudio.stack(DocumentStudio.workflow(0), customerDates, items, noteFields);
+            main.setBackground(DeckersPalette.surface()); main.putClientProperty("SmartStock.preserveBackground", true);
+            main.setBorder(new EmptyBorder(22, 22, 22, 22));
+            main.add(DocumentStudio.scroll(DocumentStudio.topAligned(content)), BorderLayout.CENTER);
+            JPanel footer = DocumentStudio.surface(new BorderLayout(0, 14));
+            draftTotal.setHorizontalAlignment(SwingConstants.RIGHT); draftTotal.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 18));
+            footer.add(draftTotal, BorderLayout.NORTH);
+            JPanel buttons = DocumentStudio.surface(new ui.components.WrappingToolbarLayout());
+            ((FlowLayout)buttons.getLayout()).setAlignment(FlowLayout.RIGHT);
+            createButton = new JButton(editData == null ? "Save draft" : "Save quotation"); reviewButton = new JButton("Review & accept"); cancelButton = new JButton("Cancel");
+            DocumentStudio.button(createButton, false); DocumentStudio.button(reviewButton, true); DocumentStudio.button(cancelButton, false);
+            buttons.add(cancelButton); buttons.add(createButton); buttons.add(reviewButton); footer.add(buttons, BorderLayout.CENTER);
+            statusLabel.setVisible(false); statusLabel.setForeground(DeckersPalette.muted());
+            statusLabel.addPropertyChangeListener("text", e -> statusLabel.setVisible(!statusLabel.getText().isBlank()));
+            footer.add(statusLabel, BorderLayout.SOUTH); main.add(footer, BorderLayout.SOUTH);
+            createButton.addActionListener(e -> {
+                if (lineTable.isEditing() && !lineTable.getCellEditor().stopCellEditing()) return;
+                acceptAfterSave = false; createQuotation();
             });
-            createButton.addActionListener(e -> createQuotation());
+            reviewButton.addActionListener(e -> {
+                if (lineTable.isEditing() && !lineTable.getCellEditor().stopCellEditing()) return;
+                if (JOptionPane.showConfirmDialog(this, "Accept this quotation and create its invoice?\n" + draftTotal.getText()
+                        + "\n\nSaving will validate the customer, prices and any required approvals.", "Review quotation",
+                        JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE) == JOptionPane.YES_OPTION) {
+                    acceptAfterSave = true; createQuotation();
+                }
+            });
             cancelButton.addActionListener(e -> dispose());
+            draftTimer.setRepeats(false);
+            JPanel preview = DocumentStudio.surface(new BorderLayout(4, 4));
+            preview.setBorder(new EmptyBorder(16, 16, 16, 16));
+            JPanel previewTools = DocumentStudio.surface(new FlowLayout(FlowLayout.LEFT, 8, 0));
+            previewTools.add(DocumentStudio.templateSwitch(draftTemplate));
+            preview.add(previewTools, BorderLayout.NORTH); preview.add(draftView, BorderLayout.CENTER);
+            JComponent workspace = new ui.components.DocumentWorkspace(main, preview);
+            add(DocumentStudio.shell(workspace, 1, this::dispose, null, this::addCustomLine, null), BorderLayout.CENTER);
+            lineModel.addTableModelListener(e -> scheduleDraftPreview());
+            for (javax.swing.text.JTextComponent field : new javax.swing.text.JTextComponent[]{validUntilField, productionDueDateField, notesArea}) {
+                field.getDocument().addDocumentListener(new DocumentListener() {
+                    public void insertUpdate(DocumentEvent e) { scheduleDraftPreview(); }
+                    public void removeUpdate(DocumentEvent e) { scheduleDraftPreview(); }
+                    public void changedUpdate(DocumentEvent e) { scheduleDraftPreview(); }
+                });
+            }
+            customerBox.addActionListener(e -> { if (!updatingCustomerResults) scheduleDraftPreview(); });
+            draftTemplate.addActionListener(e -> scheduleDraftPreview());
+            applyCustomerDiscountBox.addActionListener(e -> scheduleDraftPreview());
+            addWindowListener(new java.awt.event.WindowAdapter() {
+                @Override public void windowClosed(java.awt.event.WindowEvent e) {
+                    draftTimer.stop(); customerSearchTimer.stop(); catalogSearchTimer.stop();
+                }
+            });
             ThemeManager.applyToWindow(this);
+            scheduleDraftPreview();
+        }
+
+        static JTable studioLineTable(DefaultTableModel model) {
+            JTable table = new JTable(model) {
+                @Override public boolean isCellEditable(int row, int column) {
+                    Object identifier = getColumnModel().getColumn(column).getIdentifier();
+                    return !"amount".equals(identifier) && !"type".equals(identifier) && super.isCellEditable(row, column);
+                }
+            };
+            configureStudioLineTable(table, model);
+            table.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
+            return table;
+        }
+
+        private static void configureStudioLineTable(JTable table, DefaultTableModel lineModel) {
+            hideInternalLineColumns(table);
+            for (int modelColumn : new int[]{LINE_COL_SKU, LINE_COL_DELIVERY, LINE_COL_NOTES}) {
+                int view = table.convertColumnIndexToView(modelColumn);
+                if (view >= 0) table.removeColumn(table.getColumnModel().getColumn(view));
+            }
+            javax.swing.table.TableColumn type = new javax.swing.table.TableColumn(LINE_COL_CUSTOM);
+            type.setIdentifier("type"); type.setHeaderValue("Type");
+            type.setCellRenderer(new javax.swing.table.DefaultTableCellRenderer() {
+                @Override public Component getTableCellRendererComponent(JTable t, Object value, boolean selected, boolean focus, int row, int col) {
+                    int modelRow = t.convertRowIndexToModel(row);
+                    String kind = value != null ? "Custom" : lineModel.getValueAt(modelRow, LINE_COL_PRODUCT_ID) != null ? "Stock" : "Manual";
+                    super.getTableCellRendererComponent(t, kind, selected, false, row, col);
+                    setForeground(DeckersPalette.muted()); setBorder(new EmptyBorder(4, 8, 4, 8)); return this;
+                }
+            });
+            table.addColumn(type); table.moveColumn(table.getColumnCount() - 1, 1);
+            javax.swing.table.TableColumn amount = new javax.swing.table.TableColumn(LINE_COL_UNIT);
+            amount.setIdentifier("amount"); amount.setHeaderValue("Amount");
+            amount.setCellRenderer(new javax.swing.table.DefaultTableCellRenderer() {
+                @Override public Component getTableCellRendererComponent(JTable t, Object value, boolean selected, boolean focus, int row, int col) {
+                    String text = "—";
+                    try {
+                        int r = t.convertRowIndexToModel(row);
+                        BigDecimal gross = parseMoney(String.valueOf(value)).multiply(new BigDecimal(String.valueOf(lineModel.getValueAt(r, LINE_COL_QTY))));
+                        BigDecimal discount = parsePercent(String.valueOf(lineModel.getValueAt(r, LINE_COL_DISCOUNT)));
+                        text = utils.CurrencyFormatter.format(gross.multiply(BigDecimal.ONE.subtract(discount.movePointLeft(2))));
+                    } catch (RuntimeException ignored) { }
+                    super.getTableCellRendererComponent(t, text, selected, false, row, col);
+                    setHorizontalAlignment(SwingConstants.RIGHT); setBorder(new EmptyBorder(4, 8, 4, 8)); return this;
+                }
+            });
+            table.addColumn(amount);
+            table.getColumnModel().getColumn(3).setHeaderValue("Rate");
+            table.getColumnModel().getColumn(4).setHeaderValue("Discount %");
+            int[] widths = {230, 76, 54, 90, 85, 100};
+            int[] minimums = {155, 65, 45, 80, 90, 90};
+            for (int i = 0; i < widths.length; i++) {
+                table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
+                table.getColumnModel().getColumn(i).setMinWidth(minimums[i]);
+            }
+            DocumentStudio.table(table);
+            table.setToolTipText("Line amounts precede VAT and any customer discount. The store calculates the quotation total.");
+        }
+
+        private void openCatalogPicker() {
+            if (quickCatalogPanel == null) quickCatalogPanel = catalogSearchPanel();
+            JDialog picker = new JDialog(this, "Add stock item", true);
+            picker.setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+            JPanel content = DocumentStudio.surface(new BorderLayout(12, 12)); content.setBorder(new EmptyBorder(20, 20, 20, 20));
+            content.add(quickCatalogPanel, BorderLayout.CENTER);
+            JPanel buttons = DocumentStudio.surface(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+            JButton add = new JButton("Add to quotation"), close = new JButton("Close");
+            DocumentStudio.button(add, true); DocumentStudio.button(close, false); buttons.add(close); buttons.add(add);
+            add.addActionListener(e -> {
+                if (catalogSearchList.getSelectedValue() != null) { addSelectedCatalogProduct(); picker.dispose(); }
+            });
+            close.addActionListener(e -> picker.dispose()); content.add(buttons, BorderLayout.SOUTH);
+            picker.add(content); ui.components.DocumentWorkspace.fitDialog(picker, 660, 420);
+            DocumentStudio.finish(content); picker.setVisible(true);
         }
 
         private JPanel catalogSearchPanel() {
@@ -755,8 +943,8 @@ public class Quotations extends JFrame {
             }
             int modelRow = lineTable.convertRowIndexToModel(row);
             LineInput existing = lineInputFromRow(modelRow);
-            if(existing.custom()!=null){CustomQuotationLineEditor customEditor=new CustomQuotationLineEditor(this,existing);customEditor.setVisible(true);if(customEditor.line!=null){LineInput changed=customEditor.line;Object[]values={null,changed.itemName(),changed.sku(),changed.quantity(),changed.unitPrice(),changed.discountPercent(),changed.deliveryMethod(),changed.notes(),changed.originalUnitPrice(),changed.priceOverrideReason(),changed.priceOverrideByUserId(),changed.priceOverrideByName(),changed.priceOverrideApprovalToken(),changed.custom()};for(int column=0;column<values.length;column++)lineModel.setValueAt(values[column],modelRow,column);}return;}
-            LineEditor editor = new LineEditor(this, existing);
+            if(existing.custom()!=null){CustomQuotationLineEditor customEditor=new CustomQuotationLineEditor(this,existing,modelRow);customEditor.setVisible(true);if(customEditor.line!=null){LineInput changed=customEditor.line;Object[]values={null,changed.itemName(),changed.sku(),changed.quantity(),changed.unitPrice(),changed.discountPercent(),changed.deliveryMethod(),changed.notes(),changed.originalUnitPrice(),changed.priceOverrideReason(),changed.priceOverrideByUserId(),changed.priceOverrideByName(),changed.priceOverrideApprovalToken(),changed.custom()};for(int column=0;column<values.length;column++)lineModel.setValueAt(values[column],modelRow,column);}return;}
+            LineEditor editor = new LineEditor(this, existing, false, modelRow);
             editor.setVisible(true);
             if (editor.line != null) {
                 QuotationInvoiceViewService.ProductOption product = editor.line.product();
@@ -807,6 +995,12 @@ public class Quotations extends JFrame {
 
         private void loadExistingQuotation(QuotationInvoiceViewService.QuotationEditData quotation) {
             selectCustomer(quotation.customerId());
+            if (selectedCustomer() == null) {
+                // The customer search loads asynchronously; retain the saved identity in the meantime.
+                rememberCustomer(new QuotationInvoiceViewService.CustomerOption(
+                        quotation.customerId(), "", quotation.customerName(), false));
+                refreshCustomerResults(quotation.customerName());
+            }
             validUntilField.setText(quotation.validUntil() == null ? LocalDate.now().plusDays(30).toString() : quotation.validUntil().toLocalDate().toString());
             productionDueDateField.setText(quotation.productionDueDate()==null?"":quotation.productionDueDate().toLocalDate().toString());
             notesArea.setText(quotation.notes() == null ? "" : quotation.notes());
@@ -841,12 +1035,44 @@ public class Quotations extends JFrame {
             }
         }
 
-        private void createQuotation() {
-            QuotationInvoiceViewService.CustomerOption customer = selectedCustomer();
+        private void scheduleDraftPreview() {
+            draftGeneration++;
+            draftTotal.setText("Total: updating…");
+            draftView.showMessage("Updating draft preview…");
+            draftTimer.restart();
+        }
+
+        private void refreshDraftPreview() {
+            var customer = selectedCustomer();
             if (customer == null) {
-                JOptionPane.showMessageDialog(this, "Select a customer from the list.");
-                return;
+                draftView.showMessage("Select a customer to preview the quotation");
+                draftTotal.setText("Total: choose a customer"); return;
             }
+            final long generation = draftGeneration;
+            try {
+                var lines = draftLines();
+                LocalDate valid = validUntilField.getText().isBlank() ? null : LocalDate.parse(validUntilField.getText().trim());
+                LocalDate due = productionDueDateField.getText().isBlank() ? null : LocalDate.parse(productionDueDateField.getText().trim());
+                boolean compact = draftTemplate.getSelectedIndex() == 1;
+                boolean discount = applyCustomerDiscountBox.isSelected();
+                UiTaskRunner.submit(this, "quotation.draft-preview", () ->
+                        QuotationInvoiceViewService.previewDraft(customer.customerId(), valid, due, lines, discount, compact),
+                        preview -> { if (generation == draftGeneration) {
+                            draftView.setDocument(preview.text());
+                            draftTotal.setText("Quotation total: " + utils.CurrencyFormatter.format(preview.total()));
+                        } },
+                        error -> { if (generation == draftGeneration) {
+                            draftView.showMessage("Preview unavailable. Check entries or reconnect to the store.");
+                            draftTotal.setText("Total unavailable — check entries or connection");
+                            draftView.setToolTipText(error.getMessage());
+                        }});
+            } catch (RuntimeException error) {
+                draftView.showMessage("Complete valid dates, quantities and prices to preview");
+                draftTotal.setText("Total: complete valid entries");
+            }
+        }
+
+        private List<QuotationInvoiceService.QuotationLineInput> draftLines() {
             List<QuotationInvoiceService.QuotationLineInput> lines = new ArrayList<>();
             for (int i = 0; i < lineModel.getRowCount(); i++) {
                 Object productIdValue = lineModel.getValueAt(i, 0);
@@ -868,6 +1094,20 @@ public class Quotations extends JFrame {
                         (QuotationInvoiceService.CustomLineInput)lineModel.getValueAt(i,13)
                 ));
             }
+            return lines;
+        }
+
+        private void createQuotation() {
+            QuotationInvoiceViewService.CustomerOption customer = selectedCustomer();
+            if (customer == null) {
+                JOptionPane.showMessageDialog(this, "Select an existing customer or use New Customer.");
+                return;
+            }
+            List<QuotationInvoiceService.QuotationLineInput> lines;
+            try { lines = draftLines(); }
+            catch (RuntimeException error) {
+                showQuotationError("Check item quantities, prices and discounts before saving."); return;
+            }
             LocalDate validUntil;
             LocalDate productionDueDate=null;
             try {
@@ -881,7 +1121,7 @@ public class Quotations extends JFrame {
             LocalDate dueDate=productionDueDate;
             setCreatingQuotation(true);
             statusLabel.setForeground(new Color(248, 113, 113));
-            statusLabel.setText(editQuotationId == null ? "Creating quotation..." : "Saving draft...");
+            statusLabel.setText(editQuotationId == null ? "Creating quotation..." : "Saving quotation...");
             Thread createThread = new Thread(() -> {
                 try {
                     QuotationInvoiceService.QuotationResult result = editQuotationId == null
@@ -891,13 +1131,17 @@ public class Quotations extends JFrame {
                         created = true;
                         setCreatingQuotation(false);
                         statusLabel.setForeground(new Color(74, 222, 128));
-                        statusLabel.setText((editQuotationId == null ? "Created quotation " : "Saved draft ") + result.quotationNumber() + ".");
+                        statusLabel.setText((editQuotationId == null ? "Created quotation " : "Saved quotation ") + result.quotationNumber() + ".");
                         dispose();
+                        if (acceptAfterSave) SwingUtilities.invokeLater(() -> {
+                            if (getOwner() instanceof Invoices invoices) invoices.acceptQuotation(result.quotationId());
+                            else if (getOwner() instanceof Quotations quotations) quotations.acceptQuotation(result.quotationId());
+                        });
                     });
                 } catch (Exception ex) {
                     SwingUtilities.invokeLater(() -> {
                         setCreatingQuotation(false);
-                        showQuotationError((editQuotationId == null ? "Failed to create quotation." : "Failed to save draft.") + "\n\n" + ex.getMessage());
+                        showQuotationError((editQuotationId == null ? "Failed to create quotation." : "Failed to save quotation.") + "\n\n" + ex.getMessage());
                     });
                 }
             }, "sales-quotation-create");
@@ -905,12 +1149,25 @@ public class Quotations extends JFrame {
             createThread.start();
         }
 
-        private void refreshCustomerDiscount(){QuotationInvoiceViewService.CustomerOption customer=selectedCustomer();boolean available=customer!=null&&customer.invoiceDiscountEnabled()&&customer.invoiceDiscountPercent()!=null&&customer.invoiceDiscountPercent().signum()>0;applyCustomerDiscountBox.setVisible(available);applyCustomerDiscountBox.setSelected(available);applyCustomerDiscountBox.setText(available?"Apply customer invoice discount ("+customer.invoiceDiscountPercent().stripTrailingZeros().toPlainString()+"%)":"Apply customer invoice discount");}
+        private void refreshCustomerDiscount(){QuotationInvoiceViewService.CustomerOption customer=selectedCustomer();boolean available=customer!=null&&customer.invoiceDiscountEnabled()&&customer.invoiceDiscountPercent()!=null&&customer.invoiceDiscountPercent().signum()>0;setCustomerDiscountVisibility(available);applyCustomerDiscountBox.setSelected(available);applyCustomerDiscountBox.setText(available?"Apply customer invoice discount ("+customer.invoiceDiscountPercent().stripTrailingZeros().toPlainString()+"%)":"Apply customer invoice discount");}
+
+        private void setCustomerDiscountVisibility(boolean visible) {
+            applyCustomerDiscountBox.setVisible(visible);
+            Container parent = applyCustomerDiscountBox.getParent();
+            if (parent != null && parent.getLayout() instanceof GridBagLayout layout) {
+                int row = layout.getConstraints(applyCustomerDiscountBox).gridy;
+                for (Component component : parent.getComponents())
+                    if (component instanceof JLabel && layout.getConstraints(component).gridy == row)
+                        component.setVisible(visible);
+                parent.revalidate();
+            }
+        }
 
         private void setCreatingQuotation(boolean creating) {
             createButton.setEnabled(!creating);
+            if (reviewButton != null) reviewButton.setEnabled(!creating);
             cancelButton.setEnabled(!creating);
-            createButton.setText(creating ? (editQuotationId == null ? "Creating..." : "Saving...") : (editQuotationId == null ? "Create Quotation" : "Save Draft"));
+            createButton.setText(creating ? "Saving…" : "Save quotation");
             setCursor(Cursor.getPredefinedCursor(creating ? Cursor.WAIT_CURSOR : Cursor.DEFAULT_CURSOR));
         }
 
@@ -928,6 +1185,78 @@ public class Quotations extends JFrame {
             dialog.setAlwaysOnTop(true);
             dialog.setVisible(true);
             dialog.dispose();
+        }
+
+        private void openNewCustomerDialog() {
+            customerBox.hidePopup();
+            JDialog dialog = new JDialog(this, "New Customer Account", true);
+            dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+            JTextField nameField = new JTextField(26);
+            JTextField phoneField = new JTextField(26);
+            JPanel form = DocumentStudio.stack(
+                    DocumentStudio.field("Customer name", nameField),
+                    DocumentStudio.field("Phone number", phoneField));
+            JButton cancel = new JButton("Cancel");
+            JButton create = new JButton("Create Account");
+            DocumentStudio.button(cancel, false);
+            DocumentStudio.button(create, true);
+            JLabel status = DocumentStudio.label(" ");
+            JPanel actions = DocumentStudio.surface(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+            actions.add(cancel);
+            actions.add(create);
+            JPanel content = DocumentStudio.surface(new BorderLayout(0, 12));
+            content.setBorder(new EmptyBorder(18, 18, 18, 18));
+            content.add(form, BorderLayout.CENTER);
+            content.add(DocumentStudio.stack(status, actions), BorderLayout.SOUTH);
+            dialog.setContentPane(content);
+            dialog.getRootPane().setDefaultButton(create);
+            cancel.addActionListener(e -> dialog.dispose());
+            create.addActionListener(new java.awt.event.ActionListener() {
+                private String lastName;
+                private String lastPhone;
+                private String mutationKey;
+
+                @Override public void actionPerformed(java.awt.event.ActionEvent event) {
+                    String name = nameField.getText().strip();
+                    String phone = phoneField.getText().strip();
+                    if (name.isEmpty() || phone.isEmpty()) {
+                        status.setText("Name and phone are required.");
+                        (name.isEmpty() ? nameField : phoneField).requestFocusInWindow();
+                        return;
+                    }
+                    if (!name.equals(lastName) || !phone.equals(lastPhone)) {
+                        lastName = name;
+                        lastPhone = phone;
+                        mutationKey = UUID.randomUUID().toString();
+                    }
+                    String key = mutationKey;
+                    setSaving(true);
+                    UiTaskRunner.submit(dialog, "quotation.create-customer",
+                            () -> QuotationInvoiceService.createCustomer(name, phone, key), saved -> {
+                                customerSearchTimer.stop();
+                                customerSearchGeneration++;
+                                rememberCustomer(saved);
+                                dialog.dispose();
+                            }, error -> {
+                                setSaving(false);
+                                JOptionPane.showMessageDialog(dialog, error.getMessage(),
+                                        "Could Not Create Customer", JOptionPane.ERROR_MESSAGE);
+                            });
+                }
+
+                private void setSaving(boolean saving) {
+                    nameField.setEditable(!saving);
+                    phoneField.setEditable(!saving);
+                    create.setEnabled(!saving);
+                    cancel.setEnabled(!saving);
+                    status.setText(saving ? "Creating customer account…" : " ");
+                    dialog.setDefaultCloseOperation(saving
+                            ? WindowConstants.DO_NOTHING_ON_CLOSE : WindowConstants.DISPOSE_ON_CLOSE);
+                }
+            });
+            dialog.pack();
+            dialog.setLocationRelativeTo(this);
+            dialog.setVisible(true);
         }
 
         private void loadCustomers() {
@@ -973,6 +1302,7 @@ public class Quotations extends JFrame {
         private void scheduleCustomerSearch() {
             if (!updatingCustomerResults) {
                 customerSearchTimer.restart();
+                scheduleDraftPreview();
             }
         }
 
@@ -987,6 +1317,8 @@ public class Quotations extends JFrame {
                 for (QuotationInvoiceViewService.CustomerOption customer : customers) {
                     customerBox.addItem(customer);
                 }
+                // Keep search results uncommitted until the customer chooses one.
+                customerBox.setSelectedIndex(-1);
                 customerBox.getEditor().setItem(query);
                 updatingCustomerResults = false;
                 QuotationInvoiceViewService.CustomerOption preserved=customerById(customers,previous);
@@ -999,7 +1331,7 @@ public class Quotations extends JFrame {
         private QuotationInvoiceViewService.CustomerOption selectedCustomer() {
             QuotationInvoiceViewService.CustomerOption selected=resolveCustomerSelection(customerBox.getSelectedItem(),
                     editorText(customerBox),currentCustomers(),rememberedCustomer);
-            if(selected!=null)rememberCustomer(selected);
+
             return selected;
         }
 
@@ -1035,7 +1367,11 @@ public class Quotations extends JFrame {
         }
 
         private void rememberCustomer(QuotationInvoiceViewService.CustomerOption customer){
-            rememberedCustomer=customer;updatingCustomerResults=true;customerBox.setSelectedItem(customer);updatingCustomerResults=false;
+            rememberedCustomer=customer;updatingCustomerResults=true;
+            try { customerBox.setSelectedItem(customer); }
+            finally { updatingCustomerResults=false; }
+            refreshCustomerDiscount();
+            scheduleDraftPreview();
         }
 
         private List<QuotationInvoiceViewService.CustomerOption> currentCustomers(){List<QuotationInvoiceViewService.CustomerOption> current=new ArrayList<>();for(int i=0;i<customerBox.getItemCount();i++)current.add(customerBox.getItemAt(i));return current;}
@@ -1043,11 +1379,11 @@ public class Quotations extends JFrame {
         private static QuotationInvoiceViewService.CustomerOption customerById(List<QuotationInvoiceViewService.CustomerOption> customers,QuotationInvoiceViewService.CustomerOption target){if(target==null)return null;for(var customer:customers)if(customer.customerId()==target.customerId())return customer;return null;}
 
         static QuotationInvoiceViewService.CustomerOption resolveCustomerSelection(Object selected,String editorText,List<QuotationInvoiceViewService.CustomerOption> customers,QuotationInvoiceViewService.CustomerOption remembered){
-            if(selected instanceof QuotationInvoiceViewService.CustomerOption customer)return customer;
+            if(selected instanceof QuotationInvoiceViewService.CustomerOption customer&&exactCustomerMatch(customer,editorText))return customer;
             if(remembered!=null&&exactCustomerMatch(remembered,editorText))return remembered;
             String search=editorText==null?"":editorText.trim();if(search.isBlank())return null;
             for(var customer:customers)if(exactCustomerMatch(customer,search))return customer;
-            return customers.size()==1?customers.get(0):null;
+            return null;
         }
 
         private static boolean exactCustomerMatch(QuotationInvoiceViewService.CustomerOption customer, String searchText) {
@@ -1079,6 +1415,58 @@ public class Quotations extends JFrame {
         }
     }
 
+    /** Item edits preview against a copy of the draft; cancel never changes its lines. */
+    private static final class ItemDocumentPreview extends JPanel {
+        private final LetterDocumentView view = new LetterDocumentView();
+        private final JComboBox<String> template = new JComboBox<>(new String[]{"Grid", "Compact"});
+        private final Timer timer;
+        private long generation;
+        ItemDocumentPreview(JDialog dialog, QuotationEditor source,
+                java.util.function.Supplier<QuotationInvoiceService.QuotationLineInput> candidate, int row) {
+            super(new BorderLayout(4, 4));
+            setBorder(new EmptyBorder(16, 16, 16, 16));
+            setBackground(DeckersPalette.surface()); putClientProperty("SmartStock.preserveBackground", true);
+            JPanel toolbar = DocumentStudio.surface(new ui.components.WrappingToolbarLayout());
+            toolbar.add(DocumentStudio.templateSwitch(template));
+            add(toolbar, BorderLayout.NORTH); add(view, BorderLayout.CENTER);
+            timer = new Timer(500, e -> {
+                long request = generation;
+                try {
+                    var customer = source.selectedCustomer();
+                    if (customer == null) { view.showMessage("Choose a customer in the quotation first"); return; }
+                    List<QuotationInvoiceService.QuotationLineInput> lines = new ArrayList<>(source.draftLines());
+                    var proposed = candidate.get();
+                    if (row >= 0 && row < lines.size()) lines.set(row, proposed); else lines.add(proposed);
+                    LocalDate valid = source.validUntilField.getText().isBlank() ? null : LocalDate.parse(source.validUntilField.getText().trim());
+                    LocalDate due = source.productionDueDateField.getText().isBlank() ? null : LocalDate.parse(source.productionDueDateField.getText().trim());
+                    boolean compact = template.getSelectedIndex() == 1;
+                    boolean discount = source.applyCustomerDiscountBox.isSelected();
+                    UiTaskRunner.submit(dialog, "quotation.item-preview", () -> QuotationInvoiceViewService.previewDraft(
+                            customer.customerId(), valid, due, lines, discount, compact),
+                            preview -> { if (request == generation) view.setDocument(preview.text()); },
+                            error -> { if (request == generation) view.showMessage("Preview unavailable. Check entries or reconnect."); });
+                } catch (RuntimeException error) { view.showMessage("Complete the item details to preview"); }
+            });
+            timer.setRepeats(false);
+            template.addActionListener(e -> changed());
+            dialog.addWindowListener(new java.awt.event.WindowAdapter() {
+                @Override public void windowClosed(java.awt.event.WindowEvent e) { generation++; timer.stop(); }
+            });
+            changed();
+        }
+        void changed() { generation++; view.showMessage("Updating item preview…"); timer.restart(); }
+        void watch(Component component) {
+            if (component instanceof JTextComponent text) text.getDocument().addDocumentListener(new DocumentListener() {
+                public void insertUpdate(DocumentEvent e) { changed(); }
+                public void removeUpdate(DocumentEvent e) { changed(); }
+                public void changedUpdate(DocumentEvent e) { changed(); }
+            });
+            if (component instanceof JComboBox<?> combo) combo.addActionListener(e -> changed());
+            if (component instanceof Container container)
+                for (Component child : container.getComponents()) watch(child);
+        }
+    }
+
     private static class LineEditor extends JDialog {
         private final JComboBox<QuotationInvoiceViewService.ProductOption> productBox = new JComboBox<>();
         private final JTextField itemField = new JTextField();
@@ -1096,19 +1484,19 @@ public class Quotations extends JFrame {
         private LineInput line;
 
         LineEditor(JDialog owner) {
-            this(owner, null, true);
+            this(owner, null, true, -1);
         }
 
         LineEditor(JDialog owner, LineInput existingLine) {
-            this(owner, existingLine, false);
+            this(owner, existingLine, false, -1);
         }
 
-        private LineEditor(JDialog owner, LineInput existingLine, boolean manualOnly) {
+        private LineEditor(JDialog owner, LineInput existingLine, boolean manualOnly, int row) {
             super(owner, "Add Quotation Line", true);
             this.manualOnly = manualOnly;
             productSearchTimer = new Timer(300, e -> refreshProductResults(editorText(productBox)));
             productSearchTimer.setRepeats(false);
-            setSize(560, 410);
+            ui.components.DocumentWorkspace.fitDialog(this, 1440, 850);
             setLocationRelativeTo(owner);
             setLayout(new BorderLayout(8, 8));
             productBox.setEditable(true);
@@ -1123,23 +1511,42 @@ public class Quotations extends JFrame {
             discountPrices=new ui.helpers.DiscountPriceFields(()->parseMoney(unitField.getText()),discountField,discountedPriceField);
             ui.helpers.DiscountPriceFields.listen(unitField,discountPrices::refresh);
             productBox.addActionListener(e -> fillProduct());
-            JPanel panel = manualOnly
-                    ? formPanel(new String[]{"Item", "SKU", "Qty", "Original Unit Price", "Discounted Unit Price", "Discount %", "Delivery", "Notes"},
-                    new JComponent[]{itemField, skuField, qtyField, unitField, discountedPriceField, discountField, deliveryBox, notesField})
-                    : formPanel(new String[]{"Product", "Item", "SKU", "Qty", "Original Unit Price", "Discounted Unit Price", "Discount %", "Delivery", "Notes"},
-                    new JComponent[]{productBox, itemField, skuField, qtyField, unitField, discountedPriceField, discountField, deliveryBox, notesField});
-            panel.setBorder(new EmptyBorder(12, 12, 12, 12));
+            JPanel itemFields = DocumentStudio.stack(
+                    DocumentStudio.row(DocumentStudio.field("Item name", itemField), DocumentStudio.field("SKU", skuField)),
+                    DocumentStudio.row(DocumentStudio.field("Quantity", qtyField), DocumentStudio.field("Rate / unit price", unitField), DocumentStudio.field("Discount %", discountField)),
+                    DocumentStudio.row(DocumentStudio.field("Discounted unit price", discountedPriceField), DocumentStudio.field("Delivery", deliveryBox)),
+                    DocumentStudio.field("Notes", notesField));
+            JPanel panel = manualOnly ? DocumentStudio.stack(DocumentStudio.workflow(0), DocumentStudio.section("Manual item", itemFields))
+                    : DocumentStudio.stack(DocumentStudio.workflow(0), DocumentStudio.field("Stock product", productBox), DocumentStudio.section("Item details", itemFields));
+            panel.setBorder(new EmptyBorder(22, 22, 22, 22));
             add(panel, BorderLayout.CENTER);
-            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-            JButton add = new JButton("Add");
+            JPanel buttons = DocumentStudio.surface(new FlowLayout(FlowLayout.RIGHT, 10, 14));
+            buttons.setBorder(new EmptyBorder(0, 22, 0, 22));
+            JButton add = new JButton("Save item");
             JButton cancel = new JButton("Cancel");
             buttons.add(add);
             buttons.add(cancel);
-            stylePrimaryButton(add);
-            styleSecondaryButton(cancel);
+            DocumentStudio.button(add, true);
+            DocumentStudio.button(cancel, false);
             add(buttons, BorderLayout.SOUTH);
             add.addActionListener(e -> save());
             cancel.addActionListener(e -> dispose());
+            if (owner instanceof QuotationEditor source) {
+                ItemDocumentPreview preview = new ItemDocumentPreview(this, source, () -> {
+                    var product = productBox.getSelectedItem() instanceof QuotationInvoiceViewService.ProductOption p ? p : null;
+                    BigDecimal unit = parseMoney(unitField.getText());
+                    return new QuotationInvoiceService.QuotationLineInput(product == null ? null : product.productId(),
+                            itemField.getText(), skuField.getText(), Integer.parseInt(qtyField.getText().trim()),
+                            unit, unit, parsePercent(discountField.getText()), String.valueOf(deliveryBox.getSelectedItem()),
+                            notesField.getText(), null, null, null, null, null);
+                }, row);
+                preview.watch(panel);
+                JPanel fields = DocumentStudio.surface(new BorderLayout());
+                fields.add(DocumentStudio.scroll(DocumentStudio.topAligned(panel)), BorderLayout.CENTER); fields.add(buttons, BorderLayout.SOUTH);
+                add(DocumentStudio.shell(new ui.components.DocumentWorkspace(fields, preview), 1, null, this::dispose, null, null), BorderLayout.CENTER);
+                remove(buttons);
+            }
+            ThemeManager.applyToWindow(this);
         }
 
         private void loadExistingLine(LineInput existingLine) {
@@ -1397,29 +1804,209 @@ public class Quotations extends JFrame {
     private static class CustomQuotationLineEditor extends JDialog{
         private final JComboBox<CustomOrderDataService.CustomItemOption>itemBox=new JComboBox<>();
         private final JComboBox<CustomOrderDataService.VariantOption>variantBox=new JComboBox<>();
-        private final JTextField qty=new JTextField("1"),price=new JTextField("0"),width=new JTextField(),length=new JTextField(),discount=new JTextField("0"),design=new JTextField(),instructions=new JTextField();
+        private final JTextField qty=new JTextField("1"),price=new JTextField("0"),width=new JTextField(),length=new JTextField(),discount=new JTextField("0"),design=new JTextField();
+        private final JTextArea instructions=new JTextArea(2,20);
+        private final JTextField itemSearch=new JTextField();
         private final JTextField discountedPrice=new JTextField("0");
         private ui.helpers.DiscountPriceFields discountPrices;
         private final JComboBox<String>delivery=new JComboBox<>(new String[]{"PICKUP","LOCAL_DELIVERY","SHIP","INSTALLATION"});
         private final DefaultTableModel addons=new DefaultTableModel(new String[]{"Material ID","Material","Preset ID","Size","Mode","Description","Lines","Charge"},0);
         private LineInput line;
         CustomQuotationLineEditor(JDialog owner){this(owner,null);}
-        CustomQuotationLineEditor(JDialog owner,LineInput existing){super(owner,existing==null?"Add Custom Item to Quotation":"Edit Quotation Custom Item",true);setSize(760,650);setLocationRelativeTo(owner);setLayout(new BorderLayout(8,8));
-            JPanel form=formPanel(new String[]{"Custom Item","Variant","Quantity","Rate / Unit Price","Width","Length","Discounted Unit Price","Discount %","Delivery","Design / Placement","Instructions"},new JComponent[]{itemBox,variantBox,qty,price,width,length,discountedPrice,discount,delivery,design,instructions});
-            JTable addonTable=new JTable(addons);hideAddonIds(addonTable);JPanel center=new JPanel(new BorderLayout(8,8));center.setBorder(new EmptyBorder(12,12,12,12));center.add(form,BorderLayout.NORTH);center.add(new JScrollPane(addonTable),BorderLayout.CENTER);
-            JButton addAddon=new JButton("Add Print Add-on"),remove=new JButton("Remove Add-on"),save=new JButton("Add Custom Item"),cancel=new JButton("Cancel");JPanel buttons=new JPanel(new FlowLayout(FlowLayout.RIGHT));buttons.add(addAddon);buttons.add(remove);buttons.add(save);buttons.add(cancel);center.add(buttons,BorderLayout.SOUTH);add(center);
-            styleSecondaryButton(addAddon);styleSecondaryButton(remove);stylePrimaryButton(save);styleSecondaryButton(cancel);
-            itemBox.addActionListener(e->loadVariantsAndPrice());variantBox.addActionListener(e->loadSelectedPrice());addAddon.addActionListener(e->addAddon());remove.addActionListener(e->{int r=addonTable.getSelectedRow();if(r>=0)addons.removeRow(addonTable.convertRowIndexToModel(r));});save.addActionListener(e->save());cancel.addActionListener(e->dispose());
+        CustomQuotationLineEditor(JDialog owner,LineInput existing){this(owner,existing,-1);}
+        CustomQuotationLineEditor(JDialog owner,LineInput existing,int row){this(owner,existing,row,null);}
+        CustomQuotationLineEditor(JDialog owner,LineInput existing,int row,List<CustomOrderDataService.CustomItemOption> catalog){super(owner,existing==null?"Add Custom Item to Quotation":"Edit Quotation Custom Item",true);ui.components.DocumentWorkspace.fitDialog(this,900,780);setLayout(new BorderLayout(8,8));
+            JPanel areaFields = DocumentStudio.row(DocumentStudio.field("Width", width), DocumentStudio.field("Length", length));
+            areaFields.setVisible(false);
+            itemBox.addItemListener(e -> {
+                var selected = itemBox.getSelectedItem();
+                areaFields.setVisible(selected instanceof CustomOrderDataService.CustomItemOption item && "AREA".equals(item.pricingType()));
+            });
+            JPanel extraPricing = DocumentStudio.stack(DocumentStudio.row(DocumentStudio.field("Discounted unit price", discountedPrice), DocumentStudio.field("Delivery", delivery)), areaFields);
+            extraPricing.setVisible(false);
+            JButton priceOptions = new JButton("Pricing & delivery options"); DocumentStudio.button(priceOptions, false);
+            priceOptions.addActionListener(e -> { extraPricing.setVisible(!extraPricing.isVisible()); revalidate(); });
+            JButton findItem = new JButton("Find / scan item"); DocumentStudio.button(findItem, false);
+            JButton manualItem = new JButton("Manual Item…"); DocumentStudio.button(manualItem, false);
+            manualItem.addActionListener(e -> enterManualItem());
+            JPanel scan = DocumentStudio.field("Name, SKU or barcode", itemSearch);
+            scan.setVisible(false);
+            findItem.addActionListener(e -> { scan.setVisible(!scan.isVisible()); revalidate(); if (scan.isVisible()) itemSearch.requestFocusInWindow(); });
+            JPanel form = DocumentStudio.stack(DocumentStudio.workflow(0), scan,
+                    DocumentStudio.section("Item", DocumentStudio.stack(
+                            DocumentStudio.row(DocumentStudio.field("Item name", itemBox), DocumentStudio.field("Variant", variantBox)),
+                            DocumentStudio.row(DocumentStudio.field("Quantity", qty), DocumentStudio.field("Rate / unit price", price), DocumentStudio.field("Discount %", discount)),
+                            DocumentStudio.row(DocumentStudio.inline(findItem), DocumentStudio.inline(manualItem), DocumentStudio.inline(priceOptions)), extraPricing)));
+            itemBox.addItemListener(e -> {
+                if (itemBox.getSelectedItem() instanceof CustomOrderDataService.CustomItemOption item && "AREA".equals(item.pricingType())) extraPricing.setVisible(true);
+            });
+            JTable addonTable = new JTable(addons); hideAddonIds(addonTable);
+            int mode = addonTable.convertColumnIndexToView(4); if (mode >= 0) addonTable.removeColumn(addonTable.getColumnModel().getColumn(mode));
+            DocumentStudio.table(addonTable);
+            JScrollPane addonRows = DocumentStudio.scroll(addonTable); addonRows.setColumnHeaderView(addonTable.getTableHeader());
+            addonRows.setPreferredSize(new Dimension(500, 90));
+            addonRows.setVisible(addons.getRowCount() > 0);
+            addons.addTableModelListener(e -> { addonRows.setVisible(addons.getRowCount() > 0); revalidate(); });
+            JButton addAddon = new JButton("Add print option"), remove = new JButton("Remove");
+            DocumentStudio.button(addAddon, false); DocumentStudio.button(remove, false);
+            JPanel addonActions = DocumentStudio.surface(new FlowLayout(FlowLayout.LEFT, 8, 0)); addonActions.add(addAddon); addonActions.add(remove);
+            JButton printOptions = new JButton("Choose print option…"); DocumentStudio.button(printOptions, false);
+            addons.addTableModelListener(e -> {
+                printOptions.setText(addons.getRowCount() == 0 ? "Choose print option…" : addons.getRowCount() == 1
+                        ? String.valueOf(addons.getValueAt(0, 1)) + " / " + addons.getValueAt(0, 3)
+                        : addons.getRowCount() + " print options");
+            });
+            printOptions.addActionListener(e -> {
+                JDialog options = new JDialog(this, "Print options", true);
+                JPanel optionContent = DocumentStudio.surface(new BorderLayout(10, 14));
+                optionContent.setBorder(new EmptyBorder(18, 18, 18, 18));
+                addonRows.setVisible(true); optionContent.add(addonRows, BorderLayout.CENTER);
+                JButton done = new JButton("Done"); DocumentStudio.button(done, true);
+                JPanel optionButtons = DocumentStudio.surface(new BorderLayout());
+                optionButtons.add(addonActions, BorderLayout.WEST); optionButtons.add(done, BorderLayout.EAST);
+                done.addActionListener(event -> {
+                    if (addonTable.isEditing() && !addonTable.getCellEditor().stopCellEditing()) return;
+                    options.dispose();
+                });
+                optionContent.add(optionButtons, BorderLayout.SOUTH); options.add(optionContent);
+                ui.components.DocumentWorkspace.fitDialog(options, 760, 380); DocumentStudio.finish(optionContent); options.setVisible(true);
+            });
+            JPanel printSection = DocumentStudio.section("Print add-on", DocumentStudio.row(
+                    DocumentStudio.field("Print option", printOptions), DocumentStudio.field("Design / placement", design)));
+            JTextField productionDate = new JTextField(owner instanceof QuotationEditor source
+                    ? source.productionDueDateField.getText() : "");
+            productionDate.setEditable(false);
+            productionDate.setToolTipText("Set the production due date in the quotation.");
+            JPanel center = DocumentStudio.stack(form, printSection, DocumentStudio.field("Instructions", DocumentStudio.scroll(instructions)),
+                    DocumentStudio.field("Production due date · from quotation", productionDate));
+            center.setBorder(new EmptyBorder(22, 22, 10, 22));
+            JScrollPane formScroll = DocumentStudio.scroll(DocumentStudio.topAligned(center));
+            JButton save = new JButton("Save item"), cancel = new JButton("Cancel");
+            JPanel buttons = DocumentStudio.surface(new FlowLayout(FlowLayout.RIGHT, 10, 14));
+            buttons.setBorder(new EmptyBorder(0, 22, 0, 22));
+            DocumentStudio.button(save, true); DocumentStudio.button(cancel, false); buttons.add(cancel); buttons.add(save);
+            JPanel standalone = DocumentStudio.surface(new BorderLayout()); standalone.add(formScroll, BorderLayout.CENTER); standalone.add(buttons, BorderLayout.SOUTH);
+            add(standalone, BorderLayout.CENTER);
+            itemBox.addActionListener(e->loadVariantsAndPrice());variantBox.addActionListener(e->loadSelectedPrice());addAddon.addActionListener(e->addAddon(addAddon));remove.addActionListener(e->{int r=addonTable.getSelectedRow();if(r>=0)addons.removeRow(addonTable.convertRowIndexToModel(r));});save.addActionListener(e->save());cancel.addActionListener(e->dispose());
+            itemBox.setRenderer(new DefaultListCellRenderer() {
+                @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
+                    Object display = value instanceof CustomOrderDataService.CustomItemOption item && index < 0 ? item.name() : value;
+                    super.getListCellRendererComponent(list, display, index, selected, focus);
+                    setBorder(new EmptyBorder(4, 7, 4, 7)); return this;
+                }
+            });
+            variantBox.setRenderer(new DefaultListCellRenderer() {
+                @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
+                    var item = (CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();
+                    Object display = value;
+                    if (value == null && item != null && !item.hasVariants())
+                        display = java.util.stream.Stream.of(item.size(), item.color()).filter(v -> v != null && !v.isBlank()).collect(java.util.stream.Collectors.joining(" / "));
+                    super.getListCellRendererComponent(list, display, index, selected, focus);
+                    setBorder(new EmptyBorder(4, 7, 4, 7)); return this;
+                }
+            });
             ThemeManager.applyToWindow(this);
-            try{for(var item:ResponsiveTask.await(this,"Loading custom items...",CustomOrderDataService::listActiveItems))itemBox.addItem(item);if(existing!=null)loadExisting(existing);installDiscountPrices();}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Custom Items",JOptionPane.ERROR_MESSAGE);dispose();}
+            if (owner instanceof QuotationEditor source) {
+                ItemDocumentPreview preview = new ItemDocumentPreview(this, source, () -> {
+                    var item = (CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();
+                    if (item == null) throw new IllegalArgumentException("Choose an item");
+                    BigDecimal unit = originalDiscountUnitPrice();
+                    String detail = "Design: " + design.getText() + " | " + instructions.getText();
+                    var variant = (CustomOrderDataService.VariantOption)variantBox.getSelectedItem();
+                    if (variant != null) detail += " | Variant: " + variant.name();
+                    for (int i = 0; i < addons.getRowCount(); i++)
+                        detail += " | Print: " + addons.getValueAt(i, 1) + " / " + addons.getValueAt(i, 3);
+                    return new QuotationInvoiceService.QuotationLineInput(null, item.name(), item.sku(),
+                            Integer.parseInt(qty.getText().trim()), unit, unit, parsePercent(discount.getText()),
+                            String.valueOf(delivery.getSelectedItem()), detail, null, null, null, null, null);
+                }, row);
+                preview.watch(form); addons.addTableModelListener(e -> preview.changed());
+                JPanel fields = DocumentStudio.surface(new BorderLayout());
+                fields.add(formScroll, BorderLayout.CENTER); fields.add(buttons, BorderLayout.SOUTH);
+                add(DocumentStudio.shell(new ui.components.DocumentWorkspace(fields, preview), 2, null, this::dispose, null, null), BorderLayout.CENTER);
+                ui.components.DocumentWorkspace.fitDialog(this, 1440, 900);
+            }            itemSearch.setToolTipText("Type a name or SKU, or scan a barcode. Press Enter to select.");
+            new ui.screens.customorders.CustomOrderItemSearch(itemSearch,
+                    option -> selectSearchItem(option.customItemId(), option.customVariantId()), this::lookupSearchItem);
+            addWindowListener(new java.awt.event.WindowAdapter() {
+                @Override public void windowOpened(java.awt.event.WindowEvent e) { itemBox.requestFocusInWindow(); }
+            });
+            try{for(var item:catalog==null?ResponsiveTask.await(this,"Loading custom items...",CustomOrderDataService::listActiveItems):catalog)itemBox.addItem(item);if(existing!=null)loadExisting(existing);installDiscountPrices();}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Custom Items",JOptionPane.ERROR_MESSAGE);dispose();}
         }
-        private void loadExisting(LineInput existing){var c=existing.custom();for(int i=0;i<itemBox.getItemCount();i++)if(java.util.Objects.equals(itemBox.getItemAt(i).customItemId(),c.customItemId())){itemBox.setSelectedIndex(i);break;}loadVariantsAndPrice();for(int i=0;i<variantBox.getItemCount();i++)if(java.util.Objects.equals(variantBox.getItemAt(i).variantId(),c.customVariantId())){variantBox.setSelectedIndex(i);break;}qty.setText(String.valueOf(existing.quantity()));price.setText(c.areaPrice()==null?existing.unitPrice().toPlainString():c.areaPrice().toPlainString());width.setText(c.widthValue()==null?"":c.widthValue().toPlainString());length.setText(c.lengthValue()==null?"":c.lengthValue().toPlainString());discount.setText(existing.discountPercent().toPlainString());delivery.setSelectedItem(existing.deliveryMethod());design.setText(c.customizationDetails());instructions.setText(c.orderInstructions());if(c.printAddons()!=null)for(var a:c.printAddons())addons.addRow(new Object[]{a.printMaterialId(),a.materialName(),a.printSizePresetId(),a.printSizeName(),a.pricingMode(),a.description(),a.lineCount(),a.charge()});}
-        private void loadVariantsAndPrice(){CustomOrderDataService.CustomItemOption item=(CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();variantBox.removeAllItems();loadSelectedPrice();if(item==null)return;if(item.hasVariants())try{for(var v:ResponsiveTask.await(this,"Loading variants...",()->CustomOrderDataService.listActiveVariants(item.customItemId())))variantBox.addItem(v);}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage());}}
+        private void enterManualItem() {
+            var selected = (CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();
+            boolean manual = selected != null && selected.customItemId() == null;
+            JTextField name = new JTextField(manual ? selected.name() : "", 24);
+            JTextField size = new JTextField(manual ? selected.size() : "", 16);
+            JTextField color = new JTextField(manual ? selected.color() : "", 16);
+            JPanel fields = DocumentStudio.stack(DocumentStudio.field("Item name", name),
+                    DocumentStudio.row(DocumentStudio.field("Size", size), DocumentStudio.field("Colour", color)));
+            while (JOptionPane.showConfirmDialog(this, fields, "Manual Item", JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION) {
+                if (name.getText().isBlank() || name.getText().trim().length() > 200) {
+                    JOptionPane.showMessageDialog(this, "Enter an item name of up to 200 characters.");
+                    continue;
+                }
+                String previousPrice = manual ? price.getText() : "0";
+                selectManualItem(name.getText().trim(), size.getText().trim(), color.getText().trim());
+                price.setText(previousPrice);
+                width.setText(""); length.setText("");
+                price.requestFocusInWindow(); price.selectAll();
+                return;
+            }
+        }
+        private void selectManualItem(String name, String size, String color) {
+            var manual = new CustomOrderDataService.CustomItemOption(null, name, size, color, null,
+                    "SERVICE", "FIXED", null, false, null, null, null, null, null);
+            itemBox.addItem(manual);
+            itemBox.setSelectedItem(manual);
+        }
+        private void lookupSearchItem() {
+            String query = itemSearch.getText().trim();
+            if (query.isEmpty()) return;
+            UiTaskRunner.submit(this, "quotation.custom-item-lookup",
+                    () -> CustomOrderDataService.lookupCustomItem(query),
+                    result -> {
+                        if (!query.equals(itemSearch.getText().trim())) return;
+                        if (result == null || result.customItemId() == null) {
+                            JOptionPane.showMessageDialog(this, "No custom item or variant matched that search.");
+                            return;
+                        }
+                        selectSearchItem(result.customItemId(), result.customVariantId());
+                    }, failure -> JOptionPane.showMessageDialog(this, failure.getMessage(),
+                            "Custom Item Search", JOptionPane.ERROR_MESSAGE));
+        }
+
+        private void selectSearchItem(Long itemId, Long variantId) {
+            for (int i = 0; i < itemBox.getItemCount(); i++) {
+                if (!java.util.Objects.equals(itemBox.getItemAt(i).customItemId(), itemId)) continue;
+                itemBox.setSelectedIndex(i);
+                if (variantId != null) {
+                    for (int v = 0; v < variantBox.getItemCount(); v++) {
+                        if (java.util.Objects.equals(variantBox.getItemAt(v).variantId(), variantId)) {
+                            variantBox.setSelectedIndex(v);
+                            qty.requestFocusInWindow();
+                            qty.selectAll();
+                            return;
+                        }
+                    }
+                    variantBox.setSelectedIndex(-1);
+                    JOptionPane.showMessageDialog(this, "That variant is no longer available. Select an active variant.");
+                    return;
+                }
+                (itemBox.getItemAt(i).hasVariants() ? variantBox : qty).requestFocusInWindow();
+                return;
+            }
+            JOptionPane.showMessageDialog(this, "That item is no longer available. Reopen the picker to refresh the catalog.");
+        }
+
+        private void loadExisting(LineInput existing){var c=existing.custom();if(c.customItemId()==null)selectManualItem(existing.itemName(),c.itemSize(),c.itemColor());for(int i=0;i<itemBox.getItemCount();i++)if(c.customItemId()!=null&&java.util.Objects.equals(itemBox.getItemAt(i).customItemId(),c.customItemId())){itemBox.setSelectedIndex(i);break;}loadVariantsAndPrice();for(int i=0;i<variantBox.getItemCount();i++)if(java.util.Objects.equals(variantBox.getItemAt(i).variantId(),c.customVariantId())){variantBox.setSelectedIndex(i);break;}qty.setText(String.valueOf(existing.quantity()));price.setText(c.areaPrice()==null?existing.unitPrice().toPlainString():c.areaPrice().toPlainString());width.setText(c.widthValue()==null?"":c.widthValue().toPlainString());length.setText(c.lengthValue()==null?"":c.lengthValue().toPlainString());discount.setText(existing.discountPercent().toPlainString());delivery.setSelectedItem(existing.deliveryMethod());design.setText(c.customizationDetails());instructions.setText(c.orderInstructions());if(c.printAddons()!=null)for(var a:c.printAddons())addons.addRow(new Object[]{a.printMaterialId(),a.materialName(),a.printSizePresetId(),a.printSizeName(),a.pricingMode(),a.description(),a.lineCount(),a.charge()});}
+        private void loadVariantsAndPrice(){CustomOrderDataService.CustomItemOption item=(CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();variantBox.setEnabled(item!=null&&item.hasVariants());variantBox.removeAllItems();loadSelectedPrice();if(item==null)return;if(item.hasVariants())try{for(var v:ResponsiveTask.await(this,"Loading variants...",()->CustomOrderDataService.listActiveVariants(item.customItemId())))variantBox.addItem(v);}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage());}}
         private void loadSelectedPrice(){
             BigDecimal configured=customQuotationCatalogPrice((CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem(),(CustomOrderDataService.VariantOption)variantBox.getSelectedItem());
             price.setText((configured==null?BigDecimal.ZERO:configured).toPlainString());
         }
-        private void addAddon(){try{List<CustomOrderDataService.PrintMaterialOption>materials=ResponsiveTask.await(this,"Loading print materials...",CustomOrderDataService::listActivePrintMaterials);if(materials.isEmpty())throw new IllegalArgumentException("No active print materials are configured.");CustomOrderDataService.PrintMaterialOption material=(CustomOrderDataService.PrintMaterialOption)JOptionPane.showInputDialog(this,"Material:","Print Add-on",JOptionPane.PLAIN_MESSAGE,null,materials.toArray(),materials.get(0));if(material==null)return;List<CustomOrderDataService.PrintSizePresetOption>presets=ResponsiveTask.await(this,"Loading print sizes...",()->CustomOrderDataService.listActivePrintSizePresets(material.printMaterialId()));CustomOrderDataService.PrintSizePresetOption preset=presets.isEmpty()?null:(CustomOrderDataService.PrintSizePresetOption)JOptionPane.showInputDialog(this,"Print size:","Print Add-on",JOptionPane.PLAIN_MESSAGE,null,presets.toArray(),presets.get(0));String description=JOptionPane.showInputDialog(this,"Print description:","");if(description==null)return;String chargeText=JOptionPane.showInputDialog(this,"Print charge:",preset==null||preset.fixedPrice()==null?"0":preset.fixedPrice().toPlainString());if(chargeText==null)return;addons.addRow(new Object[]{material.printMaterialId(),material.materialName(),preset==null?null:preset.printSizePresetId(),preset==null?"Custom":preset.presetName(),preset==null?"FIXED_PRESET":preset.pricingMode(),description,1,parseMoney(chargeText)});}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Print Add-on",JOptionPane.ERROR_MESSAGE);}}
+        private void addAddon(Component anchor){try{List<CustomOrderDataService.PrintMaterialOption>materials=ResponsiveTask.await(anchor,"Loading print materials...",CustomOrderDataService::listActivePrintMaterials);if(materials==null)return;if(materials.isEmpty())throw new IllegalArgumentException("No active print materials are configured.");CustomOrderDataService.PrintMaterialOption material=(CustomOrderDataService.PrintMaterialOption)JOptionPane.showInputDialog(anchor,"Material:","Print Add-on",JOptionPane.PLAIN_MESSAGE,null,materials.toArray(),materials.get(0));if(material==null)return;List<CustomOrderDataService.PrintSizePresetOption>presets=ResponsiveTask.await(anchor,"Loading print sizes...",()->CustomOrderDataService.listActivePrintSizePresets(material.printMaterialId()));if(presets==null)return;CustomOrderDataService.PrintSizePresetOption preset=presets.isEmpty()?null:(CustomOrderDataService.PrintSizePresetOption)JOptionPane.showInputDialog(anchor,"Print size:","Print Add-on",JOptionPane.PLAIN_MESSAGE,null,presets.toArray(),presets.get(0));String description=JOptionPane.showInputDialog(anchor,"Print description:","");if(description==null)return;String chargeText=JOptionPane.showInputDialog(anchor,"Print charge:",preset==null||preset.fixedPrice()==null?"0":preset.fixedPrice().toPlainString());if(chargeText==null)return;addons.addRow(new Object[]{material.printMaterialId(),material.materialName(),preset==null?null:preset.printSizePresetId(),preset==null?"Custom":preset.presetName(),preset==null?"FIXED_PRESET":preset.pricingMode(),description,1,parseMoney(chargeText)});}catch(Exception e){JOptionPane.showMessageDialog(anchor,e.getMessage(),"Print Add-on",JOptionPane.ERROR_MESSAGE);}}
         private BigDecimal originalDiscountUnitPrice() {
             var item=(CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();
             BigDecimal base=parseMoney(price.getText());
@@ -1432,7 +2019,7 @@ public class Quotations extends JFrame {
             for(JTextField field:new JTextField[]{price,width,length}) ui.helpers.DiscountPriceFields.listen(field,discountPrices::refresh);
             addons.addTableModelListener(e->discountPrices.refresh());
         }
-        private void save(){try{var item=(CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();if(item==null)throw new IllegalArgumentException("Select a custom item.");var variant=(CustomOrderDataService.VariantOption)variantBox.getSelectedItem();if(item.hasVariants()&&variant==null)throw new IllegalArgumentException("Select a variant.");int quantity=Integer.parseInt(qty.getText().trim());if(quantity<=0)throw new IllegalArgumentException("Quantity must be greater than zero.");BigDecimal entered=parseMoney(price.getText()),configured=customQuotationCatalogPrice(item,variant);BigDecimal w=width.getText().isBlank()?null:new BigDecimal(width.getText().trim()),l=length.getText().isBlank()?null:new BigDecimal(length.getText().trim()),area=null,base=entered;if("AREA".equals(item.pricingType())){if(w==null||l==null||w.signum()<=0||l.signum()<=0)throw new IllegalArgumentException("Enter valid width and length for area pricing.");area=w.multiply(l);base=area.multiply(entered).setScale(2,RoundingMode.HALF_UP);}List<QuotationInvoiceService.PrintAddonInput>print=new ArrayList<>();BigDecimal addonTotal=BigDecimal.ZERO;for(int r=0;r<addons.getRowCount();r++){BigDecimal charge=parseMoney(String.valueOf(addons.getValueAt(r,7)));addonTotal=addonTotal.add(charge);print.add(new QuotationInvoiceService.PrintAddonInput(((Number)addons.getValueAt(r,0)).longValue(),String.valueOf(addons.getValueAt(r,1)),addons.getValueAt(r,2)==null?null:((Number)addons.getValueAt(r,2)).longValue(),String.valueOf(addons.getValueAt(r,3)),String.valueOf(addons.getValueAt(r,4)),String.valueOf(addons.getValueAt(r,5)),Integer.parseInt(String.valueOf(addons.getValueAt(r,6))),charge));}BigDecimal unit=base.add(addonTotal),pct=discountPrices.validatedPercent();if(pct.signum()<0||pct.compareTo(BigDecimal.valueOf(100))>0)throw new IllegalArgumentException("Discount must be between 0 and 100%.");String overrideReason=null,token=null;if(configured!=null&&entered.compareTo(configured)!=0){overrideReason=JOptionPane.showInputDialog(this,"Reason for custom-item price override:");if(overrideReason==null||overrideReason.isBlank())return;if(!PermissionManager.hasPermission("CUSTOM_ORDER_PRICE_OVERRIDE")&&!PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")){var approval=ManagerApprovalService.requestApproval(this,"CUSTOM_ORDER_PRICE_OVERRIDE","Custom Order Price Override","Reason for custom-item price override:");if(approval==null)return;token=approval.lanApprovalToken();}}var custom=new QuotationInvoiceService.CustomLineInput(item.customItemId(),variant==null?null:variant.variantId(),variant==null?null:variant.name(),item.pricingType(),w,l,item.dimensionUnit(),area,item.areaPriceUnit(),entered,design.getText().trim(),instructions.getText().trim(),print);String notesText=condensed(custom);line=new LineInput(null,item.name(),item.sku(),quantity,unit,unit,pct,String.valueOf(delivery.getSelectedItem()),notesText,overrideReason,null,null,token,custom);dispose();}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Custom Item",JOptionPane.ERROR_MESSAGE);}}
+        private void save(){try{var item=(CustomOrderDataService.CustomItemOption)itemBox.getSelectedItem();if(item==null)throw new IllegalArgumentException("Select a custom item.");var variant=(CustomOrderDataService.VariantOption)variantBox.getSelectedItem();if(item.hasVariants()&&variant==null)throw new IllegalArgumentException("Select a variant.");int quantity=Integer.parseInt(qty.getText().trim());if(quantity<=0)throw new IllegalArgumentException("Quantity must be greater than zero.");BigDecimal entered=parseMoney(price.getText()),configured=customQuotationCatalogPrice(item,variant);BigDecimal w=width.getText().isBlank()?null:new BigDecimal(width.getText().trim()),l=length.getText().isBlank()?null:new BigDecimal(length.getText().trim()),area=null,base=entered;if("AREA".equals(item.pricingType())){if(w==null||l==null||w.signum()<=0||l.signum()<=0)throw new IllegalArgumentException("Enter valid width and length for area pricing.");area=w.multiply(l);base=area.multiply(entered).setScale(2,RoundingMode.HALF_UP);}List<QuotationInvoiceService.PrintAddonInput>print=new ArrayList<>();BigDecimal addonTotal=BigDecimal.ZERO;for(int r=0;r<addons.getRowCount();r++){BigDecimal charge=parseMoney(String.valueOf(addons.getValueAt(r,7)));addonTotal=addonTotal.add(charge);print.add(new QuotationInvoiceService.PrintAddonInput(((Number)addons.getValueAt(r,0)).longValue(),String.valueOf(addons.getValueAt(r,1)),addons.getValueAt(r,2)==null?null:((Number)addons.getValueAt(r,2)).longValue(),String.valueOf(addons.getValueAt(r,3)),String.valueOf(addons.getValueAt(r,4)),String.valueOf(addons.getValueAt(r,5)),Integer.parseInt(String.valueOf(addons.getValueAt(r,6))),charge));}BigDecimal unit=base.add(addonTotal),pct=discountPrices.validatedPercent();if(pct.signum()<0||pct.compareTo(BigDecimal.valueOf(100))>0)throw new IllegalArgumentException("Discount must be between 0 and 100%.");String overrideReason=null,token=null;if(configured!=null&&entered.compareTo(configured)!=0){overrideReason=JOptionPane.showInputDialog(this,"Reason for custom-item price override:");if(overrideReason==null||overrideReason.isBlank())return;if(!PermissionManager.hasPermission("CUSTOM_ORDER_PRICE_OVERRIDE")&&!PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES")){var approval=ManagerApprovalService.requestApproval(this,"CUSTOM_ORDER_PRICE_OVERRIDE","Custom Order Price Override","Reason for custom-item price override:");if(approval==null)return;token=approval.lanApprovalToken();}}var custom=new QuotationInvoiceService.CustomLineInput(item.customItemId(),variant==null?null:variant.variantId(),variant==null?null:variant.name(),item.pricingType(),w,l,item.dimensionUnit(),area,item.areaPriceUnit(),entered,design.getText().trim(),instructions.getText().trim(),print,variant==null?item.size():variant.effectiveSize(),variant==null?item.color():variant.effectiveColor());String notesText=condensed(custom);line=new LineInput(null,item.name(),item.sku(),quantity,unit,unit,pct,String.valueOf(delivery.getSelectedItem()),notesText,overrideReason,null,null,token,custom);dispose();}catch(Exception e){JOptionPane.showMessageDialog(this,e.getMessage(),"Custom Item",JOptionPane.ERROR_MESSAGE);}}
         private static String condensed(QuotationInvoiceService.CustomLineInput c){List<String>parts=new ArrayList<>();if(c.variantName()!=null&&!c.variantName().isBlank())parts.add("Variant: "+c.variantName());if(c.itemSize()!=null&&!c.itemSize().isBlank())parts.add("Item size: "+c.itemSize());if(c.itemColor()!=null&&!c.itemColor().isBlank())parts.add("Color: "+c.itemColor());if(c.widthValue()!=null&&c.lengthValue()!=null)parts.add("Dimensions: "+c.widthValue()+" x "+c.lengthValue()+" "+c.dimensionUnit());if(c.customizationDetails()!=null&&!c.customizationDetails().isBlank())parts.add("Design: "+c.customizationDetails());if(c.orderInstructions()!=null&&!c.orderInstructions().isBlank())parts.add(c.orderInstructions());if(c.printAddons()!=null&&!c.printAddons().isEmpty())parts.add("Print: "+c.printAddons().stream().map(a->a.materialName()+" / "+a.printSizeName()).reduce((a,b)->a+", "+b).orElse(""));return String.join(" | ",parts);}
         private static void hideAddonIds(JTable t){t.removeColumn(t.getColumnModel().getColumn(2));t.removeColumn(t.getColumnModel().getColumn(0));}
     }

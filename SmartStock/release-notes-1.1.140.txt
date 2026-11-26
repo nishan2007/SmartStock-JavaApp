@@ -1,0 +1,7 @@
+SmartStock 1.1.140 - Store key management and ad size review guides
+
+Adds Store Keys to Store Locations, the Employee menu and the main menu. Configure numbered keys and NFC pairings, sign keys out and return them using NFC or manual selection, and track multiple keys per employee. Authorized managers can record transactions for staff or recover a key with a required reason and physical-recovery confirmation. Includes server-enforced permissions, custody history, replay protection and database upgrades.
+
+Adds red size frames to each ad-review format: square 1080 x 1080, portrait 1080 x 1350, story 1080 x 1920 and landscape 1920 x 1080. Displays target and actual image dimensions, preserving the complete image so incorrect proportions are visible. Guides appear only in the review preview and are not saved into ads.
+
+Includes the previous cumulative quick-update changes. Windows update only. Update the store server before registers. Publishing does not install or restart applications. Physical NFC and installed-app, service, database, printer and drawer acceptance remain separate deployment checks. AI models remain separate and are preserved.

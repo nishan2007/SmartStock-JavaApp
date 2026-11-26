@@ -17,14 +17,27 @@ final class CompanyExpenseTransferService {
 
     static Map<String,Object> preview(Connection c,JsonObject body,int user,int location)throws Exception {
         require(c,user);
-        return inspect(c,body.get("customerId").getAsInt(),location,false);
+        return inspect(c,body.get("customerId").getAsInt(),user,location,false);
     }
 
-    private static Map<String,Object> inspect(Connection c,int customer,int location,boolean lock)throws Exception {
-        String accountName,accountNumber;
-        try(var p=c.prepareStatement("SELECT name,COALESCE(account_number,'') FROM customer_accounts WHERE customer_id=?"+(lock?" FOR UPDATE":""))){
-            p.setInt(1,customer);try(var r=p.executeQuery()){if(!r.next())throw invalid("Customer account was not found.");accountName=r.getString(1);accountNumber=r.getString(2);}
+    private static Map<String,Object> inspect(Connection c,int customer,int user,int location,boolean lock)throws Exception {
+        String accountName, accountNumber;
+        Integer boundStore;
+        try (var ps = c.prepareStatement("""
+                SELECT name, COALESCE(account_number,''), internal_expense_location_id
+                FROM customer_accounts WHERE customer_id=?
+                """ + (lock ? " FOR UPDATE" : ""))) {
+            ps.setInt(1, customer);
+            try (var rs = ps.executeQuery()) {
+                if (!rs.next()) throw invalid("Customer account was not found.");
+                accountName = rs.getString(1);
+                accountNumber = rs.getString(2);
+                boundStore = rs.getObject(3, Integer.class);
+            }
         }
+        if (boundStore != null && boundStore != location) throw invalid("Customer account was not found.");
+        boolean canBindLegacy = boundStore == null && !accountNumber.isBlank()
+                && isSkeldon(c, location) && isAdministrator(c, user);
         List<Map<String,Object>> eligible=new ArrayList<>(),skipped=new ArrayList<>();BigDecimal total=BigDecimal.ZERO;
         String query="SELECT sale_id,COALESCE(receipt_number,'Sale #'||sale_id),total_amount,COALESCE(amount_paid,0),COALESCE(returned_amount,0),created_at,COALESCE(user_name,''),payment_status,status FROM sales WHERE customer_id=? AND location_id=? AND payment_method='ACCOUNT' ORDER BY sale_id"+(lock?" FOR UPDATE":"");
         try(var p=c.prepareStatement(query)){
@@ -48,11 +61,88 @@ final class CompanyExpenseTransferService {
                 row.put("purchasedAt",r.getTimestamp(6).getTime());row.put("cashier",r.getString(7));row.put("lines",lines);eligible.add(row);total=total.add(amount);
             }}
         }
+        try (var ps = c.prepareStatement("""
+                SELECT transaction_id, transaction_type
+                FROM customer_account_transactions
+                WHERE customer_id=? AND location_id=? AND sale_id IS NULL
+                  AND transaction_type IN ('INVOICE_CREDIT','CUSTOM_ORDER_CREDIT','MANUAL_CHARGE','MINUTES_CREDIT')
+                ORDER BY transaction_id
+                """)) {
+            ps.setInt(1, customer);
+            ps.setInt(2, location);
+            try (var rs = ps.executeQuery()) {
+                while (rs.next()) skipped.add(Map.of("receipt", "Account transaction #" + rs.getLong(1),
+                        "reason", rs.getString(2) + " requires separate review"));
+            }
+        }
         BigDecimal balance=CustomerAccountLedgerService.calculateCustomerBalance(c,customer);
         if(balance.compareTo(total)<0)throw invalid("Account payments or credits reduce the balance below these purchases. Review allocations before transferring.");
         Map<String,Object> result=new LinkedHashMap<>();result.put("customerId",customer);result.put("accountName",accountName);result.put("accountNumber",accountNumber);
         result.put("eligible",eligible);result.put("skipped",skipped);result.put("total",total);result.put("balanceBefore",balance);
+        result.put("canBindLegacy", canBindLegacy);
+        result.put("unassignedExpenses", canBindLegacy ? unassignedExpenses(c, lock) : List.of());
         result.put("previewToken",LanSecurity.sha256(GSON.toJson(result)));return result;
+    }
+
+    private static boolean isAdministrator(Connection c, int user) throws SQLException {
+        try {
+            CustomerAccountMergeService.requireAdmin(c, user);
+            return true;
+        } catch (SQLException ex) {
+            if (!"42501".equals(ex.getSQLState())) throw ex;
+            return false;
+        }
+    }
+
+    private static boolean isSkeldon(Connection c, int location) throws SQLException {
+        try (var ps = c.prepareStatement("SELECT location_id FROM locations WHERE lower(btrim(name))='skeldon'")) {
+            try (var rs = ps.executeQuery()) {
+                return rs.next() && rs.getInt(1) == location && !rs.next();
+            }
+        }
+    }
+
+    private static List<Map<String, Object>> unassignedExpenses(Connection c, boolean lock) throws SQLException {
+        List<Map<String, Object>> expenses = new ArrayList<>();
+        try (var ps = c.prepareStatement("""
+                SELECT expense_id, expense_date, amount, COALESCE(description,'')
+                FROM expenses WHERE location_id IS NULL AND lower(btrim(category))='company use'
+                    AND source_type IS NULL
+                ORDER BY expense_id
+                """ + (lock ? " FOR UPDATE" : "")); var rs = ps.executeQuery()) {
+            while (rs.next()) expenses.add(Map.of("id", rs.getLong(1), "date", rs.getDate(2).toString(),
+                    "amount", rs.getBigDecimal(3), "description", rs.getString(4)));
+        }
+        return expenses;
+    }
+
+    private static void bindLegacy(Connection c, int customer, int location, int user, UUID device,
+                                   Map<String, Object> preview, String confirmedNumber) throws Exception {
+        if (!isAdministrator(c, user)) {
+            throw new LanInventoryService.RuleViolation(403, "PERMISSION_DENIED",
+                    "An administrator must confirm the legacy expense account.");
+        }
+        if (!Boolean.TRUE.equals(preview.get("canBindLegacy")) || !confirmedNumber.equals(preview.get("accountNumber"))) {
+            throw invalid("Confirm the exact account number from the Skeldon account preview.");
+        }
+        try (var ps = c.prepareStatement("""
+                UPDATE customer_accounts SET internal_expense_location_id=?, is_active=FALSE,
+                    require_charge_authorization=TRUE, updated_at=CURRENT_TIMESTAMP
+                WHERE customer_id=? AND NOT EXISTS(
+                    SELECT 1 FROM customer_account_merges WHERE source_customer_id=?)
+                """)) {
+            ps.setInt(1, location);
+            ps.setInt(2, customer);
+            ps.setInt(3, customer);
+            try {
+                if (ps.executeUpdate() != 1) throw invalid("The selected account has been merged.");
+            } catch (SQLException ex) {
+                if (!"23505".equals(ex.getSQLState())) throw ex;
+                throw invalid("Skeldon already has a legacy expense account.");
+            }
+        }
+        SyncOutboxService.recordEvent(c, "LEGACY_EXPENSE_ACCOUNT_BOUND",
+                Map.of("customer_id", customer), location, device.toString(), user);
     }
 
     private static boolean hasLoyalty(Connection c,int sale)throws SQLException {
@@ -84,14 +174,37 @@ final class CompanyExpenseTransferService {
     static Map<String,Object> transfer(Connection c,JsonObject body,UUID device,int user,String name,int location)throws Exception {
         require(c,user);
         int customer=body.get("customerId").getAsInt();
-        Map<String,Object> preview=inspect(c,customer,location,true);
+        Map<String,Object> preview=inspect(c,customer,user,location,true);
         if(!body.has("previewToken") || !Objects.equals(preview.get("previewToken"),body.get("previewToken").getAsString()))throw invalid("The account changed. Review a fresh transfer preview.");
         List<Map<String,Object>> sales=(List<Map<String,Object>>)preview.get("eligible");
-        if(sales.isEmpty())throw invalid("There are no eligible purchases to transfer.");
+        String confirmedNumber = body.has("legacyAccountNumber") && !body.get("legacyAccountNumber").isJsonNull()
+                ? body.get("legacyAccountNumber").getAsString().trim() : "";
+        boolean bindLegacy = !confirmedNumber.isEmpty();
+        if (sales.isEmpty() && !bindLegacy) throw invalid("There are no eligible purchases to transfer.");
         if(!body.has("signaturePngBase64") || body.get("signaturePngBase64").isJsonNull())throw invalid("Sign the company expense transfer before posting.");
         byte[] signature=StockLedgerService.validateSignature(body.get("signaturePngBase64").getAsString());
         String category=body.has("category")?body.get("category").getAsString():"Company Use";
         if(!List.of("Company Use","Donation").contains(category))throw invalid("Choose Company Use or Donation.");
+        if (bindLegacy && !"Company Use".equals(category)) throw invalid("Choose Company Use for the legacy account.");
+        if (bindLegacy) bindLegacy(c, customer, location, user, device, preview, confirmedNumber);
+        int assigned = 0;
+        if (bindLegacy && body.has("assignUnassignedExpenses") && body.get("assignUnassignedExpenses").getAsBoolean()) {
+            List<Map<String, Object>> expenses = (List<Map<String, Object>>) preview.get("unassignedExpenses");
+            try (var ps = c.prepareStatement("""
+                    UPDATE expenses SET location_id=?, updated_at=CURRENT_TIMESTAMP
+                    WHERE expense_id=? AND location_id IS NULL
+                    """)) {
+                for (var expense : expenses) {
+                    long expenseId = (Long) expense.get("id");
+                    ps.setInt(1, location);
+                    ps.setLong(2, expenseId);
+                    if (ps.executeUpdate() != 1) throw invalid("A historical expense changed. Review a fresh preview.");
+                    SyncOutboxService.recordEvent(c, "EXPENSE_STORE_ASSIGNED", Map.of("expense_id", expenseId),
+                            location, device.toString(), user);
+                    assigned++;
+                }
+            }
+        }
         // Schema readiness is established by DB.getConnection before this transaction.
         // Do not invoke schema-upgrade helpers from inside an accounting transfer.
         try(var p=c.prepareStatement("UPDATE customer_accounts SET current_balance=? WHERE customer_id=?")){
@@ -127,7 +240,8 @@ final class CompanyExpenseTransferService {
         try(var p=c.prepareStatement("UPDATE customer_accounts SET current_balance=?,updated_at=CURRENT_TIMESTAMP WHERE customer_id=?")){
             p.setBigDecimal(1,after);p.setInt(2,customer);p.executeUpdate();
         }
-        return Map.of("transferred",transferred,"amount",preview.get("total"),"balanceAfter",after,"skipped",preview.get("skipped"));
+        return Map.of("transferred",transferred,"amount",preview.get("total"),"balanceAfter",after,"skipped",preview.get("skipped"),
+                "legacyAccountBound",bindLegacy,"assignedExpenses",assigned);
     }
 
     private static LanInventoryService.RuleViolation invalid(String message){return new LanInventoryService.RuleViolation(409,"COMPANY_EXPENSE_TRANSFER_REJECTED",message);}

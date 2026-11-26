@@ -22,12 +22,20 @@ final class StudioPrinting {
                 width = image.getWidth() * scale;
                 height = image.getHeight() * scale;
             }
-            if (width > page.getImageableWidth() + .5 || height > page.getImageableHeight() + .5)
+            boolean rotate = actualSize
+                    && (width > page.getImageableWidth() + .5 || height > page.getImageableHeight() + .5)
+                    && height <= page.getImageableWidth() + .5 && width <= page.getImageableHeight() + .5;
+            double occupiedWidth = rotate ? height : width, occupiedHeight = rotate ? width : height;
+            if (occupiedWidth > page.getImageableWidth() + .5 || occupiedHeight > page.getImageableHeight() + .5)
                 throw new PrinterException("The badge does not fit the printable area. Choose larger paper or change the printer orientation/margins.");
             Graphics2D draw = (Graphics2D) graphics.create();
             try {
-                draw.translate(page.getImageableX() + (page.getImageableWidth() - width) / 2,
-                        page.getImageableY() + (page.getImageableHeight() - height) / 2);
+                draw.translate(page.getImageableX() + (page.getImageableWidth() - occupiedWidth) / 2,
+                        page.getImageableY() + (page.getImageableHeight() - occupiedHeight) / 2);
+                if (rotate) {
+                    draw.translate(height, 0);
+                    draw.rotate(Math.PI / 2);
+                }
                 draw.setColor(Color.WHITE);
                 draw.fill(new java.awt.geom.Rectangle2D.Double(0, 0, width, height));
                 draw.scale(width / image.getWidth(), height / image.getHeight());

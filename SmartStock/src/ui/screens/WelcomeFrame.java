@@ -443,6 +443,7 @@ public class WelcomeFrame extends JFrame {
     }
 
     void refreshAfterSetup() {
+        if(DatabaseConfig.load().mode()==DatabaseMode.DISPLAY){dispose();WorkQueueDisplay.open();return;}
         refreshModeLabel();
         refreshSystemStats();
         refreshSystemStatus();

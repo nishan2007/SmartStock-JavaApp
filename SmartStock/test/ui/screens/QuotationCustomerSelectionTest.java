@@ -26,4 +26,18 @@ class QuotationCustomerSelectionTest {
         assertNull(Quotations.QuotationEditor.resolveCustomerSelection(
                 "Different customer", "Different customer", List.of(), DECKERS));
     }
+    @Test void doesNotUseOldSelectionWhileSearchingForAnotherCustomer() {
+        assertNull(Quotations.QuotationEditor.resolveCustomerSelection(
+                DECKERS, "Different customer", List.of(DECKERS), DECKERS));
+    }
+
+    @Test void doesNotCommitFirstResultWithoutSelection() {
+        assertNull(Quotations.QuotationEditor.resolveCustomerSelection(
+                null, "Deck", List.of(DECKERS), null));
+    }
+
+    @Test void resolvesExplicitSelection() {
+        assertEquals(DECKERS, Quotations.QuotationEditor.resolveCustomerSelection(
+                DECKERS, DECKERS.toString(), List.of(DECKERS), null));
+    }
 }

@@ -28,6 +28,13 @@ class CustomOrderDeliveryReadyTest {
         assertTrue(f.selectedOnly);
         assertEquals("NEW",f.status); // another line remains undelivered
     }
+    @Test void accountOrderCanBeDeliveredWhileStillUnpaid() throws Exception {
+        Fixture f=new Fixture();f.balance=BigDecimal.TEN;f.account=true;
+        LanCustomOrderWorkflowService.markOrderDelivered(f.connection(),1,1,3,"Amit","device","POS-05");
+        assertEquals("DELIVERED",f.status);
+        assertEquals(BigDecimal.TEN,f.balance);
+        assertEquals("READY",f.production);
+    }
     @Test void unpaidWholeOrderCannotChangeProduction() {
         Fixture f=new Fixture();f.balance=BigDecimal.TEN;
         assertThrows(SQLException.class,()->LanCustomOrderWorkflowService.markOrderDelivered(f.connection(),1,1,3,"Amit","device","POS-05"));
@@ -48,7 +55,7 @@ class CustomOrderDeliveryReadyTest {
     static class Fixture {
         String production="NOT_STARTED",status="NEW",pricing="FINAL";
         BigDecimal balance=BigDecimal.ZERO;
-        boolean delivery,selectedOnly;
+        boolean delivery,selectedOnly,account;
         List<Map<Integer,Object>> history=new ArrayList<>();
         Connection connection(){return proxy(Connection.class,(m,a)->m.equals("prepareStatement")?statement((String)a[0]):null);}
         PreparedStatement statement(String sql){
@@ -64,7 +71,8 @@ class CustomOrderDeliveryReadyTest {
                 }
                 if(m.equals("executeQuery")){
                     List<Object[]> rows=new ArrayList<>();
-                    if(sql.startsWith("SELECT pricing_state"))rows.add(new Object[]{pricing});
+                    if(sql.startsWith("SELECT 1 FROM custom_orders")){if(account&&"FINAL".equals(pricing))rows.add(new Object[]{1});}
+                    else if(sql.startsWith("SELECT pricing_state"))rows.add(new Object[]{pricing});
                     else if(sql.startsWith("SELECT status"))rows.add(new Object[]{status,balance});
                     else if(sql.startsWith("SELECT COALESCE(production_status"))rows.add(new Object[]{production});
                     else if(sql.startsWith("SELECT custom_order_line_id")){

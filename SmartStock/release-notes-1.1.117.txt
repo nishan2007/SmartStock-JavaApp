@@ -1,0 +1,5 @@
+SmartStock 1.1.117 - cross-store photo identity recovery
+
+Product sync now recognizes an existing photo by its exact storage bucket and object path when stores have assigned it different asset IDs. Verified local identity mappings allow pending merges to keep the original Skeldon photos without duplicating image metadata or changing the shared merge approval.
+
+Mappings preserve local image files and cloud status. Conflicting object identities, access levels or known content checksums require review instead of silently substituting a photo. Existing merge requests retry automatically after catalogue sync; no second merge is required.

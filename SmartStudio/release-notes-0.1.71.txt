@@ -1,0 +1,3 @@
+SmartStudio 0.1.71 (1071) - Windows update only.
+Adds visible Add/Delete page controls and automatic or fixed-width leading-zero numbering with a live preview and template record persistence. Removes the repeated workspace heading and aligns ribbon tabs with rounded Save, Print and Export PDF buttons. Layers now matches the reference styling with a rounded floating card, soft selection, outline icons, subtle dividers, scrollable list and hide/show controls.
+Requires an existing SmartStudio installation. Java runtime and AI model weights are excluded. No store-server or phone-page deployment is included.

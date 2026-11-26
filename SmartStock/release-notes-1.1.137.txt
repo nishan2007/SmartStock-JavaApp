@@ -1,0 +1,9 @@
+Mobile Management login policy and device details
+
+Login persistence is now controlled per device by managers in Device Management > Mobile Management. The employee login checkbox is removed. Policy changes end only that device's workspace sessions.
+
+Device details show browser/OS, model when available, screen size, app mode and last report time. Unknown model information is labeled clearly. Reports cannot change device approval, permissions or login policy.
+
+Includes guarded existing-store migrations, including the missing remembered-session upgrade hook that caused login errors on existing stores. Retains the lavender workspace and all 1.1.136 changes.
+
+Windows update only. Update the store server first, then the workstation used for Mobile Management. No automatic installation or restart is performed.

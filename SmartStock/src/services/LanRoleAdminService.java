@@ -10,7 +10,7 @@ final class LanRoleAdminService {
     static Map<String,Object> state(Connection c,int actor)throws Exception {
         require(c,actor);
         List<Map<String,Object>>roles=new ArrayList<>(),permissions=new ArrayList<>(),mobile=new ArrayList<>();
-        try(PreparedStatement p=c.prepareStatement("SELECT role_id,role_name FROM roles ORDER BY role_name");ResultSet r=p.executeQuery()){while(r.next())roles.add(map("roleId",r.getInt(1),"name",r.getString(2)));}
+        try(PreparedStatement p=c.prepareStatement("SELECT role_id,role_name,COALESCE(description,'') FROM roles ORDER BY role_name");ResultSet r=p.executeQuery()){while(r.next())roles.add(map("roleId",r.getInt(1),"name",r.getString(2),"description",r.getString(3)));}
         try(PreparedStatement p=c.prepareStatement("SELECT permission_key,COALESCE(NULLIF(permission_name,''),permission_key),COALESCE(permission_group,'General'),COALESCE(permission_subgroup,''),COALESCE(description,'') FROM permissions WHERE NULLIF(TRIM(permission_key),'') IS NOT NULL ORDER BY permission_group,permission_subgroup,permission_name,permission_key");ResultSet r=p.executeQuery()){while(r.next())permissions.add(def(r));}
         boolean mobileAvailable=table(c,"mobile_permissions")&&table(c,"role_mobile_permissions");
         if(mobileAvailable)try(PreparedStatement p=c.prepareStatement("SELECT permission_key,COALESCE(NULLIF(permission_name,''),permission_key),COALESCE(permission_group,'General'),COALESCE(permission_subgroup,''),COALESCE(description,'') FROM mobile_permissions WHERE NULLIF(TRIM(permission_key),'') IS NOT NULL ORDER BY permission_group,permission_subgroup,permission_name,permission_key");ResultSet r=p.executeQuery()){while(r.next())mobile.add(def(r));}
@@ -23,7 +23,9 @@ final class LanRoleAdminService {
 
     static Map<String,Object> save(Connection c,JsonObject b,int actor,int locationId,UUID deviceId)throws Exception {
         require(c,actor);int role=b.get("roleId").getAsInt();Set<String>desktop=jsonSet(b,"permissionKeys"),mobile=jsonSet(b,"mobilePermissionKeys");
-        ensureRole(c,role);replace(c,role,desktop,"role_permissions","permissions","permission_id");
+        ensureRole(c,role);
+        if(b.has("description")){String description=b.get("description").getAsString();if(description.length()>2000)throw new RuleViolation(400,"VALIDATION_ERROR","Role descriptions must be 2000 characters or fewer.");try(PreparedStatement p=c.prepareStatement("UPDATE roles SET description=? WHERE role_id=?")){p.setString(1,description);p.setInt(2,role);p.executeUpdate();}}
+        replace(c,role,desktop,"role_permissions","permissions","permission_id");
         if(table(c,"role_mobile_permissions"))replaceMobile(c,role,mobile);
         CrossStoreRoleSyncService.record(c, role, locationId);
         SyncOutboxService.recordEvent(c,"ROLE_PERMISSIONS_UPDATED",Map.of("role_id",role,"permission_count",desktop.size(),"mobile_permission_count",mobile.size(),"actor_user_id",actor),locationId,deviceId.toString(),actor);
@@ -32,7 +34,13 @@ final class LanRoleAdminService {
 
     static Map<String,Object> add(Connection c,JsonObject b,int actor,int locationId,UUID deviceId)throws Exception {
         require(c,actor);String name=b.has("name")?b.get("name").getAsString().trim().toUpperCase(Locale.ROOT):"";if(name.isBlank()||name.length()>100)throw new RuleViolation(400,"VALIDATION_ERROR","Enter a valid role name.");
-        try(PreparedStatement p=c.prepareStatement("INSERT INTO roles(role_name,description) VALUES(?,'Custom role') RETURNING role_id")){p.setString(1,name);try(ResultSet r=p.executeQuery()){r.next();int roleId=r.getInt(1);CrossStoreRoleSyncService.record(c,roleId,locationId);SyncOutboxService.recordEvent(c,"ROLE_CREATED",Map.of("role_id",roleId,"role_name",name,"actor_user_id",actor),locationId,deviceId.toString(),actor);return map("roleId",roleId,"name",name);}}
+        try(PreparedStatement p=c.prepareStatement("INSERT INTO roles(role_name,description) VALUES(?,'Custom role') RETURNING role_id")){p.setString(1,name);try(ResultSet r=p.executeQuery()){r.next();int roleId=r.getInt(1);
+            if(b.has("sourceRoleId")){int source=b.get("sourceRoleId").getAsInt();ensureRole(c,source);
+                try(PreparedStatement copy=c.prepareStatement("INSERT INTO role_permissions(role_id,permission_id) SELECT ?,permission_id FROM role_permissions WHERE role_id=?")){copy.setInt(1,roleId);copy.setInt(2,source);copy.executeUpdate();}
+                if(table(c,"role_mobile_permissions"))try(PreparedStatement copy=c.prepareStatement("INSERT INTO role_mobile_permissions(role_id,permission_key) SELECT ?,permission_key FROM role_mobile_permissions WHERE role_id=?")){copy.setInt(1,roleId);copy.setInt(2,source);copy.executeUpdate();}
+                try(PreparedStatement copy=c.prepareStatement("UPDATE roles SET description=(SELECT description FROM roles WHERE role_id=?) WHERE role_id=?")){copy.setInt(1,source);copy.setInt(2,roleId);copy.executeUpdate();}
+            }
+            CrossStoreRoleSyncService.record(c,roleId,locationId);SyncOutboxService.recordEvent(c,"ROLE_CREATED",Map.of("role_id",roleId,"role_name",name,"actor_user_id",actor),locationId,deviceId.toString(),actor);return map("roleId",roleId,"name",name);}}
     }
 
     private static void replace(Connection c,int role,Set<String>keys,String join,String defs,String id)throws Exception {

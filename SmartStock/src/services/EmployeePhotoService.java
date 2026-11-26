@@ -14,6 +14,20 @@ public final class EmployeePhotoService {
     private EmployeePhotoService() {
     }
 
+    /** Keeps original bytes separately so repeated reframing never crops an already cropped image. */
+    public static String uploadOriginalIfNeeded(String reference,String employeeName)throws Exception {
+        if(reference==null||reference.isBlank()||ImageCacheManager.isRemoteImageUrl(reference))return reference==null?"":reference;
+        var path=java.nio.file.Path.of(reference);
+        if(!java.nio.file.Files.isRegularFile(path)||java.nio.file.Files.size(path)>MAX_ORIGINAL_PHOTO_BYTES)
+            throw new IllegalArgumentException("Choose an employee photo up to 12 MB.");
+        String type=java.nio.file.Files.probeContentType(path);
+        if(type==null||!type.startsWith("image/"))throw new IllegalArgumentException("Choose a supported image file.");
+        String extension=reference.substring(reference.lastIndexOf('.')+1).toLowerCase(Locale.ROOT);
+        String filename=java.util.UUID.randomUUID()+"-original."+extension.replaceAll("[^a-z0-9]", "");
+        String url=LanApiClient.uploadCloudFile(EMPLOYEE_PHOTO_BUCKET,EMPLOYEE_PHOTO_FOLDER+"/"+sanitizePathPart(employeeName)+"/"+filename,type,java.nio.file.Files.readAllBytes(path));
+        ImageCacheManager.cacheUploadedImage(url,path);return url;
+    }
+
     public static String uploadLocalPhotoIfNeeded(String photoPathOrUrl, String employeeName) throws Exception {
         String value = photoPathOrUrl == null ? "" : photoPathOrUrl.trim();
         if (value.isBlank() || ImageCacheManager.isRemoteImageUrl(value)) {

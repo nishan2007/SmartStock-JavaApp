@@ -9,6 +9,32 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CustomItemInventoryPanelTest {
+    @Test void classificationFiltersUseTheParentTypeAndCategoryAndTheEffectiveVariantBrand() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            var state = LanJson.create().fromJson("""
+                {"items":[
+                  {"itemId":1,"name":"Polo","itemType":"Shirt","brand":"Gildan","isShirt":true,
+                   "active":true,"hasVariants":true,"variants":[
+                     {"variantId":11,"itemId":1,"name":"Inherited brand","active":true},
+                     {"variantId":12,"itemId":1,"name":"Override brand","brand":"Russell","active":true}]},
+                  {"itemId":2,"name":"Mug","itemType":"Mug","brand":"Russell","active":true,"variants":[]}
+                ],"materials":[],"presets":[],"placements":[]}
+                """, State.class);
+            var panel = new CustomItemInventoryPanel(null, () -> {}, (action, input) -> {}, id -> {});
+            panel.setState(state);
+            panel.itemTypes.setSelectedItem("Shirt");
+            panel.brands.setSelectedItem("Russell");
+            assertEquals(2, panel.table.getRowCount());
+            assertEquals("    Override brand", panel.table.getModel().getValueAt(1, 0));
+            panel.itemTypes.setSelectedIndex(0);
+            assertEquals(3, panel.table.getRowCount());
+            panel.categories.setSelectedItem("Shirts");
+            panel.brands.setSelectedItem("Gildan");
+            assertEquals(2, panel.table.getRowCount());
+            assertEquals("    Inherited brand", panel.table.getModel().getValueAt(1, 0));
+        });
+    }
+
     @Test void variantIdentifiersRevealOnlyMatchingChildAndKeepParentContext()throws Exception{
         SwingUtilities.invokeAndWait(()->{
             var state=LanJson.create().fromJson("""
@@ -33,7 +59,7 @@ class CustomItemInventoryPanelTest {
                 {"items":[{"itemId":1,"name":"Item","active":true,"isShirt":true,"variants":[]}],"materials":[],"presets":[],"placements":[]}
                 """,State.class);
             var panel=new CustomItemInventoryPanel(null,()->{},(a,b)->{},id->{});panel.setState(state);
-            var model=panel.table.getModel();assertEquals("Category",model.getColumnName(15));assertEquals(24,model.getColumnCount());
+            var model=panel.table.getModel();assertEquals("Category",model.getColumnName(15));assertEquals(25,model.getColumnCount());
             assertTrue(model.isCellEditable(0,18));model.setValueAt(services.CustomItemCategory.LASER,0,15);
             assertFalse(panel.staged("I:1").get("isShirt").getAsBoolean());assertTrue(panel.staged("I:1").get("isLaser").getAsBoolean());assertFalse(model.isCellEditable(0,18));
             model.setValueAt(services.CustomItemCategory.BUSINESS_CARDS,0,15);
@@ -207,6 +233,44 @@ class CustomItemInventoryPanelTest {
             assertTrue(panel.table.getValueAt(0,0).toString().contains("Older"));
             assertEquals("Child",panel.table.getValueAt(1,0).toString().trim());
             assertEquals("Newer",panel.table.getValueAt(2,0));
+            clickHeader(panel,11);
+            assertEquals(1,panel.dateSort.getSelectedIndex());
+            assertEquals("Newer",panel.table.getValueAt(0,0));
+            assertEquals("Unknown",panel.table.getValueAt(3,0));
+        });
+    }
+    @Test void clickingHeadersSortsItemGroupsAndKeepsEditsOnTheCorrectRow()throws Exception{
+        SwingUtilities.invokeAndWait(()->{
+            var state=LanJson.create().fromJson("""
+                {"items":[
+                  {"itemId":1,"name":"Zebra","quantity":10,"active":true,"hasVariants":true,"variants":[
+                    {"variantId":5,"itemId":1,"name":"Small","quantity":10,"active":true}]},
+                  {"itemId":2,"name":"Alpha","quantity":2,"active":true,"variants":[]}
+                ],"materials":[],"presets":[],"placements":[]}
+                """,State.class);
+            var panel=new CustomItemInventoryPanel(null,()->{},(action,row)->{},id->{});
+            panel.setState(state);
+            toggle(panel);
+            panel.table.setRowSelectionInterval(1,1);
+
+            clickHeader(panel,0);
+            assertEquals("Alpha",panel.table.getValueAt(0,0));
+            assertEquals("Small",panel.table.getValueAt(2,0).toString().trim());
+            assertEquals(2,panel.table.getSelectedRow());
+            clickHeader(panel,0);
+            assertEquals("Alpha",panel.table.getValueAt(2,0));
+
+            int quantityColumn=panel.table.convertColumnIndexToView(6);
+            panel.table.moveColumn(quantityColumn,1);
+            clickHeader(panel,6);
+            assertEquals("Alpha",panel.table.getValueAt(0,0));
+            panel.table.setValueAt("12",2,1);
+            assertEquals("12",panel.staged("V:5").get("quantity").getAsString());
+            assertNull(panel.staged("I:2"));
+            clickHeader(panel,6);
+            assertEquals("Small",panel.table.getValueAt(1,0).toString().trim());
+            assertEquals("12",panel.table.getValueAt(1,1));
+            assertEquals("Alpha",panel.table.getValueAt(2,0));
         });
     }
     @Test void variantsExpandAndEditsSurviveCollapseWithoutOverwritingOtherFields()throws Exception{
@@ -231,9 +295,39 @@ class CustomItemInventoryPanelTest {
             assertEquals("Blue",staged.get("color").getAsString());
         });
     }
+    @Test void itemTypeBelongsToParentAndIsInheritedByAllVariantRows()throws Exception{
+        SwingUtilities.invokeAndWait(()->{
+            var state=LanJson.create().fromJson("""
+                {"items":[{"itemId":1,"name":"Plaque","itemType":"Awards","active":true,"hasVariants":true,"variants":[
+                {"variantId":11,"itemId":1,"name":"Diamond","active":true},
+                {"variantId":12,"itemId":1,"name":"Star","active":true}]}],"materials":[],"presets":[],"placements":[]}
+                """,State.class);
+            var panel=new CustomItemInventoryPanel(null,()->{},(a,b)->{},id->{});panel.setState(state);
+            int column=panel.table.convertColumnIndexToView(24);
+            assertEquals("Item Type",panel.table.getColumnName(column));
+            assertTrue(panel.table.isCellEditable(0,column));assertEquals("Awards",panel.table.getValueAt(0,column));
+            toggle(panel);assertEquals(3,panel.table.getRowCount());
+            assertFalse(panel.table.isCellEditable(1,column));assertFalse(panel.table.isCellEditable(2,column));
+            panel.table.setValueAt("Recognition",0,column);
+            assertEquals("Recognition",panel.staged("I:1").get("itemType").getAsString());
+            assertEquals("Recognition",panel.table.getValueAt(1,column));assertEquals("Recognition",panel.table.getValueAt(2,column));
+            assertNull(panel.staged("V:11"));assertNull(panel.staged("V:12"));
+            panel.table.setValueAt("Variant override",1,column);
+            assertEquals("Recognition",panel.table.getValueAt(1,column));assertNull(panel.staged("V:11"));
+            toggle(panel);toggle(panel);assertEquals("Recognition",panel.table.getValueAt(2,column));
+            panel.search.setText("recognition");assertEquals(3,panel.table.getRowCount());
+        });
+    }
     private static void toggle(CustomItemInventoryPanel panel){
         var cell=panel.table.getCellRect(0,0,true);
         var event=new MouseEvent(panel.table,MouseEvent.MOUSE_CLICKED,System.currentTimeMillis(),0,cell.x+4,cell.y+4,1,false,MouseEvent.BUTTON1);
         for(var listener:panel.table.getMouseListeners())listener.mouseClicked(event);
+    }
+    private static void clickHeader(CustomItemInventoryPanel panel,int modelColumn){
+        var header=panel.table.getTableHeader();
+        header.setSize(header.getPreferredSize());
+        var cell=header.getHeaderRect(panel.table.convertColumnIndexToView(modelColumn));
+        header.dispatchEvent(new MouseEvent(header,MouseEvent.MOUSE_CLICKED,System.currentTimeMillis(),0,
+                cell.x+cell.width/2,cell.y+cell.height/2,1,false,MouseEvent.BUTTON1));
     }
 }

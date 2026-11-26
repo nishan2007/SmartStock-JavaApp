@@ -326,7 +326,10 @@ public class BalanceDraw extends JFrame {
                 closeButton.setEnabled(false);
                 clearQuantityDraft(activeSession.sessionId());
             } else {
-                handoverButton.setEnabled(java.util.Objects.equals(activeSession.currentCashierUserId(),SessionManager.getCurrentUserId()));
+                boolean incoming=!java.util.Objects.equals(activeSession.currentCashierUserId(),SessionManager.getCurrentUserId());
+                handoverButton.setEnabled(true);
+                handoverButton.setText(incoming?"Take Over Cash":"Confirm Handover");
+                if(incoming)statusLabel.setText("Count the cash to take over if the previous cashier could not complete handover.");
             }
             editClosedButton.setEnabled(false);
             resetTable(activeSession.openingCash());
@@ -354,24 +357,32 @@ public class BalanceDraw extends JFrame {
         }
         BigDecimal countedCash = countedTotal();
         BigDecimal variance = countedCash.subtract(expectedCash);
-        if (variance.compareTo(BigDecimal.ZERO) != 0) {
-            JOptionPane.showMessageDialog(
-                    this,
-                    "Handover count must match expected cash.\nExpected: " + CURRENCY.format(expectedCash)
-                            + "\nCounted: " + CURRENCY.format(countedCash)
-                            + "\nVariance: " + CURRENCY.format(variance),
-                    "Handover Count Mismatch",
-                    JOptionPane.WARNING_MESSAGE
-            );
-            return;
+        boolean unattended=pendingHandover==null && !java.util.Objects.equals(activeSession.currentCashierUserId(),SessionManager.getCurrentUserId());
+        Integer previousCashier=activeSession.currentCashierUserId();
+        String takeoverReason=null;
+        if(unattended) {
+            takeoverReason=JOptionPane.showInputDialog(this,"Why could " + displayName(activeSession.currentCashierName())
+                    + " not complete handover?","Cash Takeover",JOptionPane.QUESTION_MESSAGE);
+            if(takeoverReason==null)return;
+            if(takeoverReason.isBlank()) {
+                JOptionPane.showMessageDialog(this,"Enter a reason for taking over without handover.","Cash Takeover",JOptionPane.WARNING_MESSAGE);
+                return;
+            }
         }
+        final String notes=takeoverReason==null?null:takeoverReason.trim();
+        String attribution = "\nPre-handover shortage/overage: " + CURRENCY.format(variance)
+                + "\nAttributed to: " + displayName(activeSession.currentCashierName())
+                + "\nThe incoming cashier starts with the accepted cash count.";
         int confirm = JOptionPane.showConfirmDialog(
                 this,
-                pendingHandover==null
-                        ? "Confirm your outgoing count of " + CURRENCY.format(countedCash) + "?\nThe draw will await the next cashier's recount and acceptance."
+                unattended ? "Take over cash from " + displayName(activeSession.currentCashierName())
+                        + " with " + CURRENCY.format(countedCash) + "?\nThe previous cashier has not confirmed this count."
+                        + "\nReason: " + notes + attribution
+                : pendingHandover==null
+                        ? "Confirm your outgoing count of " + CURRENCY.format(countedCash) + "?\nThe draw will await the next cashier's recount and acceptance." + attribution
                         : "Accept the draw from " + displayName(activeSession.currentCashierName())
                           + " as " + displayName(SessionManager.getCurrentUserDisplayName())
-                          + " with " + CURRENCY.format(countedCash) + " and resume the draw?",
+                          + " with " + CURRENCY.format(countedCash) + " and resume the draw?" + attribution,
                 "Confirm Handover",
                 JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.WARNING_MESSAGE
@@ -380,10 +391,10 @@ public class BalanceDraw extends JFrame {
             return;
         }
         boolean accepting=pendingHandover!=null;
-        long sessionId=activeSession.sessionId();String key=mutationKey("handover|"+sessionId+"|"+accepting+"|"+countedCash);
+        long sessionId=activeSession.sessionId();String key=mutationKey("handover|"+sessionId+"|"+accepting+"|"+unattended+"|"+previousCashier+"|"+notes+"|"+countedCash);
         var quantities=quantitySnapshot();var floats=floatSnapshot();var floatTotal=currentFloatTotal;var cih=currentCihTotal;
         draftTimer.stop();draftDirty=false;
-        UiTaskRunner.submit(this,"cash-drawer.handover",()->LanApiClient.handoverCashDrawer(sessionId,countedCash,null,quantities,floats,floatTotal,cih,key,accepting),handover->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
+        UiTaskRunner.submit(this,"cash-drawer.handover",()->LanApiClient.handoverCashDrawer(sessionId,countedCash,notes,quantities,floats,floatTotal,cih,key,accepting,unattended,previousCashier),handover->{clearMutationKey();SessionDataCache.invalidate("cash-drawer:");
             clearQuantityDraft(sessionId);
             JOptionPane.showMessageDialog(
                     this,

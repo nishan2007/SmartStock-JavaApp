@@ -52,8 +52,6 @@ public final class SheetLayout {
           || right < 0
           || top < 0
           || bottom < 0
-          || gapX < 0
-          || gapY < 0
           || bleed < 0
           || left + right >= width
           || top + bottom >= height
@@ -90,9 +88,13 @@ public final class SheetLayout {
         h = height + 2 * s.bleed,
         aw = s.width - s.left - s.right,
         ah = s.height - s.top - s.bottom;
+    boolean upright = w + s.gapX > 0 && h + s.gapY > 0;
+    boolean rotated = s.maximize && s.rotate && h + s.gapX > 0 && w + s.gapY > 0;
+    if (!upright && !rotated)
+      throw new IllegalArgumentException("Negative gaps must leave a positive step between copies.");
     List<Placement> best = grid(w, h, aw, ah, s.gapX, s.gapY, false);
-    if (s.maximize && s.rotate) {
-      best = better(best, grid(h, w, aw, ah, s.gapX, s.gapY, true));
+    if (rotated) best = better(best, grid(h, w, aw, ah, s.gapX, s.gapY, true));
+    if (upright && rotated) {
       // Every feasible split between upright and rotated shelves, in both axes.
       int rows = count(ah, h, s.gapY);
       if (rows > 10000)
@@ -137,7 +139,9 @@ public final class SheetLayout {
   }
 
   private static int count(double space, double item, double gap) {
-    return Math.max(0, (int) Math.floor((space + gap + EPS) / (item + gap)));
+    double step = item + gap;
+    if (step <= 0 || space + EPS < item) return 0;
+    return 1 + (int) Math.min(10000, Math.floor((space - item + EPS) / step));
   }
 
   private static List<Placement> grid(

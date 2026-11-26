@@ -17,10 +17,11 @@ final class CustomerPhoneOwnership {
     static void requireAvailable(Connection connection, String phone, Integer customerId) throws SQLException {
         if (phone == null || phone.isBlank()) return;
         try (var ps = connection.prepareStatement("""
-                SELECT EXISTS(SELECT 1 FROM customer_phone_ownership
-                  WHERE phone_key=public.customer_phone_key(?) AND customer_id<>?)
+                SELECT EXISTS(SELECT 1 FROM customer_accounts
+                  WHERE public.customer_phone_key(?)=ANY(ARRAY[public.customer_phone_key(phone),public.customer_phone_key(additional_phone_1),public.customer_phone_key(additional_phone_2)]) AND customer_id<>?
+                  AND customer_id=public.canonical_customer_id(customer_id))
                   AND NOT EXISTS(SELECT 1 FROM customer_accounts
-                  WHERE customer_id=? AND public.customer_phone_key(phone)=public.customer_phone_key(?))
+                  WHERE customer_id=? AND public.customer_phone_key(?)=ANY(ARRAY[public.customer_phone_key(phone),public.customer_phone_key(additional_phone_1),public.customer_phone_key(additional_phone_2)]))
                 """)) {
             ps.setString(1, phone);
             ps.setInt(2, customerId == null ? -1 : customerId);

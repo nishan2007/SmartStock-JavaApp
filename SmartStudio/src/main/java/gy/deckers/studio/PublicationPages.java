@@ -17,6 +17,12 @@ final class PublicationPages extends JPanel {
     void setRisoSelection(BiConsumer<Integer,String> listener){risoSelected=listener;}
     final JList<String> list=new JList<>(new DefaultListModel<>());
     private final JScrollPane scroll=new JScrollPane(list);
+    private final JPanel pageCommands=new JPanel(new GridLayout(1,2,4,0));
+    void setPageActions(AbstractButton add,AbstractButton delete){
+        pageCommands.removeAll();
+        for(AbstractButton source:new AbstractButton[]{add,delete}){JButton button=StudioRibbon.shortcut(source,source.getText());StudioVisuals.ribbonButton(button);pageCommands.add(button);}
+        pageCommands.setVisible(true);setVisible(true);revalidate();
+    }
     private final Map<Integer,BufferedImage> images=new LinkedHashMap<>(){
         protected boolean removeEldestEntry(Map.Entry<Integer,BufferedImage> entry){return size()>64;}
     };
@@ -31,7 +37,7 @@ final class PublicationPages extends JPanel {
     private PublicationPages(IntConsumer selected,boolean main){
         super(new BorderLayout(4,4));setOpaque(false);setMinimumSize(new Dimension(110,100));setPreferredSize(new Dimension(180,400));
         JPanel top=DeckersSwing.panel();top.setLayout(new BorderLayout());top.add(new JLabel(main?"Pages":"Riso sub-pages"),BorderLayout.NORTH);
-        JSlider size=new JSlider(80,240,130);size.setToolTipText("Page preview size");top.add(size);add(top,BorderLayout.NORTH);add(scroll);
+        JSlider size=new JSlider(80,240,130);size.setToolTipText("Page preview size");top.add(size);pageCommands.setOpaque(false);pageCommands.setVisible(false);top.add(pageCommands,BorderLayout.SOUTH);add(top,BorderLayout.NORTH);add(scroll);
         list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);list.setFixedCellHeight(166);list.setBackground(DeckersPalette.background());
         list.setCellRenderer((items,value,index,isSelected,focus)->{
             JLabel label=new JLabel(value,SwingConstants.CENTER);label.setHorizontalTextPosition(SwingConstants.CENTER);label.setVerticalTextPosition(SwingConstants.BOTTOM);label.setOpaque(true);label.setBackground(isSelected?DeckersPalette.PURPLE:DeckersPalette.background());label.setForeground(isSelected?Color.WHITE:Color.BLACK);
@@ -52,7 +58,10 @@ final class PublicationPages extends JPanel {
         document=source.copy();generation++;images.clear();if(worker!=null)worker.cancel(true);
         updating=true;try{DefaultListModel<String> model=(DefaultListModel<String>)list.getModel();model.clear();entries.clear();for(int i=0;i<source.pages.size();i++){var page=source.pages.get(i);entries.add(new Entry(i,null));model.addElement((i+1)+" · "+page.name);}list.setSelectedIndex(mainRow(selected));}finally{updating=false;}
         activePage=-1;showSubPages(selected);
-        setVisible(entries.size()>1||(subPages!=null&&subPages.isVisible()));list.repaint();refresh.restart();
+        // Keep navigation space reserved for editors with page controls. Hiding a
+        // single-page template lets JSplitPane collapse this side, and showing
+        // it again does not restore the divider when a multi-page file opens.
+        setVisible(pageCommands.isVisible()||entries.size()>1||(subPages!=null&&subPages.isVisible()));list.repaint();refresh.restart();
     }
     private void showSubPages(int page){
         if(subPages==null||document==null||page<0||page>=document.pages.size()||activePage==page)return;

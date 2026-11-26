@@ -1,0 +1,7 @@
+SmartStudio 0.1.77 — Vinyl Cut and Print & Cut labels
+
+Adds a Vinyl Cut workspace and Print & Cut production tools in Labels, using SmartStudio's shared editor and styling.
+Configure roll/sheet dimensions, quantities, spacing, bleed and 0.75-inch roller grip allowance on any selected edge. Print and cutter-loading previews preserve the grip edge when rotating 44-inch sheets.
+Save frozen production jobs, print at actual size or export matching PDF, manually align three targets, and send pen proofs and blade cuts through verified USBPRINT or serial settings.
+Includes measured pen-square scale calibration. Physical cutter scale, axes, tracking, print accuracy and material kiss-cut settings must be verified before production use.
+Windows update only: requires an existing SmartStudio installation. Java runtime and AI model weights are excluded. No store-server or database update is required.

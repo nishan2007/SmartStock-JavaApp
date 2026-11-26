@@ -1,0 +1,5 @@
+SmartStudio 0.1.95 - badge card printing
+
+Badge printing now automatically rotates the artwork when it fits the selected printer's printable area in the opposite orientation. This resolves the printable-area error caused by portrait versus landscape card paper, while preserving the badge's actual physical size on both front and back.
+
+Save open designs before updating. Physical Magicard 300 printing still requires verification on the connected computer.

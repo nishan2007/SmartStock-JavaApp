@@ -58,6 +58,12 @@ public final class CustomOrderLabelPrinter {
     public static void print(CustomOrderSlipData data, int count) throws PrintException {
         if (data == null) throw new PrintException("Custom order label data is unavailable.");
         parseLabelCount(String.valueOf(count));
+        try {
+            if (services.SharedLabelPrinting.usesSharedPrinter()) {
+                services.SharedLabelPrinting.submitOrder(render(data), count);
+                return;
+            }
+        } catch (Exception ex) { throw new PrintException(ex); }
         HardwareSettingsManager.PosPrinter printer;
         try {
             if (HardwareSettingsManager.getDefaultOrderLabelPrinterDestination() == HardwareSettingsManager.ReceiptPrinterDestination.ETHERNET) {
@@ -170,6 +176,18 @@ public final class CustomOrderLabelPrinter {
         } catch (PrinterException ex) {
             throw new PrintException(ex);
         }
+    }
+
+    public static void printSharedImage(BufferedImage image, int count, PrintService service) throws PrintException {
+        parseLabelCount(String.valueOf(count));
+        PrinterJob job = PrinterJob.getPrinterJob();
+        job.setJobName("SmartStock Shared Order Labels");
+        try {
+            job.setPrintService(service);
+            PageFormat format = createCt221bPageFormat(job.defaultPage());
+            job.setPrintable((g, f, i) -> printPage(g, f, i, image, count), format);
+            job.print();
+        } catch (PrinterException ex) { throw new PrintException(ex); }
     }
 
     public static BufferedImage render(CustomOrderSlipData data) {

@@ -1,0 +1,5 @@
+Deckers lavender workspace design
+
+Updated unified Deckers app home screen with the approved purple header, lavender tiles, orange accents, and fourteen purpose-specific illustrated icons. Responsive grid retains app permissions, employee photo, search, and store-network badges. Store connection status uses the existing authenticated local-network check. Retains device-specific login and all changes from 1.1.135.
+
+Windows update only. Install on the store server to serve the updated web design at deckersapps.deckers.gy. No automatic installation or restart is performed.

@@ -453,6 +453,10 @@ public final class CashDrawerService {
     }
 
     public static CashDrawerHandover recordHandover(Connection conn,long sessionId,BigDecimal countedCash,String notes,Integer userId,String userName)throws SQLException{
+        return recordHandover(conn,sessionId,countedCash,notes,userId,userName,false);
+    }
+
+    static CashDrawerHandover recordHandover(Connection conn,long sessionId,BigDecimal countedCash,String notes,Integer userId,String userName,boolean unattended)throws SQLException{
         ensureSchema(conn);
         CashDrawerSession session = getSessionForUpdate(conn, sessionId);
         if (session == null) {
@@ -465,11 +469,14 @@ public final class CashDrawerService {
         BigDecimal expectedCash = calculateExpectedCash(conn, sessionId);
         BigDecimal cleanCountedCash = defaultZero(countedCash);
         CashDrawerHandover waiting=CashDrawerHandoverService.pending(conn,sessionId);
-        if(waiting==null)throw new SQLException("The current cashier must initiate handover first.");
+        if(unattended) {
+            if(waiting!=null)throw new SQLException("Accept the pending handover instead of taking over without handover.");
+            if(notes==null || notes.isBlank())throw new SQLException("A cash takeover reason is required.");
+        } else if(waiting==null)throw new SQLException("The current cashier must initiate handover first.");
         if(userId==null)throw new SQLException("A signed-in incoming cashier is required.");
         CashDrawerHandoverService.validateCashier(session.currentCashierUserId(),userId,true);
-        if(cleanCountedCash.compareTo(expectedCash)!=0 || cleanCountedCash.compareTo(waiting.countedCash())!=0)
-            throw new SQLException("The incoming cashier's count must match the outgoing count and expected cash.");
+        if(cleanCountedCash.signum()<0 || (!unattended && cleanCountedCash.compareTo(waiting.countedCash())!=0))
+            throw new SQLException("The incoming cashier's count must match the outgoing count.");
         BigDecimal variance = cleanCountedCash.subtract(expectedCash);
         String sql = """
                 INSERT INTO cash_drawer_handovers (
@@ -748,7 +755,12 @@ public final class CashDrawerService {
         if (session == null) {
             throw new SQLException("Draw session was not found.");
         }
-        return defaultZero(session.openingCash()).add(calculateNetCashActivity(conn, sessionId));
+        // Settle outgoing differences so the incoming cashier starts with accepted cash.
+        BigDecimal settledVariance = sum(conn, """
+                SELECT COALESCE(SUM(variance), 0) FROM cash_drawer_handovers
+                WHERE cash_drawer_session_id = ?
+                """, sessionId);
+        return defaultZero(session.openingCash()).add(calculateNetCashActivity(conn, sessionId)).add(settledVariance);
     }
 
     public static BigDecimal calculateNetCashActivity(Connection conn, long sessionId) throws SQLException {
@@ -756,7 +768,7 @@ public final class CashDrawerService {
         BigDecimal total = BigDecimal.ZERO;
         total = total.add(sum(conn, """
                 SELECT COALESCE(SUM(amount_paid), 0)
-                FROM sales
+                FROM sales_tender_activity
                 WHERE cash_drawer_session_id = ?
                   AND payment_method = 'CASH'
                 """, sessionId));
@@ -805,6 +817,8 @@ public final class CashDrawerService {
 
     public static BigDecimal calculateReturnedCash(Connection conn,long sessionId)throws SQLException{
         ensureSchema(conn);BigDecimal total=BigDecimal.ZERO;
+        total=total.add(sum(conn,"SELECT COALESCE(SUM(amount),0) FROM phone_minutes_sales WHERE reversal_cash_drawer_session_id=? AND payment_method='CASH' AND reversed_at IS NOT NULL",sessionId));
+        total=total.add(sum(conn,"SELECT COALESCE(SUM(amount),0) FROM sales_task_payments WHERE cash_drawer_session_id=? AND payment_method='CASH' AND payment_action='REFUND'",sessionId));
         total=total.add(sum(conn,"SELECT COALESCE(SUM(refund_amount),0) FROM sale_returns WHERE cash_drawer_session_id=? AND refund_method='CASH'",sessionId));
         total=total.add(sum(conn,"SELECT COALESCE(SUM(refund_amount),0) FROM cross_store_refund_requests WHERE cash_drawer_session_id=? AND refund_method='CASH' AND status NOT IN ('REJECTED','CANCELLED')",sessionId));
         total=total.add(sum(conn,"SELECT COALESCE(SUM(payment_amount),0) FROM custom_order_payments WHERE NOT overseas_cash_separate AND cash_drawer_session_id=? AND payment_method='CASH' AND COALESCE(payment_action,'PAYMENT') IN ('REFUND','REVERSAL')",sessionId));
@@ -876,7 +890,7 @@ public final class CashDrawerService {
         }
         addNamesFromQuery(conn, names, """
                 SELECT user_name AS name
-                FROM sales
+                FROM sales_tender_activity
                 WHERE cash_drawer_session_id = ?
                   AND payment_method = 'CASH'
                 """, sessionId);
@@ -1131,8 +1145,9 @@ public final class CashDrawerService {
                         .append(handover.expectedCash())
                         .append(", counted=")
                         .append(handover.countedCash())
-                        .append(", variance=")
+                        .append(", outgoing cashier shortage/overage=")
                         .append(handover.variance())
+                        .append(", notes=").append(defaultText(handover.notes()))
                         .append('\n');
             }
         }

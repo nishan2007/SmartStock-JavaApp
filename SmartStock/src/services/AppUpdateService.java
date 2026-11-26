@@ -46,6 +46,51 @@ public final class AppUpdateService {
     private AppUpdateService() {
     }
 
+    private static final java.util.concurrent.atomic.AtomicBoolean DISPLAY_UPDATE_RUNNING=new java.util.concurrent.atomic.AtomicBoolean();
+
+    /** No employee session or application confirmation is required on a paired display. */
+    public static void updateDisplayAutomatically(java.util.function.Consumer<String> status,java.util.function.BooleanSupplier active) {
+        updateDisplay(status,active,false);
+    }
+
+    /** Uses the same verified installer path and concurrency guard as unattended updates. */
+    public static void updateDisplayManually(java.util.function.Consumer<String> status,java.util.function.BooleanSupplier active) {
+        updateDisplay(status,active,true);
+    }
+
+    private static void updateDisplay(java.util.function.Consumer<String> status,java.util.function.BooleanSupplier active,boolean manual) {
+        if(data.DatabaseConfig.load().mode()!=data.DatabaseMode.DISPLAY || !active.getAsBoolean())return;
+        if(!DISPLAY_UPDATE_RUNNING.compareAndSet(false,true)){
+            SwingUtilities.invokeLater(()->{if(active.getAsBoolean())status.accept("Update already in progress…");});
+            return;
+        }
+        new SwingWorker<Void,Void>() {
+            protected Void doInBackground()throws Exception {
+                try {
+                    if(!LanApiClient.isPaired()){
+                        report("Pair and approve this display before checking for updates.");return null;
+                    }
+                    report("Checking for SmartStock updates…");
+                    if(WindowsDisplayUpdateService.windows()) {
+                        WindowsDisplayUpdateService.update(this::report,active);
+                        return null;
+                    }
+                    var result=checkForUpdate();
+                    if(!active.getAsBoolean())return null;
+                    if(result.release()==null){report("SmartStock is up to date.");return null;}
+                    report("Downloading update "+result.release().version()+"…");
+                    Path manifest=downloadAndStage(result.release());
+                    if(!active.getAsBoolean())return null;
+                    report("Installing update "+result.release().version()+" and restarting…");
+                    launchUpdaterAndExit(manifest);
+                    return null;
+                }finally{DISPLAY_UPDATE_RUNNING.set(false);}
+            }
+            private void report(String text){SwingUtilities.invokeLater(()->{if(active.getAsBoolean())status.accept(text);});}
+            protected void done(){try{get();}catch(Exception ex){report((manual?"Update failed. ":"Automatic update postponed; retrying later. ")+rootMessage(ex));}}
+        }.execute();
+    }
+
     public static void checkForUpdatesAsync(Component parent, boolean manual) {
         SwingWorker<Void, Void> worker = new SwingWorker<>() {
             private UpdateCheckResult result;

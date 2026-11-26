@@ -38,9 +38,12 @@ class StudioEnhancementControlsTest {
                 click(studio.getContentPane(),"Image Studio");
                 for (int width : new int[]{1100, 820}) {
                     studio.setSize(width, 760); studio.addNotify(); studio.validate();
-                    assertFits(removal); assertFits(scale); assertFits((Component) field(studio, "cleanEdges"));
-                    assertFits((Component) field(studio, "paste"));
-                    assertFits((Component) field(studio,"processingMode"));assertFits((Component) field(studio,"cancelImage"));
+                    // Detailed processing fields now live in a bounded settings dialog.
+                    // Compact layouts keep the source/process actions directly visible.
+                    for(String title:new String[]{"Choose image","Process image","Paste image"}){
+                        JButton command=visibleButton(studio.getContentPane(),title);
+                        assertNotNull(command,"Missing compact action: "+title);assertFits(command);
+                    }
                     var image = new BufferedImage(studio.getContentPane().getWidth(), studio.getContentPane().getHeight(), BufferedImage.TYPE_INT_RGB);
                     var graphics = image.createGraphics(); studio.getContentPane().printAll(graphics); graphics.dispose();
                     Path output = Path.of("target", "image-studio-" + width + ".png"); Files.createDirectories(output.getParent());
@@ -49,6 +52,13 @@ class StudioEnhancementControlsTest {
             } catch (Exception e) { throw new RuntimeException(e); }
             finally { studio.dispose(); }
         });
+    }
+    private static JButton visibleButton(Container parent,String title){
+        for(Component child:parent.getComponents()){
+            if(!child.isVisible()||child.getWidth()<=0||child.getHeight()<=0)continue;
+            if(child instanceof JButton button&&title.equals(button.getText()))return button;
+            if(child instanceof Container nested){JButton result=visibleButton(nested,title);if(result!=null)return result;}
+        }return null;
     }
     private static void assertFits(Component component) {
         assertTrue(component.getX() >= 0 && component.getY() >= 0

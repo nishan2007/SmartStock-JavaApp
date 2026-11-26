@@ -57,6 +57,7 @@ public final class ServerImageAssetService {
             new ReferenceSource("custom_order_items", "custom_item_id", "image_url", "CUSTOM_ITEM"),
             new ReferenceSource("custom_order_item_variants", "custom_variant_id", "image_url", "CUSTOM_VARIANT"),
             new ReferenceSource("users", "user_id", "employee_photo_url", "EMPLOYEE_PHOTO"),
+            new ReferenceSource("users", "user_id", "employee_photo_source_url", "EMPLOYEE_PHOTO"),
             new ReferenceSource("customer_accounts", "customer_id", "customer_photo_url", "CUSTOMER_PHOTO"),
             new ReferenceSource("company_info", "company_info_id", "company_logo_url", "COMPANY_LOGO"),
             new ReferenceSource("company_customization", "location_id", "badge_template_logo_url", "BADGE_LOGO")
@@ -170,7 +171,7 @@ public final class ServerImageAssetService {
     }
 
     static boolean storefrontPublicAssetAllowed(String category,String lifecycle,String contentType) {
-        return ("PRODUCT".equals(category)||"COMPANY_LOGO".equals(category)||"PROJECT".equals(category)) && "ACTIVE".equals(lifecycle)
+        return ("PRODUCT".equals(category)||"COMPANY_LOGO".equals(category)||"PROJECT".equals(category)||"CUSTOM_ITEM".equals(category)||"CUSTOM_VARIANT".equals(category)) && "ACTIVE".equals(lifecycle)
             && java.util.Set.of("image/png","image/jpeg","image/webp","image/gif").contains(contentType);
     }
     static boolean storefrontAssetAllowed(String category, String lifecycle, String contentType) {
@@ -467,9 +468,9 @@ public final class ServerImageAssetService {
                         categoryUpdate.setString(1,source.category());categoryUpdate.setObject(2,id);
                         categoryUpdate.setString(3,source.category());categoryUpdate.executeUpdate();
                     }
-                    upsertReference(conn, id, source.table(), rs.getString(1), source.column());
+                    boolean known=upsertReference(conn, id, source.table(), rs.getString(1), source.column());
                     markReferenceSeen(conn, source.table(), rs.getString(1), source.column());
-                    active++;
+                    if(known)active++;
                 }
             }
         }
@@ -483,14 +484,14 @@ public final class ServerImageAssetService {
                 java.util.Map<String,Integer> positions=new java.util.HashMap<>();
                 while(rs.next()){
                     String value=rs.getString(2),sourceKey=rs.getString(1);
+                    int position=positions.merge(sourceKey,1,Integer::sum)-1;
+                    String column=source.column()+":"+position;
                     UUID id=ImageAssetReference.isAssetReference(value)
                             ?ImageAssetReference.assetId(value):registerLegacy(conn,source.category(),value);
                     if(id==null)continue;
-                    int position=positions.merge(sourceKey,1,Integer::sum)-1;
-                    String column=source.column()+":"+position;
-                    upsertReference(conn,id,source.table(),sourceKey,column);
+                    boolean known=upsertReference(conn,id,source.table(),sourceKey,column);
                     markReferenceSeen(conn,source.table(),sourceKey,column);
-                    active++;
+                    if(known)active++;
                 }
             }
         }
@@ -500,8 +501,8 @@ public final class ServerImageAssetService {
                 while(rs.next()){
                     String reference=rs.getString(2);if(!ImageAssetReference.isAssetReference(reference))continue;
                     UUID id=ImageAssetReference.assetId(reference);
-                    upsertReference(conn,id,"storefront.projects",rs.getString(1),"cover_reference");
-                    markReferenceSeen(conn,"storefront.projects",rs.getString(1),"cover_reference");active++;
+                    boolean known=upsertReference(conn,id,"storefront.projects",rs.getString(1),"cover_reference");
+                    markReferenceSeen(conn,"storefront.projects",rs.getString(1),"cover_reference");if(known)active++;
                 }
             }
         }
@@ -510,8 +511,8 @@ public final class ServerImageAssetService {
                 while(rs.next()){
                     String reference=rs.getString(2);if(!ImageAssetReference.isAssetReference(reference))continue;
                     UUID id=ImageAssetReference.assetId(reference);
-                    upsertReference(conn,id,"storefront.project_media",rs.getString(1),"asset_reference");
-                    markReferenceSeen(conn,"storefront.project_media",rs.getString(1),"asset_reference");active++;
+                    boolean known=upsertReference(conn,id,"storefront.project_media",rs.getString(1),"asset_reference");
+                    markReferenceSeen(conn,"storefront.project_media",rs.getString(1),"asset_reference");if(known)active++;
                 }
             }
         }
@@ -520,8 +521,8 @@ public final class ServerImageAssetService {
                 while(rs.next()){
                     String reference=rs.getString(2);if(!ImageAssetReference.isAssetReference(reference))continue;
                     UUID id=ImageAssetReference.assetId(reference);
-                    upsertReference(conn,id,"storefront.quote_files",rs.getString(1),"asset_reference");
-                    markReferenceSeen(conn,"storefront.quote_files",rs.getString(1),"asset_reference");active++;
+                    boolean known=upsertReference(conn,id,"storefront.quote_files",rs.getString(1),"asset_reference");
+                    markReferenceSeen(conn,"storefront.quote_files",rs.getString(1),"asset_reference");if(known)active++;
                 }
             }
         }
@@ -581,20 +582,28 @@ public final class ServerImageAssetService {
         }
     }
 
-    private static void upsertReference(Connection conn, UUID id, String table, String key, String column) throws SQLException {
+    /** A catalog row may arrive before its image manifest. Preserve its URL and
+     * any prior reference until the manifest is available; never invent an asset
+     * or turn off its FK. The row lock and insert share one statement/transaction. */
+    private static boolean upsertReference(Connection conn, UUID id, String table, String key, String column) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
+                WITH known_asset AS (
+                    SELECT asset_id FROM image_assets WHERE asset_id=? FOR KEY SHARE
+                ), saved AS (
                 INSERT INTO image_asset_references(asset_id,source_table,source_key,source_column,active)
-                VALUES(?,?,?,?,TRUE)
+                SELECT asset_id,?,?,?,TRUE FROM known_asset
                 ON CONFLICT(source_table,source_key,source_column) DO UPDATE SET
                     asset_id=EXCLUDED.asset_id,active=TRUE
                 WHERE image_asset_references.asset_id IS DISTINCT FROM EXCLUDED.asset_id
                    OR image_asset_references.active IS DISTINCT FROM TRUE
+                RETURNING reference_id
+                ) SELECT EXISTS(SELECT 1 FROM known_asset)
                 """)) {
             ps.setObject(1, id);
             ps.setString(2, table);
             ps.setString(3, key);
             ps.setString(4, column);
-            ps.executeUpdate();
+            try(ResultSet rs=ps.executeQuery()){rs.next();return rs.getBoolean(1);}
         }
     }
 

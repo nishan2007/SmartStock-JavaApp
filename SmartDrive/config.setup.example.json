@@ -1,0 +1,9 @@
+{
+  "installationName": "DeckersDrive",
+  "dataParent": "D:\\Shares",
+  "storeIds": ["1"],
+  "publicOrigin": "https://drive.example.com",
+  "employeeOrigin": "https://employees.example.com",
+  "employeeServer": "https://smartstock.example.com",
+  "scanners": [{ "id": "Canon-C5040", "storeId": "1", "account": "sdscan_c5040", "displayName": "Canon imageRUNNER C5040", "model": "Canon imageRUNNER ADVANCE C5040" }]
+}

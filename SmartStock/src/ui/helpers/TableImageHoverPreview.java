@@ -74,6 +74,62 @@ public final class TableImageHoverPreview {
         owner.addWindowListener(new WindowAdapter(){@Override public void windowClosed(WindowEvent e){listener.hide();popup.dispose();}});
     }
 
+    /** Returns a dismissal action so a suggestion popup can close its preview immediately. */
+    public static <T> Runnable install(JList<T> list, java.util.function.Function<T,Picture> picture) {
+        class ListPreview extends MouseAdapter {
+            int row=-1;long generation;Timer timer;SwingWorker<ImageIcon,Void> worker;JWindow window;
+            void hide(){generation++;row=-1;if(timer!=null)timer.stop();if(worker!=null)worker.cancel(true);if(window!=null){window.dispose();window=null;}}
+            @Override public void mouseExited(MouseEvent e){hide();}
+            @Override public void mouseMoved(MouseEvent e){
+                int next=list.locationToIndex(e.getPoint());
+                Rectangle cell=next<0?null:list.getCellBounds(next,next);
+                if(cell==null||!cell.contains(e.getPoint())){hide();return;}
+                if(next==row)return;hide();row=next;long expected=generation;
+                T value=list.getModel().getElementAt(next);Picture item=picture.apply(value);
+                if(item==null||item.url()==null||item.url().isBlank())return;
+                timer=new Timer(300,event->{
+                    if(!list.isShowing()||expected!=generation)return;
+                    worker=new SwingWorker<>(){
+                        protected ImageIcon doInBackground(){
+                            Image raw=ImageCacheManager.loadImage(item.url());
+                            if(raw==null||raw.getWidth(null)<=0||raw.getHeight(null)<=0)return null;
+                            double scale=Math.min(200.0/raw.getWidth(null),200.0/raw.getHeight(null));
+                            return new ImageIcon(raw.getScaledInstance(Math.max(1,(int)(raw.getWidth(null)*scale)),Math.max(1,(int)(raw.getHeight(null)*scale)),Image.SCALE_SMOOTH));
+                        }
+                        protected void done(){
+                            if(isCancelled()||expected!=generation||row!=next||!list.isShowing())return;
+                            ImageIcon icon;try{icon=get();}catch(Exception ignored){return;}if(icon==null)return;
+                            Window owner=SwingUtilities.getWindowAncestor(list);if(owner==null)return;
+                            window=new JWindow(owner);window.setFocusableWindowState(false);
+                            JPanel content=new JPanel(new BorderLayout(5,5));content.setBackground(DeckersPalette.surface());
+                            content.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(DeckersPalette.border()),BorderFactory.createEmptyBorder(8,8,8,8)));
+                            content.add(new JLabel(icon),BorderLayout.CENTER);
+                            JLabel caption=new JLabel(item.label(),SwingConstants.CENTER);caption.setForeground(DeckersPalette.text());
+                            caption.setPreferredSize(new Dimension(220,22));caption.setToolTipText(item.label());content.add(caption,BorderLayout.SOUTH);
+                            window.setContentPane(content);window.pack();
+                            Rectangle visible=list.getVisibleRect();Point anchor=list.getLocationOnScreen();
+                            Rectangle bounds=list.getGraphicsConfiguration().getBounds();
+                            Insets insets=Toolkit.getDefaultToolkit().getScreenInsets(list.getGraphicsConfiguration());
+                            int left=bounds.x+insets.left,top=bounds.y+insets.top,right=bounds.x+bounds.width-insets.right,bottom=bounds.y+bounds.height-insets.bottom;
+                            int x=anchor.x+visible.x+visible.width+8;
+                            if(x+window.getWidth()>right)x=anchor.x+visible.x-window.getWidth()-8;
+                            int y=anchor.y+cell.y;
+                            window.setLocation(Math.max(left,Math.min(x,right-window.getWidth())),Math.max(top,Math.min(y,bottom-window.getHeight())));window.setVisible(true);
+                        }
+                    };worker.execute();
+                });timer.setRepeats(false);timer.start();
+            }
+        }
+        ListPreview listener=new ListPreview();list.addMouseListener(listener);list.addMouseMotionListener(listener);
+        list.getModel().addListDataListener(new javax.swing.event.ListDataListener(){
+            public void intervalAdded(javax.swing.event.ListDataEvent e){listener.hide();}
+            public void intervalRemoved(javax.swing.event.ListDataEvent e){listener.hide();}
+            public void contentsChanged(javax.swing.event.ListDataEvent e){listener.hide();}
+        });
+        list.addHierarchyListener(e->{if(!list.isShowing())listener.hide();});
+        list.addHierarchyBoundsListener(new HierarchyBoundsAdapter(){public void ancestorMoved(HierarchyEvent e){listener.hide();}public void ancestorResized(HierarchyEvent e){listener.hide();}});
+        return listener::hide;
+    }
     private static final class Preview extends MouseAdapter implements MouseMotionListener {
         private final JTable table;
         private final int imageColumn;

@@ -38,7 +38,7 @@ class TemplateEditingTest {
             assertTrue(((JButton)field(panel,"redoButton")).isEnabled());
             history.invoke(panel,true);
             assertEquals(count+1,((BadgeTemplate)field(panel,"template")).elements.size());
-            JTable table=(JTable)field(panel,"table");table.getModel().setValueAt("23",count,4);
+            JTable table=(JTable)field(panel,"table");table.getModel().setValueAt(Double.toString(23/25.4),count,4);
             history.invoke(panel,false);assertEquals(5,((BadgeTemplate)field(panel,"template")).elements.get(count).x);
             history.invoke(panel,true);assertEquals(23,((BadgeTemplate)field(panel,"template")).elements.get(count).x);
             history.invoke(panel,false);add.invoke(panel,"Ellipse");

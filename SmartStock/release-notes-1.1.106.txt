@@ -1,0 +1,9 @@
+SmartStock 1.1.106
+
+Adds Phone Minutes for cash and unlimited customer-account credit. Every sale records its destination phone number, staff, store and reference. Search the complete history by customer, number, reference, date and payment method. Cash walk-ins are supported without a customer account.
+
+Credit minutes appear in the total account balance but do not consume merchandise credit. Partial and mixed account payments can be allocated to individual minutes entries. Account statements and payment receipts include the destination number. Saving minutes does not print a receipt. Authorized reversals retain history, refund cash or release paid amounts as allocatable account credit.
+
+Includes all accumulated SmartStock source changes, unpaid-account statement corrections, shared publication table rendering improvements and the current SmartStudio client support. The storefront photo queue camera improvement is deployed independently.
+
+Update the store server before registers. Includes additive local phone-minutes schema and recovery integration; the cloud snapshot-reader migration must be applied before cross-store minutes balances are available. AI model weights remain separate and preserved. Physical printer, cash-drawer hardware, NFC, live store and macOS checks remain separate rollout checks.

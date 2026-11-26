@@ -401,6 +401,7 @@ public class EditItem extends JFrame {
         JButton variantsButton=new JButton("Manage variants...");
         variantsButton.addActionListener(e->{if(selectedProductId>0)new ProductVariantsDialog(this,java.util.List.of(selectedProductId),null).setVisible(true);else JOptionPane.showMessageDialog(this,"Select an item first.");});
         actions.add(variantsButton);
+        JButton tagsButton=new JButton("Tags…");tagsButton.addActionListener(e->{if(selectedProductId>0)new ProductTagsDialog(this,java.util.List.of(selectedProductId),null).setVisible(true);else JOptionPane.showMessageDialog(this,"Select an item first.");});actions.add(tagsButton);
         actions.add(clearButton);
         if(PermissionManager.hasPermission("PRODUCT_ARCHIVE"))actions.add(archiveButton);
         actions.add(cancelButton);

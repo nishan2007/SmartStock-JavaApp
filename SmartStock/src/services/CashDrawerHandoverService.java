@@ -24,7 +24,7 @@ final class CashDrawerHandoverService {
             try (ResultSet r=p.executeQuery()) {
                 if (!r.next() || !PENDING.equals(r.getString("reason"))) return null;
                 return new CashDrawerHandover(0,sessionId,r.getString("changed_by_name"),null,
-                        r.getBigDecimal("expected_cash"),r.getBigDecimal("counted_cash"),BigDecimal.ZERO,
+                        r.getBigDecimal("expected_cash"),r.getBigDecimal("counted_cash"),r.getBigDecimal("counted_cash").subtract(r.getBigDecimal("expected_cash")),
                         r.getTimestamp("created_at"),PENDING);
             }
         }
@@ -49,16 +49,26 @@ final class CashDrawerHandoverService {
         if(session==null || session.sessionId()!=id)throw new SQLException("This drawer session is no longer active.");
         CashDrawerHandover waiting=pending(c,id);
         boolean accepting=body.has("acceptTakeover") && body.get("acceptTakeover").getAsBoolean();
+        boolean unattended=body.has("takeoverWithoutHandover") && body.get("takeoverWithoutHandover").getAsBoolean();
+        if(unattended) {
+            String reason=validateTakeover(body,session.currentCashierUserId(),userId,waiting!=null,accepting);
+            BigDecimal count=body.get("countedCash").getAsBigDecimal();
+            validateCount(body,count);
+            String notes="CASH TAKEOVER WITHOUT OUTGOING HANDOVER. Previous cashier: " + session.currentCashierName()
+                    + ". Cash counted by: " + userName + ". Pre-takeover shortage/overage recorded against previous custody; outgoing cashier did not confirm. Reason: " + reason;
+            // Capture the pre-takeover expectation with the incoming actor's identity.
+            CashDrawerCountHistoryService.appendLifecycle(c,id,"HANDOVER",body,userId,userName,deviceId,deviceName,notes);
+            return CashDrawerService.recordHandover(c,id,count,notes,userId,userName,true);
+        }
         if(accepting != (waiting!=null)) throw new SQLException("The handover stage changed. Reload Balance Draw before confirming.");
         validateCashier(session.currentCashierUserId(),userId,accepting);
         BigDecimal count=body.get("countedCash").getAsBigDecimal();
         validateCount(body,count);
-        BigDecimal expected=CashDrawerService.calculateExpectedCash(c,id);
-        if(count.compareTo(expected)!=0 || (waiting!=null && count.compareTo(waiting.countedCash())!=0))
-            throw new SQLException("Handover cash must match expected cash and the outgoing cashier's count.");
+        if(waiting!=null && count.compareTo(waiting.countedCash())!=0)
+            throw new SQLException("The incoming cashier must recount and match the outgoing cashier's count.");
         CashDrawerHandover result;
         if(accepting) {
-            result=CashDrawerService.recordHandover(c,id,count,null,userId,userName);
+            result=CashDrawerService.recordHandover(c,id,count,"Pre-handover shortage/overage attributed to " + session.currentCashierName() + "; incoming cashier starts with accepted cash " + count,userId,userName);
             CashDrawerCountHistoryService.appendLifecycle(c,id,"HANDOVER",body,userId,userName,deviceId,deviceName,"TAKEOVER_ACCEPTED");
         } else {
             CashDrawerCountHistoryService.appendLifecycle(c,id,"HANDOVER",body,userId,userName,deviceId,deviceName,PENDING);
@@ -71,6 +81,17 @@ final class CashDrawerHandoverService {
         if(current==null) throw new SQLException("The drawer has no current cashier.");
         if(accepting && Objects.equals(current,user)) throw new SQLException("A different cashier must recount and accept the drawer.");
         if(!accepting && !Objects.equals(current,user)) throw new SQLException("Only the current cashier can initiate handover.");
+    }
+
+    static String validateTakeover(JsonObject body,Integer current,int user,boolean pending,boolean accepting)throws SQLException {
+        validateCashier(current,user,true);
+        if(pending || accepting)throw new SQLException("The handover stage changed. Reload Balance Draw and accept the pending handover.");
+        if(!body.has("previousCashierUserId") || body.get("previousCashierUserId").isJsonNull()
+                || !Objects.equals(current,body.get("previousCashierUserId").getAsInt()))
+            throw new SQLException("The current cashier changed. Reload Balance Draw before taking over.");
+        String reason=body.has("notes") && !body.get("notes").isJsonNull()?body.get("notes").getAsString().trim():"";
+        if(reason.isBlank())throw new SQLException("Explain why the previous cashier could not complete handover.");
+        return reason;
     }
 
     static void validateCount(JsonObject body, BigDecimal count) throws SQLException {

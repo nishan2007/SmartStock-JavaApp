@@ -63,7 +63,7 @@ public record DatabaseConfig(
                 props.getProperty("jdbc.url")
         );
 
-        if (mode == DatabaseMode.CLIENT || mode == DatabaseMode.REMOTE_ADMIN) {
+        if (mode == DatabaseMode.CLIENT || mode == DatabaseMode.DISPLAY || mode == DatabaseMode.REMOTE_ADMIN) {
             // Registers connect only to the SmartStock HTTPS service. Keeping a
             // JDBC URL here would make accidental database fallback possible.
             jdbcUrl = "";
@@ -71,7 +71,7 @@ public record DatabaseConfig(
             jdbcUrl = "jdbc:postgresql://" + host + ":" + port + "/" + database;
         }
 
-        boolean apiClient = mode == DatabaseMode.CLIENT || mode == DatabaseMode.REMOTE_ADMIN;
+        boolean apiClient = mode == DatabaseMode.CLIENT || mode == DatabaseMode.DISPLAY || mode == DatabaseMode.REMOTE_ADMIN;
         // Register setup must never touch server database credentials. Besides preserving
         // the API-only boundary, this keeps a slow or unavailable OS credential provider
         // from freezing the final "Connect this Register" setup transition.
@@ -196,7 +196,7 @@ public record DatabaseConfig(
         int cleanPort = serverPort <= 0 ? 5432 : serverPort;
         DatabaseCredentials savedCredentials = DatabaseCredentials.load();
         String cleanJdbcUrl = firstNonBlank(jdbcUrl, "");
-        if (cleanMode == DatabaseMode.CLIENT || cleanMode == DatabaseMode.REMOTE_ADMIN) {
+        if (cleanMode == DatabaseMode.CLIENT || cleanMode == DatabaseMode.DISPLAY || cleanMode == DatabaseMode.REMOTE_ADMIN) {
             return new DatabaseConfig(cleanMode, "", "", "", cleanHost, cleanPort, locationId,
                     syncIntervalSeconds <= 0 ? 60 : syncIntervalSeconds);
         }

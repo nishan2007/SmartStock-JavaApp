@@ -1,0 +1,11 @@
+SmartStock 1.1.79 - PDF Editor and latest app changes
+
+New Operations > PDF Editor workspace: open or drag in local PDFs; merge, reorder, rotate, delete, duplicate, extract and split pages; insert blank/image pages; crop; add movable text, images, highlights, rectangles and drawn signatures; fill standard PDF forms; add page numbers; search, print, export PNG and save verified PDF copies with undo/redo.
+
+Optional local Tesseract OCR adds searchable scan text and supports previewed region corrections. Install Tesseract and language data separately and configure OCR settings. Corrections make the affected page image-based and are not secure redaction. Existing PDF paragraphs are not reconstructed for direct text editing. Exported copies are unsigned and not password-protected.
+
+Includes the dedicated mobile-friendly Edit Items app, inventory/custom item tabs, camera barcode search, grouped item details, primary/additional barcode editing and unsaved-change protection, plus current Orders web app presentation and branding refinements. Browser access still requires store-network activation and employee permissions.
+
+Build 101079. Windows update ZIP only. Update the store server before registers. AI models remain separate. This release does not deploy the Orders cloud gateway, change the first-install download selection, or install/restart live store applications.
+
+Validation: Maven tests, web tests, repository security and archive/model-catalogue checks. Physical printing, real Tesseract recognition, macOS and live database/service/hardware acceptance remain separate verification steps.

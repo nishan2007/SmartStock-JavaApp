@@ -1,0 +1,6 @@
+SmartStudio 0.1.85
+
+Direct card, label and billbook printing now composes the complete sheet using the same 300-DPI raster as PDF export and prints it at actual physical size. This avoids sending separate artwork transforms and clips to native printer drivers. Repeated printer rendering bands preserve sheet placement.
+Preserves the printer area accepted in the print dialog instead of replacing it with a generic capability query afterward.
+
+Save drafts before updating. Verify one physical sheet on your printer before printing the full job.

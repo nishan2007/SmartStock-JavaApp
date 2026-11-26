@@ -32,6 +32,8 @@ import java.util.Vector;
 
 public class ViewInventory extends JFrame {
 
+    private List<String> selectedTagIds=List.of();
+    private com.google.gson.JsonArray availableTags=new com.google.gson.JsonArray();
     private JTable inventoryTable;
     private DefaultTableModel tableModel;
     private JTextField searchField;
@@ -82,6 +84,7 @@ public class ViewInventory extends JFrame {
         mainPanel.add(buildFooterPanel(), BorderLayout.SOUTH);
 
         loadDetailFilters();
+        loadTagFilters();
         loadInventory(null, "All");
         WindowHelper.configurePosWindow(this);
     }
@@ -113,6 +116,35 @@ public class ViewInventory extends JFrame {
 
         JButton refreshButton = new JButton("Refresh");
         leftPanel.add(refreshButton);
+        if(PermissionManager.hasPermission("EDIT_ITEM")) {
+            JButton tagsButton=new JButton("Tags…");
+            tagsButton.addActionListener(e->{List<Integer> ids=checkedProductIds();
+                if(ids.isEmpty()&&inventoryTable.getSelectedRow()>=0){int row=inventoryTable.convertRowIndexToModel(inventoryTable.getSelectedRow());int id=((Number)tableModel.getValueAt(row,1)).intValue();if(id>0)ids=List.of(id);}
+                new ProductTagsDialog(this,ids,()->{loadTagFilters();loadInventory(searchField.getText().trim(),(String)stockFilterCombo.getSelectedItem());}).setVisible(true);
+            });leftPanel.add(tagsButton);
+        }
+        JButton tagFilterButton=new JButton("Filter tags…");tagFilterButton.addActionListener(e->chooseTagFilters());leftPanel.add(tagFilterButton);
+        JPanel mergeActions=new JPanel(new FlowLayout(FlowLayout.LEFT,10,0));
+        mergeActions.setAlignmentX(Component.LEFT_ALIGNMENT);
+        if("ADMIN".equalsIgnoreCase(SessionManager.getCurrentRole())) {
+            JButton duplicates=new JButton("Review duplicates");
+            duplicates.addActionListener(e->new ProductMergeReviewDialog(this,
+                    ()->loadInventory(searchField.getText().trim(),(String)stockFilterCombo.getSelectedItem())).setVisible(true));
+            mergeActions.add(duplicates);
+            JButton storeStock=new JButton("Stock by store");
+            storeStock.addActionListener(e->{int row=inventoryTable.getSelectedRow();if(row<0){JOptionPane.showMessageDialog(this,"Select an item first.");return;}
+                int modelRow=inventoryTable.convertRowIndexToModel(row);int product=Integer.parseInt(String.valueOf(tableModel.getValueAt(modelRow,tableModel.findColumn("Product ID"))));
+                new ProductStoreStockDialog(this,product).setVisible(true);});
+            mergeActions.add(storeStock);
+        }
+        JButton mobileInventory=new JButton("Mobile Inventory");
+        mobileInventory.addActionListener(e->{try{java.awt.Desktop.getDesktop().browse(java.net.URI.create("https://inventory.deckers.gy"));}catch(Exception ex){JOptionPane.showMessageDialog(this,"Open https://inventory.deckers.gy on your phone or browser.");}});
+        leftPanel.add(mobileInventory);
+        if(PermissionManager.hasPermission("DEVICE_MANAGEMENT")) {
+            JButton pairInventory=new JButton("Pair Inventory Device");
+            pairInventory.addActionListener(e->new EmployeeWebDialog(this,"inventory").setVisible(true));
+            leftPanel.add(pairInventory);
+        }
         showArchivedCheckBox = new JCheckBox("Show archived items", false);
         leftPanel.add(showArchivedCheckBox);
         showArchivedCheckBox.addActionListener(e -> loadInventory(searchField.getText().trim(), (String) stockFilterCombo.getSelectedItem()));
@@ -189,6 +221,7 @@ public class ViewInventory extends JFrame {
         wrapper.add(titleLabel);
         wrapper.add(Box.createVerticalStrut(5));
         wrapper.add(locationLabel);
+        if(mergeActions.getComponentCount()>0){wrapper.add(Box.createVerticalStrut(8));wrapper.add(mergeActions);}
         wrapper.add(filterPanel);
         wrapper.add(detailFilterPanel);
 
@@ -583,6 +616,17 @@ public class ViewInventory extends JFrame {
         return box.getSelectedItem().toString();
     }
 
+    private void loadTagFilters(){UiTaskRunner.submit(this,"inventory.tags",LanApiClient::productTagsState,
+        state->availableTags=state.getAsJsonArray("tags"),ex->availableTags=new com.google.gson.JsonArray());}
+    private void chooseTagFilters(){
+        DefaultListModel<String> labels=new DefaultListModel<>();List<String> ids=new ArrayList<>();
+        for(var element:availableTags){var tag=element.getAsJsonObject();ids.add(tag.get("id").getAsString());labels.addElement(tag.get("name").getAsString()+" ["+(tag.get("isPublic").getAsBoolean()?"Public":"Internal")+"]");}
+        JList<String> list=new JList<>(labels);list.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        list.setSelectedIndices(java.util.stream.IntStream.range(0,ids.size()).filter(i->selectedTagIds.contains(ids.get(i))).toArray());
+        JPanel panel=new JPanel(new BorderLayout(5,5));panel.add(new JLabel("Match any selected tag. Clear selection for all products."),BorderLayout.NORTH);panel.add(new JScrollPane(list));
+        if(JOptionPane.showConfirmDialog(this,panel,"Filter Product Tags",JOptionPane.OK_CANCEL_OPTION)==JOptionPane.OK_OPTION){selectedTagIds=java.util.Arrays.stream(list.getSelectedIndices()).mapToObj(ids::get).toList();loadInventory(searchField.getText().trim(),(String)stockFilterCombo.getSelectedItem());}
+    }
+
     private void loadInventory(String searchText, String stockFilter) {
         LanApiClient.InventoryRequest request = new LanApiClient.InventoryRequest(
                 searchText, stockFilter,
@@ -593,10 +637,11 @@ public class ViewInventory extends JFrame {
                 selectedFilter(shelfFilterCombo, "All Shelves"),
                 selectedFilter(storageShelfFilterCombo, "All Storage Shelves"),
                 showArchivedCheckBox.isSelected());
-        String cacheKey = "inventory-list:" + request;
+        String cacheKey = "inventory-list:" + request + selectedTagIds;
+        List<String> tagIds=List.copyOf(selectedTagIds);
         CachedUiLoader.load(this, "inventory-list.search", cacheKey, LanApiClient.InventoryResult.class,
                 SessionDataCache.SCREEN_TTL, loadingState,
-                () -> LanApiClient.loadInventory(request), this::applyInventory);
+                () -> LanApiClient.loadInventory(request,tagIds), this::applyInventory);
     }
 
     private void applyInventory(LanApiClient.InventoryResult result) {

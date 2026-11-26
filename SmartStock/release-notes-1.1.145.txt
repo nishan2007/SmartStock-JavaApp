@@ -1,0 +1,7 @@
+SmartStock 1.1.145 - cumulative Windows release and installer
+
+Includes the current shared-workspace application changes from all chats, including issued quotation correction/cancellation and manual custom-item add-ons, store-specific custom inventory and the existing one-time Rosehall stock correction, optional NFC Store Keys checkout, search, orders and photo-queue improvements.
+
+Accept and validate both Front and Back pages in shared badge templates using the same server-side portable-data restrictions.
+
+Update store servers before registers and SmartStudio 0.1.109. AI model weights remain separately managed. First-install and update artifacts contain the same application version. Publishing does not install or restart live stores.

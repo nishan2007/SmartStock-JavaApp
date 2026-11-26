@@ -1,6 +1,7 @@
 package ui.screens.customorders;
 
 import javax.swing.*;
+import ui.design.DeckersPalette;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.time.LocalDate;
@@ -24,7 +25,7 @@ public class DatePickerField extends JTextField {
             public void focusGained(java.awt.event.FocusEvent e) {
                 if (isPlaceholder()) {
                     setText("");
-                    setForeground(Color.WHITE);
+                    setForeground(DeckersPalette.text());
                 }
             }
 
@@ -54,7 +55,13 @@ public class DatePickerField extends JTextField {
         return PLACEHOLDER.equals(getText());
     }
 
-    private void showDatePicker() {
+    public void setSelectedDate(LocalDate date) {
+        if(date==null){clearDate();return;}
+        setText(date.toString());setForeground(DeckersPalette.text());
+    }
+
+    public void showDatePicker() {
+        if(!isEnabled())return;
         LocalDate selectedDate = LocalDate.now();
         try {
             LocalDate parsedDate = getSelectedDate();
@@ -115,8 +122,7 @@ public class DatePickerField extends JTextField {
                 button.setText(String.valueOf(day));
                 button.setEnabled(true);
                 button.addActionListener(e -> {
-                    setText(date.toString());
-                    setForeground(Color.WHITE);
+                    setSelectedDate(date);
                     dialog.dispose();
                 });
             }

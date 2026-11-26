@@ -33,7 +33,7 @@ public final class ServerCustomOrderDataService {
                 SELECT custom_item_id, item_name, COALESCE(size,'') size, COALESCE(color,'') color, sku, product_type, pricing_type, fixed_price,
                        area_price, area_price_unit, dimension_unit, max_width, max_length,
                        COALESCE(has_variants, FALSE) AS has_variants,
-                       is_active
+                       image_url, is_active
                 FROM custom_order_items
                 WHERE is_archived=FALSE
                 ORDER BY is_active DESC, item_name
@@ -63,7 +63,7 @@ public final class ServerCustomOrderDataService {
                         rs.getString("area_price_unit"),
                         rs.getString("dimension_unit"),
                         rs.getBigDecimal("max_width"),
-                        rs.getBigDecimal("max_length")
+                        rs.getBigDecimal("max_length"), rs.getString("image_url")
                 ));
             }
         }
@@ -81,7 +81,7 @@ public final class ServerCustomOrderDataService {
         String sql = """
                 SELECT v.custom_variant_id, v.variant_name, COALESCE(v.size,'') size, COALESCE(v.color,'') color,
                        COALESCE(NULLIF(v.size,''),i.size,'') effective_size,
-                       COALESCE(NULLIF(v.color,''),i.color,'') effective_color, v.sku, v.fixed_price
+                       COALESCE(NULLIF(v.color,''),i.color,'') effective_color, v.sku, v.fixed_price, v.image_url
                 FROM custom_order_item_variants v JOIN custom_order_items i ON i.custom_item_id=v.custom_item_id
                 WHERE v.custom_item_id = ?
                   AND v.is_active = TRUE AND i.is_archived=FALSE
@@ -99,7 +99,7 @@ public final class ServerCustomOrderDataService {
                             rs.getString("effective_size"),
                             rs.getString("effective_color"),
                             rs.getString("sku"),
-                            rs.getBigDecimal("fixed_price")
+                            rs.getBigDecimal("fixed_price"), rs.getString("image_url")
                     ));
                 }
             }
@@ -303,6 +303,15 @@ public final class ServerCustomOrderDataService {
     }
 
     public static String saveCustomOrder(Connection conn, OrderSaveRequest request) throws SQLException {
+        return saveCustomOrder(conn, request, false);
+    }
+
+    static String saveCustomOrder(Connection conn, OrderSaveRequest request, boolean oneTimeCustomer) throws SQLException {
+        return saveCustomOrder(conn, request, oneTimeCustomer, CustomOrderCredit::reject);
+    }
+
+    static <E extends Exception> String saveCustomOrder(Connection conn, OrderSaveRequest request,
+            boolean oneTimeCustomer, CustomOrderCredit.Approver<E> approver) throws SQLException, E {
         String orderNumber = generateOrderNumber();
         String orderSql = """
                 INSERT INTO custom_orders (
@@ -341,30 +350,6 @@ public final class ServerCustomOrderDataService {
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
-        String updateCustomItemSoldSql = """
-                UPDATE custom_order_items
-                SET sold_quantity = COALESCE(sold_quantity, 0) + 1,
-                    quantity_on_hand = CASE WHEN COALESCE(product_type, 'INVENTORY') = 'INVENTORY' AND COALESCE(has_variants, FALSE) = FALSE THEN quantity_on_hand - 1 ELSE quantity_on_hand END,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE custom_item_id = ?
-                """;
-        String updateCustomVariantSoldSql = """
-                UPDATE custom_order_item_variants v
-                SET sold_quantity = COALESCE(v.sold_quantity, 0) + 1,
-                    quantity_on_hand = CASE WHEN COALESCE(i.product_type, 'INVENTORY') = 'INVENTORY' THEN v.quantity_on_hand - 1 ELSE v.quantity_on_hand END,
-                    updated_at = CURRENT_TIMESTAMP
-                FROM custom_order_items i
-                WHERE v.custom_item_id = i.custom_item_id
-                  AND v.custom_variant_id = ?
-                """;
-        String refreshVariantParentSql = """
-                UPDATE custom_order_items i
-                SET quantity_on_hand = COALESCE((SELECT SUM(quantity_on_hand) FROM custom_order_item_variants WHERE custom_item_id = i.custom_item_id AND is_active = TRUE), 0),
-                    sold_quantity = COALESCE((SELECT SUM(sold_quantity) FROM custom_order_item_variants WHERE custom_item_id = i.custom_item_id), 0),
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE custom_item_id = ?
-                  AND has_variants = TRUE
-                """;
         String paymentSql = """
                 INSERT INTO custom_order_payments (
                     custom_order_id, payment_amount, payment_method, payment_reference,
@@ -384,14 +369,19 @@ public final class ServerCustomOrderDataService {
         try (PreparedStatement orderPs = conn.prepareStatement(orderSql, Statement.RETURN_GENERATED_KEYS);
                  PreparedStatement linePs = conn.prepareStatement(lineSql, Statement.RETURN_GENERATED_KEYS);
                  PreparedStatement addonPs = conn.prepareStatement(addonSql);
-                 PreparedStatement itemSoldPs = conn.prepareStatement(updateCustomItemSoldSql);
-                 PreparedStatement variantSoldPs = conn.prepareStatement(updateCustomVariantSoldSql);
-                 PreparedStatement refreshParentPs = conn.prepareStatement(refreshVariantParentSql);
                  PreparedStatement paymentPs = conn.prepareStatement(paymentSql);
                  PreparedStatement accountTransactionPs = conn.prepareStatement(accountTransactionSql)) {
                 DeviceContextService.requireOrdersAllowed(conn);
-                int customerId = resolveOrderCustomerId(conn, request.selectedCustomer(), request.customerName(), request.customerPhone());
-                boolean hasAccountBalanceDue = request.balanceDue().compareTo(BigDecimal.ZERO) > 0;
+                Integer customerId = oneTimeCustomer ? null
+                        : resolveOrderCustomerId(conn, request.selectedCustomer(), request.customerName(), request.customerPhone());
+                boolean explicitCharge = "ACCOUNT".equalsIgnoreCase(request.paymentMethod());
+                boolean pendingPrice = "PENDING".equals(request.pricingState());
+                if (explicitCharge && (customerId == null || pendingPrice || request.amountPaid().signum() != 0)) {
+                    throw new SQLException("Account charges require a customer account, final pricing and zero upfront payment.");
+                }
+                CustomOrderCredit.Charge charge = pendingPrice ? null : CustomOrderCredit.check(conn, customerId,
+                        request.locationId(), request.balanceDue(), explicitCharge, approver);
+                boolean hasAccountBalanceDue = customerId != null && request.balanceDue().signum() > 0;
                 if(hasAccountBalanceDue)CustomerChargeAuthorizationService.validateRequired(conn,customerId,request.authorization());
                 CashDrawerContext cashDrawer = new CashDrawerContext(null, null);
                 boolean cashUpfrontPayment = request.amountPaid().compareTo(BigDecimal.ZERO) > 0
@@ -400,7 +390,7 @@ public final class ServerCustomOrderDataService {
                     cashDrawer = CashDrawerService.requireActiveCashSession(conn);
                 }
                 orderPs.setString(1, orderNumber);
-                orderPs.setInt(2, customerId);
+                setNullableInteger(orderPs, 2, customerId);
                 orderPs.setString(3, request.customerName());
                 orderPs.setString(4, utils.CustomerPhoneNumber.normalize(request.customerPhone()));
                 if (request.dueDate() == null) {
@@ -412,7 +402,7 @@ public final class ServerCustomOrderDataService {
                 orderPs.setBigDecimal(7, request.total());
                 orderPs.setBigDecimal(8, request.amountPaid());
                 orderPs.setBigDecimal(9, request.balanceDue());
-                orderPs.setString(10, request.paymentMethod());
+                orderPs.setString(10, charge == null ? request.paymentMethod() : "ACCOUNT");
                 orderPs.setString(11, blankToNull(request.paymentReference()));
                 orderPs.setString(12, request.paymentStatus());
                 setNullableInteger(orderPs, 13, request.takenByUserId());
@@ -457,34 +447,41 @@ public final class ServerCustomOrderDataService {
                     setNullableLong(paymentPs, 11, cashDrawer.sessionId());
                     paymentPs.executeUpdate();
                 }
-                BigDecimal accountHistoryAmount = hasAccountBalanceDue ? request.balanceDue() : BigDecimal.ZERO;
-                String accountHistoryType = "PENDING".equals(request.pricingState()) ? "CUSTOM_ORDER_DEPOSIT" : hasAccountBalanceDue ? "CUSTOM_ORDER_BALANCE" : "CUSTOM_ORDER_PAID";
-                String accountHistoryNote = hasAccountBalanceDue
-                        ? "Custom order balance charged to account. payment_method=" + blankToNull(request.paymentMethod())
-                        + ", amount_paid=" + request.amountPaid()
-                        + ", balance_due=" + request.balanceDue()
-                        + ", custom_order_id=" + orderId
-                        + ", order_number=" + orderNumber
-                        : "Custom order recorded. payment_method=" + blankToNull(request.paymentMethod())
-                        + ", payment_status=" + request.paymentStatus()
-                        + ", custom_order_id=" + orderId
-                        + ", order_number=" + orderNumber;
-                accountTransactionPs.setInt(1, customerId);
-                accountTransactionPs.setLong(2, orderId);
-                setNullableInteger(accountTransactionPs, 3, request.locationId());
-                accountTransactionPs.setBigDecimal(4, accountHistoryAmount);
-                accountTransactionPs.setString(5, accountHistoryType);
-                accountTransactionPs.setString(6, accountHistoryNote);
-                accountTransactionPs.setString(7, request.takenByName());
-                accountTransactionPs.setString(8, blankToNull(request.deviceId()));
-                accountTransactionPs.setString(9, blankToNull(request.deviceName()));
-                accountTransactionPs.setString(10, blankToNull(request.paymentMethod()));
-                accountTransactionPs.setString(11, blankToNull(request.paymentReference()));
-                setNullableLong(accountTransactionPs, 12, cashDrawer.cashDrawerId());
-                accountTransactionPs.setString(13, blankToNull(cashDrawer.drawerName()));
-                setNullableLong(accountTransactionPs, 14, cashDrawer.sessionId());
-                long transactionId;try(ResultSet transactionKeys=accountTransactionPs.executeQuery()){if(!transactionKeys.next())throw new SQLException("Customer account transaction was not created.");transactionId=transactionKeys.getLong(1);}
-                if(hasAccountBalanceDue)CustomerChargeAuthorizationService.insert(conn,transactionId,customerId,request.locationId(),"CUSTOM_ORDER",orderId,request.authorization(),request.takenByUserId(),request.takenByName(),request.deviceId()==null||request.deviceId().isBlank()?null:java.util.UUID.fromString(request.deviceId()),request.deviceName());
+                if (customerId != null) {
+                    BigDecimal accountHistoryAmount = hasAccountBalanceDue ? request.balanceDue() : BigDecimal.ZERO;
+                    String accountHistoryType = "PENDING".equals(request.pricingState()) ? "CUSTOM_ORDER_DEPOSIT" : hasAccountBalanceDue ? "CUSTOM_ORDER_BALANCE" : "CUSTOM_ORDER_PAID";
+                    String accountHistoryNote = hasAccountBalanceDue
+                            ? "Custom order balance charged to account. payment_method=" + blankToNull(request.paymentMethod())
+                            + ", amount_paid=" + request.amountPaid()
+                            + ", balance_due=" + request.balanceDue()
+                            + ", custom_order_id=" + orderId
+                            + ", order_number=" + orderNumber
+                            : "Custom order recorded. payment_method=" + blankToNull(request.paymentMethod())
+                            + ", payment_status=" + request.paymentStatus()
+                            + ", custom_order_id=" + orderId
+                            + ", order_number=" + orderNumber;
+                    accountTransactionPs.setInt(1, customerId);
+                    accountTransactionPs.setLong(2, orderId);
+                    setNullableInteger(accountTransactionPs, 3, request.locationId());
+                    accountTransactionPs.setBigDecimal(4, accountHistoryAmount);
+                    accountTransactionPs.setString(5, accountHistoryType);
+                    accountTransactionPs.setString(6, accountHistoryNote);
+                    accountTransactionPs.setString(7, request.takenByName());
+                    accountTransactionPs.setString(8, blankToNull(request.deviceId()));
+                    accountTransactionPs.setString(9, blankToNull(request.deviceName()));
+                    accountTransactionPs.setString(10, blankToNull(request.paymentMethod()));
+                    accountTransactionPs.setString(11, blankToNull(request.paymentReference()));
+                    setNullableLong(accountTransactionPs, 12, cashDrawer.cashDrawerId());
+                    accountTransactionPs.setString(13, blankToNull(cashDrawer.drawerName()));
+                    setNullableLong(accountTransactionPs, 14, cashDrawer.sessionId());
+                    long transactionId;try(ResultSet transactionKeys=accountTransactionPs.executeQuery()){if(!transactionKeys.next())throw new SQLException("Customer account transaction was not created.");transactionId=transactionKeys.getLong(1);}
+                    if(hasAccountBalanceDue)CustomerChargeAuthorizationService.insert(conn,transactionId,customerId,request.locationId(),"CUSTOM_ORDER",orderId,request.authorization(),request.takenByUserId(),request.takenByName(),request.deviceId()==null||request.deviceId().isBlank()?null:java.util.UUID.fromString(request.deviceId()),request.deviceName());
+                }
+                if (charge != null) {
+                    CustomerAccountLedgerService.repairCustomerBalance(conn, customerId);
+                    charge.audit(conn, orderId, request.balanceDue(), request.takenByUserId(), request.takenByName(),
+                            request.deviceId(), request.deviceName());
+                }
                 CustomOrderAuditService.recordAudit(conn, orderId, "CREATE", "order", null, orderNumber, null);
                 CustomOrderAuditService.recordStatus(conn, orderId, null, "NEW", "Order created");
 
@@ -562,27 +559,13 @@ public final class ServerCustomOrderDataService {
                         addonPs.addBatch();
                     }
 
-                    if (line.customItemId() != null) {
-                        if (line.customVariantId() == null) {
-                            itemSoldPs.setLong(1, line.customItemId());
-                            itemSoldPs.addBatch();
-                        } else {
-                            variantSoldPs.setLong(1, line.customVariantId());
-                            variantSoldPs.addBatch();
-                            refreshParentPs.setLong(1, line.customItemId());
-                            refreshParentPs.addBatch();
-                        }
-                    }
+                    if(line.customItemId()!=null)CustomItemStockService.consume(conn,line.customItemId(),line.customVariantId(),request.locationId());
                 }
                 addonPs.executeBatch();
                 CustomOrderDesignService.createForOrder(conn,orderId);
-                itemSoldPs.executeBatch();
-                variantSoldPs.executeBatch();
-                refreshParentPs.executeBatch();
-                SyncOutboxService.recordEvent(conn, "CUSTOM_ORDER_CREATED", Map.of(
+                SyncOutboxService.recordEvent(conn, "CUSTOM_ORDER_CREATED", customOrderEvent(customerId, Map.of(
                         "custom_order_id", orderId,
                         "order_number", orderNumber,
-                        "customer_id", customerId,
                         "location_id", request.locationId() == null ? "" : request.locationId(),
                         "device_id", String.valueOf(request.deviceId()),
                         "pricing_state", "PENDING".equals(request.pricingState())?"PENDING":"FINAL",
@@ -590,20 +573,26 @@ public final class ServerCustomOrderDataService {
                         "amount_paid", request.amountPaid(),
                         "balance_due", request.balanceDue(),
                         "payment_status", request.paymentStatus()
-                ));
+                )));
                 if (request.amountPaid().compareTo(BigDecimal.ZERO) > 0) {
-                    SyncOutboxService.recordEvent(conn, "CUSTOM_ORDER_PAYMENT_CREATED", Map.of(
+                    SyncOutboxService.recordEvent(conn, "CUSTOM_ORDER_PAYMENT_CREATED", customOrderEvent(customerId, Map.of(
                             "custom_order_id", orderId,
                             "order_number", orderNumber,
-                            "customer_id", customerId,
                             "payment_amount", request.amountPaid(),
                             "payment_method", String.valueOf(request.paymentMethod()),
                             "location_id", request.locationId() == null ? "" : request.locationId(),
                             "device_id", String.valueOf(request.deviceId())
-                    ));
+                    )));
                 }
             return orderNumber;
         }
+    }
+
+    private static Map<String,Object> customOrderEvent(Integer customerId, Map<String,Object> fields) {
+        if (customerId == null) return fields;
+        Map<String,Object> event = new java.util.LinkedHashMap<>(fields);
+        event.put("customer_id", customerId);
+        return event;
     }
 
     private static String generateOrderNumber() {
@@ -686,9 +675,9 @@ public final class ServerCustomOrderDataService {
         String sql = """
                 INSERT INTO customer_accounts (
                     name, customer_type_id, phone, credit_limit,
-                    current_balance, is_business, is_active
+                    current_balance, is_active
                 )
-                VALUES (?, ?, ?, 0, 0, FALSE, TRUE)
+                VALUES (?, ?, ?, 0, 0, TRUE)
                 RETURNING customer_id
                 """;
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -719,7 +708,8 @@ public final class ServerCustomOrderDataService {
         return matches.isEmpty() ? null : new LookupResult(matches.get(0).customItemId(), matches.get(0).customVariantId());
     }
 
-    public record ItemSearchOption(Long customItemId, Long customVariantId, String label) { }
+    public record ItemSearchOption(Long customItemId, Long customVariantId, String label, String imageUrl) {
+        public ItemSearchOption(Long customItemId, Long customVariantId, String label) { this(customItemId,customVariantId,label,null); } }
 
     public static List<ItemSearchOption> searchCustomItems(Connection conn, String search) throws SQLException {
         String value = search == null ? "" : search.trim();
@@ -797,7 +787,8 @@ public final class ServerCustomOrderDataService {
                        coiv.variant_name,
                        COALESCE(NULLIF(coiv.size,''),coi.size,'') AS size,
                        COALESCE(NULLIF(coiv.color,''),coi.color,'') AS color,
-                       COALESCE(NULLIF(coiv.sku,''),coi.sku,'') AS sku
+                       COALESCE(NULLIF(coiv.sku,''),coi.sku,'') AS sku,
+                       COALESCE(NULLIF(coiv.image_url,''),coi.image_url) AS image_url
                 FROM (SELECT custom_item_id, custom_variant_id, MIN(rank) AS rank
                       FROM matches GROUP BY custom_item_id, custom_variant_id) m
                 JOIN custom_order_items coi ON coi.custom_item_id=m.custom_item_id
@@ -826,7 +817,7 @@ public final class ServerCustomOrderDataService {
                     String label = attributeLabel(name, rs.getString("size"), rs.getString("color"));
                     String sku = rs.getString("sku");
                     if (sku != null && !sku.isBlank()) label += " [" + sku + "]";
-                    options.add(new ItemSearchOption(itemId, variant, label));
+                    options.add(new ItemSearchOption(itemId, variant, label, rs.getString("image_url")));
                 }
                 return options;
             }
@@ -836,7 +827,11 @@ public final class ServerCustomOrderDataService {
     public record CustomItemOption(Long customItemId, String name, String size, String color, String sku, String productType, String pricingType,
                                    BigDecimal fixedPrice, boolean hasVariants, BigDecimal areaPrice,
                                    String areaPriceUnit, String dimensionUnit, BigDecimal maxWidth,
-                                   BigDecimal maxLength) {
+                                   BigDecimal maxLength, String imageUrl) {
+        public CustomItemOption(Long customItemId, String name, String size, String color, String sku, String productType, String pricingType,
+                                   BigDecimal fixedPrice, boolean hasVariants, BigDecimal areaPrice,
+                                   String areaPriceUnit, String dimensionUnit, BigDecimal maxWidth,
+                                   BigDecimal maxLength) { this(customItemId, name, size, color, sku, productType, pricingType, fixedPrice, hasVariants, areaPrice, areaPriceUnit, dimensionUnit, maxWidth, maxLength, null); }
         @Override
         public String toString() {
             String label = attributeLabel(name,size,color);
@@ -854,7 +849,8 @@ public final class ServerCustomOrderDataService {
         }
     }
 
-    public record VariantOption(Long variantId, String name, String size, String color, String effectiveSize, String effectiveColor, String sku, BigDecimal fixedPrice) {
+    public record VariantOption(Long variantId, String name, String size, String color, String effectiveSize, String effectiveColor, String sku, BigDecimal fixedPrice, String imageUrl) {
+        public VariantOption(Long variantId, String name, String size, String color, String effectiveSize, String effectiveColor, String sku, BigDecimal fixedPrice) { this(variantId, name, size, color, effectiveSize, effectiveColor, sku, fixedPrice, null); }
         @Override
         public String toString() {
             String label = attributeLabel(name,effectiveSize,effectiveColor);

@@ -1,0 +1,5 @@
+SmartStock 1.1.121 - preserve signed stock during inventory merges
+
+Duplicate item merges now combine signed quantities, so negative stock is subtracted rather than blocked or discarded. For example, 56 and -11 consolidate to 45; -3 and 82 consolidate to 79. Each store applies only its own stock once, including when a merge is retried. Review shows the signed-stock calculation. Integer overflow and underflow remain blocked.
+
+Original photos, barcode aliases and historical sale amounts remain preserved. No database migration or model changes are required. Store servers must run this version before applying merges involving negative stock.

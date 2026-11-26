@@ -1,0 +1,7 @@
+SmartStock 1.1.107
+
+Adds Update Now to the windowed Work Queue Display, with the running version visible in both fullscreen and windowed mode. Manual checks use the same verified updater as automatic updates and report progress, failures and up-to-date results.
+
+Fixes Windows display updater permission checks failing with "Some or all identity references could not be translated." Permissions are checked using raw Windows security IDs, preserving rejection of untrusted write access without requiring account-name lookup.
+
+Displays affected by the old updater error need this full Windows installer run as administrator to repair the installed maintenance script. An app-only update ZIP cannot repair that protected script. Update the store server before registers. AI model weights remain separate and preserved.

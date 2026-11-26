@@ -1,0 +1,3 @@
+SmartStudio 0.1.110 Windows quick update
+
+Business card layouts now accept negative horizontal and vertical spacing. Spacing values are preserved when saving and reopening layouts. Includes the SmartStock 1.1.146 client libraries.

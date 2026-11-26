@@ -164,8 +164,13 @@ public final class ServerEmailOutboxService {
     }
 
     public static QueueResult queueBalanceSheetSubmission(long submissionId, int revisionNo) throws SQLException {
-        try (ConnectionLease lease = connectionLease()) {
-            Connection conn = lease.connection();
+        QueueResult result;
+        try(ConnectionLease lease=connectionLease()){result=queueBalanceSheetSubmission(lease.connection(),submissionId,revisionNo);}
+        if(result.queued())tryProcessOneAsync(result.outboxId());return result;
+    }
+
+    /** Queues atomically with a submitted sheet; the normal outbox worker dispatches after commit. */
+    static QueueResult queueBalanceSheetSubmission(Connection conn,long submissionId,int revisionNo)throws SQLException {
             EmailSchemaInstaller.ensureSchema(conn);
             BalanceSheetEmailData data = loadBalanceSheetEmailData(conn, submissionId);
             StoreEmailSettings settings = loadSettings(conn, data.locationId());
@@ -178,7 +183,7 @@ public final class ServerEmailOutboxService {
 
             boolean revised = revisionNo > 0;
             RevisionEmailData revision = revised ? loadRevisionEmailData(conn,submissionId,revisionNo,data.currentRevision()) : null;
-            ServerBalanceSheetService.BalanceSheet sheet = revised ? revision.sheet() : ServerBalanceSheetService.loadSubmission(submissionId);
+            ServerBalanceSheetService.BalanceSheet sheet = revised ? revision.sheet() : ServerBalanceSheetService.loadSubmission(conn,submissionId);
             String title = revised ? "Revised Balance Sheet - Revision " + revisionNo : "Submitted Balance Sheet";
             String period = sheet.periodStart() + (sheet.periodStart().equals(sheet.periodEnd()) ? "" : " to " + sheet.periodEnd());
             String editor=revised?firstNonBlank(revision.changedByName(),"Unknown user"):"";
@@ -201,7 +206,6 @@ public final class ServerEmailOutboxService {
             recordEvent(conn, outboxId, "QUEUED", revised ? "Revised balance sheet queued (revision " + revisionNo + ")." : "Submitted balance sheet queued.");
             tryProcessOneAsync(outboxId);
             return QueueResult.queued(outboxId);
-        }
     }
 
     static void queueStorefrontOrder(Connection c,int location,String recipient,String order,String status,String deadline)throws SQLException {

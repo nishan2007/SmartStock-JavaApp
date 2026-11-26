@@ -15,6 +15,7 @@ final class SharedBadgeLibrary {
     interface Transport{JsonObject send(JsonObject request)throws Exception;}
     private final Transport transport;
     volatile boolean online;
+    volatile boolean smartDrive;
     volatile String status="OFFLINE — cached templates only; changes cannot be saved.";
     SharedBadgeLibrary(){
         DatabaseConfig config=DatabaseConfig.load();String scope=LanApiClient.baseUri()+"/"+config.locationId();
@@ -22,13 +23,20 @@ final class SharedBadgeLibrary {
         transport=LanApiClient::studioTemplates;stores=new StoreTemplateFolders(folder);
     }
     SharedBadgeLibrary(Path folder,Transport transport){this.folder=folder;this.transport=transport;this.stores=new StoreTemplateFolders(folder);}
+    void requireUniqueName(String name,Path except)throws Exception{
+        for(Path file:new BadgeTemplateLibrary(folder).templates())if(!file.equals(except)){var row=stores.metadata(file);if(row.has("name")&&row.get("name").getAsString().equalsIgnoreCase(name))throw new java.io.IOException("A shared template with that name already exists. Choose a different name.");}
+    }
     Path folder(){return folder;}
+    boolean contains(Path file){return file!=null&&folder.toAbsolutePath().normalize().equals(file.toAbsolutePath().normalize().getParent());}
     private JsonObject request(String action){JsonObject request=new JsonObject();request.addProperty("action",action);return request;}
     private Path meta(Path file){return file.resolveSibling(file.getFileName()+".meta.json");}
     private void atomic(Path path,byte[] data)throws Exception{Files.createDirectories(folder);Path temp=Files.createTempFile(folder,".cache-",".tmp");try{Files.write(temp,data);Files.move(temp,path,StandardCopyOption.REPLACE_EXISTING,StandardCopyOption.ATOMIC_MOVE);}finally{Files.deleteIfExists(temp);}}
     void refresh()throws Exception{
         try{
-            JsonObject catalog=transport.send(allStoresRequest());stores.accept(catalog);JsonArray rows=catalog.getAsJsonArray("templates");
+            JsonObject catalog=transport.send(allStoresRequest());stores.accept(catalog);
+            smartDrive=catalog.has("smartDrive")&&catalog.get("smartDrive").getAsBoolean();
+            if(smartDrive){online=false;status="SmartDrive shared library • Open a shared file to edit and save directly.";return;}
+            JsonArray rows=catalog.getAsJsonArray("templates");
             if(rows.size()>10000)throw new java.io.IOException("Template catalog is too large");
             ExecutorService pool=Executors.newFixedThreadPool(4);List<Future<?>> jobs=new ArrayList<>();int pending=0;Set<Path> retained=new HashSet<>();
             try{for(JsonElement item:rows){JsonObject row=item.getAsJsonObject();String id=UUID.fromString(row.get("id").getAsString()).toString();String digest=row.get("sha256").getAsString();
@@ -47,6 +55,7 @@ final class SharedBadgeLibrary {
     private JsonObject allStoresRequest(){JsonObject r=request("LIST");r.addProperty("viewStoreId",0);return r;}
     void assign(JsonObject body)throws Exception{if(!online)throw new java.io.IOException("Reconnect before changing template stores.");transport.send(body);refresh();}
     LegacyBadgeMigration.Result migrateLegacy(Path source,java.util.function.BooleanSupplier active)throws Exception{
+        if(smartDrive)return new LegacyBadgeMigration.Result(0,0,0,true);
         if(!online)throw new java.io.IOException("Reconnect before migrating existing badge templates.");
         return new LegacyBadgeMigration(folder,transport).run(source,active);
     }
@@ -61,9 +70,38 @@ final class SharedBadgeLibrary {
         Files.deleteIfExists(meta(file));refresh();
     }
     JsonObject record(Path file,String action,JsonObject payload)throws Exception {
-        if(file==null||!Files.exists(meta(file)))throw new java.io.IOException("Save this template to the shared library first.");
-        JsonObject row=stores.metadata(file),body=payload.deepCopy();stores.target(body,row);body.addProperty("id",row.get("id").getAsString());body.addProperty("action",action);
+        return record(file,null,action,payload);
+    }
+    JsonObject record(Path file,publishing.StudioDriveIdentity identity,String action,JsonObject payload)throws Exception {
+        if(file==null)throw new java.io.IOException("Save this template to the shared library first.");
+        JsonObject row;
+        if(Files.exists(meta(file)))row=stores.metadata(file);
+        else {
+            if(identity==null)identity=BadgeTemplate.load(file).smartDrive;
+            if(identity==null)throw new java.io.IOException("Save this SmartDrive design before using its submission queue or print records.");
+            identity.validate();
+            row=new JsonObject();row.addProperty("id",identity.id);row.addProperty("storageStoreId",identity.storageStoreId);
+        }
+        JsonObject body=payload.deepCopy();stores.target(body,row);body.addProperty("id",row.get("id").getAsString());body.addProperty("action",action);
         return transport.send(body);
+    }
+    List<StudioRecordBrowser.Row<String>> printRecords(Path file,publishing.StudioDriveIdentity identity)throws Exception{
+        // RECORD_LIST already enforces store, template and administrator access on every page.
+        final int pageSize=100;
+        var records=new LinkedHashMap<String,StudioRecordBrowser.Row<String>>();
+        for(int offset=0;;offset+=pageSize){
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+            var query=new JsonObject();query.addProperty("offset",offset);
+            var page=record(file,identity,"RECORD_LIST",query).getAsJsonArray("records");
+            for(var element:page){
+                var row=element.getAsJsonObject();String id=row.get("recordId").getAsString();
+                var values=new LinkedHashMap<String,String>();
+                row.getAsJsonObject("values").entrySet().forEach(value->values.put(value.getKey(),value.getValue().getAsString()));
+                values.put("_savedAt",row.get("createdAt").getAsString());
+                records.putIfAbsent(id,new StudioRecordBrowser.Row<>(id,values));
+            }
+            if(page.size()<pageSize)return List.copyOf(records.values());
+        }
     }
     Path save(BadgeTemplate template,Path current,String expected)throws Exception{
         if(!online)throw new java.io.IOException("Offline mode: changes cannot be saved. Reconnect to the store server and refresh first.");

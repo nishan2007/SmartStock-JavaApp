@@ -22,12 +22,13 @@ class BusinessCardsTest {
             }
         });
     }
-    @Test void everyTemplateCategoryDefaultsToLetterDespiteImportedA4Sheet()throws Exception{
+    @Test void newTemplatesDefaultToLetterButReopenedTemplatesRestoreTheirPaper()throws Exception{
         javax.swing.SwingUtilities.invokeAndWait(()->{
             for(boolean labels:List.of(false,true)){
                 var panel=new BusinessCardsPanel(labels);var imported=new SheetLayout.Settings();imported.width=210;imported.height=297;
-                panel.restoreSheetSize(imported);var output=panel.output();assertEquals(215.9,output.print.width,.00001);assertEquals(279.4,output.print.height,.00001);
-                if(!labels)assertEquals(12,SheetLayout.pack(output.width,output.height,output.print).capacity());
+                assertEquals(215.9,panel.output().print.width,.00001);
+                panel.restoreSheetSize(imported);var output=panel.output();assertEquals(210,output.print.width,.00001);assertEquals(297,output.print.height,.00001);
+                assertTrue(SheetLayout.pack(output.width,output.height,output.print).capacity()>0);
             }
         });
     }
@@ -73,6 +74,17 @@ class BusinessCardsTest {
             }
         }
     }
+    @Test void automaticPaddingMatchesRunAndKeepsSavedWidth(){
+        var hundreds=BusinessCardSeries.paddedValues("1","1",100,0);
+        assertEquals("001",hundreds.get(0));assertEquals("100",hundreds.get(99));
+        var thousands=BusinessCardSeries.paddedValues("1","1",1000,0);
+        assertEquals("0001",thousands.get(0));assertEquals("1000",thousands.get(999));
+        assertEquals(List.of("0001","0002"),BusinessCardSeries.paddedValues("0001","1",2,0));
+        assertEquals(List.of("099","100","101"),BusinessCardSeries.paddedValues("99","1",3,3));
+        assertEquals(List.of("1000"),BusinessCardSeries.paddedValues("1000","1",1,3));
+        assertEquals(List.of("-10","-05","00"),BusinessCardSeries.paddedValues("-10","5",3,0));
+        assertEquals(List.of("1.5","2"),BusinessCardSeries.paddedValues("1.5","0.5",2,0));
+    }
     @Test void numberSeriesSupportsStepsPaddingAndDecimals(){
         assertEquals(List.of("0010","0015","0020"),BusinessCardSeries.values("10","5",3,4));
         assertEquals(List.of("2","1.5","1"),BusinessCardSeries.values("2","-0.5",3,0));
@@ -83,12 +95,16 @@ class BusinessCardsTest {
     @Test void renderTabAtDesktopSize()throws Exception{
         javax.swing.SwingUtilities.invokeAndWait(()->{
             BusinessCardsPanel panel=new BusinessCardsPanel();
-            click(panel,"Page number field");click(panel,"Add page");
+            panel.setSize(1600,800);
+            ((StudioWorkspaceShell)java.util.Arrays.stream(panel.getComponents())
+                .filter(StudioWorkspaceShell.class::isInstance).findFirst().orElseThrow()).ribbon().select("Insert");
+            layout(panel);
+            click(panel,"Page number");click(panel,"Add page");click(panel,"Page number");
             javax.swing.JTable merge=findMerge(panel);
             var model=(javax.swing.table.DefaultTableModel)merge.getModel();
-            assertEquals("page1_number",model.getColumnName(6));assertEquals("page2_number",model.getColumnName(7));
-            model.addRow(new Object[]{"Alice","Deckers","Staff","5551234","alice@example.com","1","001","1001"});
-            model.addRow(new Object[]{"Bob","Deckers","Staff","5555678","bob@example.com","1","002","1002"});
+            assertEquals("page1_number",model.getColumnName(0));assertEquals("page2_number",model.getColumnName(1));
+            model.addRow(new Object[]{"001","1001"});
+            model.addRow(new Object[]{"002","1002"});
             choosePaper(panel,"11 × 17");assertEquals(279.4,panel.output().print.width,.0001);assertEquals(431.8,panel.output().print.height,.0001);
             choosePaper(panel,"Letter");
             findPreview(panel).setImage(new PublicationRenderer(panel.output()).raster(0,72));
@@ -100,8 +116,13 @@ class BusinessCardsTest {
             panel.removeNotify();
         });
     }
-    private static void click(java.awt.Container c,String name){for(var child:c.getComponents()){if(child instanceof javax.swing.JButton button && button.getText().equals(name)){button.doClick();return;}if(child instanceof javax.swing.JComponent component && component.getComponentPopupMenu()!=null)click(component.getComponentPopupMenu(),name);if(child instanceof java.awt.Container nested)click(nested,name);}}
-    private static javax.swing.JTable findMerge(java.awt.Container c){for(var child:c.getComponents()){if(child instanceof javax.swing.JTable table && table.getColumnName(0).equals("name"))return table;if(child instanceof java.awt.Container nested){var found=findMerge(nested);if(found!=null)return found;}}return null;}
+    private static void click(java.awt.Container c,String name){assertTrue(clickFirst(c,name),"Missing command: "+name);}
+    private static boolean clickFirst(java.awt.Container c,String name){for(var child:c.getComponents()){
+        if(child instanceof javax.swing.JButton button&&button.getText().equals(name)){button.doClick();return true;}
+        if(child instanceof javax.swing.JComponent component&&component.getComponentPopupMenu()!=null&&clickFirst(component.getComponentPopupMenu(),name))return true;
+        if(child instanceof java.awt.Container nested&&clickFirst(nested,name))return true;
+    }return false;}
+    private static javax.swing.JTable findMerge(java.awt.Container c){for(var child:c.getComponents()){if(child instanceof javax.swing.JTable table && table.getColumnCount()>0 && table.getColumnName(0).equals("page1_number"))return table;if(child instanceof java.awt.Container nested){var found=findMerge(nested);if(found!=null)return found;}}return null;}
     private static void choosePaper(java.awt.Container c,String name){for(var child:c.getComponents()){if(child instanceof javax.swing.JComboBox<?> combo && combo.getItemCount()==5 && combo.getItemAt(0).equals("Letter")){combo.setSelectedItem(name);return;}if(child instanceof java.awt.Container nested)choosePaper(nested,name);}}
     private static SheetPreview findPreview(java.awt.Container c){for(var child:c.getComponents()){if(child instanceof SheetPreview preview)return preview;if(child instanceof java.awt.Container nested){var found=findPreview(nested);if(found!=null)return found;}}return null;}
     private static void layout(java.awt.Container c){c.doLayout();for(var child:c.getComponents())if(child instanceof java.awt.Container nested)layout(nested);}

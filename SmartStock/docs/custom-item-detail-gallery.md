@@ -1,0 +1,11 @@
+# Custom item photo and variant detail view
+
+Custom service cards open a modal detail view. Main, additional and active-variant photos share an ordered gallery with arrows and clickable thumbnails. The bottom selector area includes photo choices for each variant. Colour-only items show colour selection, size-only items show size selection, and combined items use linked selectors that select real combinations only. Named choices remain for shapes and variants that cannot be uniquely identified by colour/size. Choosing a variant moves to its first photo; missing photos show an explicit fallback.
+
+Plaque cards open the same view at their selected variant. Explore other plaques includes sibling shapes and variants from the other published plaque items, with a route to each template-ready plaque designer. Existing designer bounds, drafts, import/export and preview behavior remain unchanged. Non-plaque designers remain on hold.
+
+The backend adds public variant metadata/photo counts and private snapshot gallery manifests. It excludes inactive variants and non-variant parents' leftover variants, redacts all private storage references, scopes image lookup to the published parent/variant/photo index, and prefetches remote galleries. Custom service categories use the same gallery support. No schema changes or live data changes.
+
+Validation: TypeScript/build, 79 frontend unit tests, Edge gallery/selector/missing-photo/related-plaque/desktop/mobile acceptance, compact-card regression, and all-nine-plaque designer regression passed. Targeted Java gallery, plaque, prefetch and bundle tests passed, including an opted-in disposable PostgreSQL test for active variant/parent membership. Disposable database stopped. Security and whitespace checks passed.
+
+Activated on POS-SERVER with SmartStock 1.1.100 on 30 October 2026, with matching frontend assets deployed (Worker 3923a4e2-4ab6-49cc-b538-9104b91a8887). Live Edge checks passed Baby Cup/kids bottle colour and photo switching, gallery navigation, mobile width, related plaques and designer access. Standard updater verified server readiness; installed JAR bytes and existing model hashes match. Preview screenshots use actual product photos with synthetic catalogue responses and are under target/ui-previews.

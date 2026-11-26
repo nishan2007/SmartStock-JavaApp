@@ -24,6 +24,7 @@ class CustomItemCategoriesTest {
             execute(root,"CREATE DATABASE "+db);
             try(Connection c=DriverManager.getConnection(admin.replace("/postgres","/"+db),"storefront_test","")){
                 SchemaContractService.installLocalBaseline(c);
+                execute(c,"INSERT INTO locations(location_id,name) VALUES(900001,'Category test')");
                 // Exercise upgrade from an installed v16 database and repeat installation.
                 execute(c,"DROP TABLE storefront.custom_item_category_assignments");execute(c,"DROP TABLE storefront.custom_item_categories");execute(c,"DELETE FROM storefront.schema_version WHERE version=17");
                 StorefrontSchema.ensure(c);StorefrontSchema.ensure(c);
@@ -34,10 +35,10 @@ class CustomItemCategoriesTest {
                 CustomItemCategories.validateAssignment(c,id.toString(),false,false,false,false,false);assertThrows(IllegalArgumentException.class,()->CustomItemCategories.validateAssignment(c,id.toString(),true));
                 CustomItemCategories.assign(c,900001,id.toString());
                 assertEquals(1,CustomItemCategories.catalog(c).get(0).getAsJsonObject().getAsJsonArray("items").size());
-                var state=LanCustomOrderCatalogAdminService.load(c);assertEquals(id.toString(),state.items().stream().filter(i->i.itemId()==900001).findFirst().orElseThrow().customCategoryId());assertEquals(1,state.customCategories().size());
+                var state=LanCustomOrderCatalogAdminService.load(c,900001);assertEquals(id.toString(),state.items().stream().filter(i->i.itemId()==900001).findFirst().orElseThrow().customCategoryId());assertEquals(1,state.customCategories().size());
                 var source=state.items().stream().filter(i->i.itemId()==900001).findFirst().orElseThrow();
                 var itemBody=new Gson().toJsonTree(source).getAsJsonObject();itemBody.addProperty("name","Round label");itemBody.addProperty("itemType","Labels");itemBody.addProperty("brand","Deckers");
-                var mutation=new JsonObject();mutation.add("item",itemBody);LanCustomOrderCatalogAdminService.mutate(c,"SAVE_ITEM",mutation);
+                var mutation=new JsonObject();mutation.add("item",itemBody);LanCustomOrderCatalogAdminService.mutate(c,"SAVE_ITEM",mutation,900001);
                 assertEquals("Round label",text(CustomItemCategories.catalog(c).get(0).getAsJsonObject().getAsJsonArray("items").get(0).getAsJsonObject(),"name"));
                 String recovery=CompanyBackupService.buildBackupData(c).sql();assertTrue(recovery.contains("\"storefront\".\"custom_item_categories\""));assertTrue(recovery.contains("\"storefront\".\"custom_item_category_assignments\""));
                 body.addProperty("revision",1);body.addProperty("name","Labels");CustomItemCategories.save(c,body);

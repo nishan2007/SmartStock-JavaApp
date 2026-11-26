@@ -1,0 +1,9 @@
+SmartStock 1.1.126
+
+Customer accounts now support one main phone number and two optional additional numbers, each with a custom type such as Personal, Business or Work. Additional numbers are searchable and validated against other accounts. The main number remains the WhatsApp consent contact.
+
+Device Management now includes Mobile Management: pair a phone once with a QR code, choose its enabled staff web apps, adjust access later, and revoke the phone centrally. Employee permissions still apply. Existing independently approved browsers must pair again.
+
+Includes completed shared-workspace Customers screen and account-history improvements, product-ad source-photo comparison, overseas order/payment changes, and mobile startup error handling. Retains the SmartStudio shared-design/font/progress access fix.
+
+Update the store server first, then registers. Staff gateways are updated for shared mobile pairing; real-phone acceptance requires the updated server. AI model weights are excluded and remain in the active store profile. SmartDrive's separate deferred release is not included.

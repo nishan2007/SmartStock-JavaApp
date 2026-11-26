@@ -8,6 +8,7 @@ import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.DefaultListModel;
+import javax.swing.JFileChooser;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JDialog;
@@ -17,6 +18,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
+import javax.swing.JTextArea;
 import javax.swing.ListSelectionModel;
 import javax.swing.SwingUtilities;
 import javax.swing.SwingWorker;
@@ -41,13 +43,17 @@ public final class CatalogPhotoStudioDialog extends JDialog {
     private static final Path HOME = Path.of(System.getProperty("user.home"), ".smartstock", "catalog-studio");
     private final DefaultListModel<Review> model = new DefaultListModel<>();
     private final JList<Review> list = new JList<>(model);
-    private final JLabel original = new JLabel("Select a product", JLabel.CENTER);
-    private final JLabel studio = new JLabel("", JLabel.CENTER);
+    private final DefaultListModel<Review> rejectedModel = new DefaultListModel<>();
+    private final JList<Review> rejectedList = new JList<>(rejectedModel);
+    private final JLabel original = new ui.components.FitImageLabel("Select a product");
+    private final JLabel studio = new ui.components.FitImageLabel("");
     private final JLabel status = new JLabel(" ");
+    private final JTextArea rejectionReason = new JTextArea(3,40);
     private final JButton generate = new JButton("Create next 20 previews");
     private final JButton retry = new JButton("Retry failed previews");
     private final JButton approve = new JButton("Approve and make main photo");
     private final JButton reject = new JButton("Reject photo");
+    private final JButton replaceRejected = new JButton("Load corrected preview");
     private final JButton importPhotos = new JButton("Retry approved uploads");
     private final JButton reload = new JButton("Refresh shared reviews");
     private final JCheckBox showApproved = new JCheckBox("Show approved photos");
@@ -66,19 +72,34 @@ public final class CatalogPhotoStudioDialog extends JDialog {
         JPanel header=new JPanel(new BorderLayout());header.add(heading,BorderLayout.NORTH);
         header.add(showApproved,BorderLayout.SOUTH);root.add(header,BorderLayout.NORTH);
         list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        list.addListSelectionListener(e->{if(!e.getValueIsAdjusting())showSelected();});
-        JScrollPane products=new JScrollPane(list);products.setPreferredSize(new Dimension(310,500));
+        rejectedList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        list.addListSelectionListener(e->{if(!e.getValueIsAdjusting()&&list.getSelectedValue()!=null){
+            rejectedList.clearSelection();showSelected();}});
+        rejectedList.addListSelectionListener(e->{if(!e.getValueIsAdjusting()&&rejectedList.getSelectedValue()!=null){
+            list.clearSelection();showSelected();}});
+        JScrollPane products=new JScrollPane(list);
+        products.setBorder(BorderFactory.createTitledBorder("Photos to review"));
+        JScrollPane rejectedPhotos=new JScrollPane(rejectedList);
+        rejectedPhotos.setBorder(BorderFactory.createTitledBorder("Rejected photos"));
+        JSplitPane lists=new JSplitPane(JSplitPane.VERTICAL_SPLIT,products,rejectedPhotos);
+        lists.setPreferredSize(new Dimension(310,500));lists.setResizeWeight(.72);
         JPanel comparison=new JPanel();comparison.setLayout(new BoxLayout(comparison,BoxLayout.X_AXIS));
         comparison.add(imagePane("Original",original));comparison.add(Box.createHorizontalStrut(8));
         comparison.add(imagePane("Studio preview",studio));
-        JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,products,comparison);
+        rejectionReason.setEditable(false);rejectionReason.setLineWrap(true);rejectionReason.setWrapStyleWord(true);
+        JScrollPane reasonPane=new JScrollPane(rejectionReason);
+        reasonPane.setBorder(BorderFactory.createTitledBorder("Rejection reason / corrections needed"));
+        JPanel previewPanel=new JPanel(new BorderLayout(0,8));
+        previewPanel.add(comparison,BorderLayout.CENTER);previewPanel.add(reasonPane,BorderLayout.SOUTH);
+        JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,lists,previewPanel);
         split.setResizeWeight(.28);root.add(split,BorderLayout.CENTER);
         JPanel controls=new JPanel(new FlowLayout(FlowLayout.LEFT,9,0));
-        controls.add(generate);controls.add(retry);controls.add(approve);controls.add(reject);controls.add(importPhotos);controls.add(reload);
+        controls.add(generate);controls.add(retry);controls.add(approve);controls.add(reject);controls.add(replaceRejected);controls.add(importPhotos);controls.add(reload);
         JPanel footer=new JPanel(new BorderLayout(0,9));footer.add(controls,BorderLayout.NORTH);footer.add(status,BorderLayout.SOUTH);
         root.add(footer,BorderLayout.SOUTH);setContentPane(root);
         generate.addActionListener(e->generate());retry.addActionListener(e->retryFailed());approve.addActionListener(e->approveSelected());
         reject.addActionListener(e->decide("rejected"));importPhotos.addActionListener(e->importApproved(null));
+        replaceRejected.addActionListener(e->replaceRejected());
         showApproved.addActionListener(e->refresh());reload.addActionListener(e->loadSharedReviews());
         refresh();
         loadSharedReviews();
@@ -92,27 +113,43 @@ public final class CatalogPhotoStudioDialog extends JDialog {
     private void setBusy(boolean value){
         busy=value;generate.setEnabled(!value);retry.setEnabled(!value);approve.setEnabled(!value);reject.setEnabled(!value);
         importPhotos.setEnabled(!value);reload.setEnabled(!value);
+        replaceRejected.setEnabled(!value);
     }
 
     private void refresh(){
-        Review selected=list.getSelectedValue();model.clear();
-        int selectedIndex=-1;
+        Review selected=list.getSelectedValue(),selectedRejected=rejectedList.getSelectedValue();
+        int previousIndex=list.getSelectedIndex();
+        model.clear();rejectedModel.clear();
+        int selectedIndex=-1,rejectedIndex=-1;
         for(Review review:state.items){
+            if("rejected".equals(review.decision)){
+                if(selectedRejected!=null&&review.productId==selectedRejected.productId)rejectedIndex=rejectedModel.size();
+                rejectedModel.addElement(review);continue;
+            }
             if(!showApproved.isSelected()&&("approved".equals(review.decision)||"imported".equals(review.decision)))continue;
-            if(review==selected)selectedIndex=model.size();
+            if(selected!=null&&review.productId==selected.productId)selectedIndex=model.size();
             model.addElement(review);
         }
-        if(selectedIndex>=0)list.setSelectedIndex(selectedIndex);
-        else if(!model.isEmpty())list.setSelectedIndex(0);
+        if(rejectedIndex>=0)rejectedList.setSelectedIndex(rejectedIndex);
+        else if(selectedIndex>=0)list.setSelectedIndex(selectedIndex);
+        else if(!model.isEmpty())list.setSelectedIndex(Math.min(Math.max(previousIndex,0),model.size()-1));
+        else if(!rejectedModel.isEmpty())rejectedList.setSelectedIndex(0);
         else showSelected();
         int approved=0,imported=0,rejected=0,failed=0;
         for(Review row:state.items){if("approved".equals(row.decision))approved++;if("imported".equals(row.decision))imported++;if("rejected".equals(row.decision))rejected++;if("failed".equals(row.decision)||"import_failed".equals(row.decision))failed++;}
         int hidden=showApproved.isSelected()?0:approved+imported;
-        status.setText(model.size()+" shown  ·  "+hidden+" approved hidden  ·  "+rejected+" rejected  ·  "+failed+" failed");
+        status.setText(model.size()+" to review  ·  "+rejected+" rejected  ·  "+hidden+" approved hidden  ·  "+failed+" failed");
+    }
+
+    private Review selectedReview(){
+        Review row=list.getSelectedValue();
+        return row!=null?row:rejectedList.getSelectedValue();
     }
 
     private void showSelected(){
-        Review row=list.getSelectedValue();
+        Review row=selectedReview();
+        rejectionReason.setText(row!=null&&"rejected".equals(row.decision)&&row.error!=null?row.error:"");
+        rejectionReason.setCaretPosition(0);
         if(row==null){showImage(original,null);showImage(studio,null);return;}
         if(loadedPhotos.getOrDefault(row.productId,-1L)==row.revision){
             showImage(original,HOME.resolve("originals/"+row.productId+".img"));
@@ -132,7 +169,7 @@ public final class CatalogPhotoStudioDialog extends JDialog {
                 return null;
             }
             @Override protected void done(){
-                if(list.getSelectedValue()==null||list.getSelectedValue().productId!=requestedId)return;
+                if(selectedReview()==null||selectedReview().productId!=requestedId)return;
                 try{get();loadedPhotos.put(requestedId,requestedRevision);
                     showImage(original,HOME.resolve("originals/"+requestedId+".img"));
                     showImage(studio,HOME.resolve("previews/"+requestedId+".jpg"));
@@ -146,9 +183,7 @@ public final class CatalogPhotoStudioDialog extends JDialog {
         if(file==null||!Files.isRegularFile(file)){label.setIcon(null);label.setText("No image");return;}
         try{
             var source=ImageIO.read(file.toFile());if(source==null)throw new IllegalArgumentException("Invalid photo");
-            double scale=Math.min(350.0/source.getWidth(),450.0/source.getHeight());
-            int width=Math.max(1,(int)(source.getWidth()*scale)),height=Math.max(1,(int)(source.getHeight()*scale));
-            label.setIcon(new javax.swing.ImageIcon(source.getScaledInstance(width,height,Image.SCALE_SMOOTH)));
+            label.setIcon(new javax.swing.ImageIcon(source));
             label.setText("");
         }catch(Exception e){label.setIcon(null);label.setText("Preview unavailable");}
     }
@@ -178,14 +213,11 @@ public final class CatalogPhotoStudioDialog extends JDialog {
                 setBusy(false);
                 try{
                     List<LanApiClient.StudioReview> remote=get();
-                    Review selected=list.getSelectedValue();
                     State shared=new State();shared.lastId=state.lastId;
                     for(var item:remote){
                         Review row=Review.from(item);shared.items.add(row);
-                        shared.lastId=Math.max(shared.lastId,row.productId);
                     }
                     state=shared;save();refresh();
-                    if(selected!=null)for(int i=0;i<model.size();i++)if(model.get(i).productId==selected.productId){list.setSelectedIndex(i);break;}
                 }catch(Exception error){status.setText("Could not load shared reviews: "+message(error));}
             }
         }.execute();
@@ -204,13 +236,29 @@ public final class CatalogPhotoStudioDialog extends JDialog {
     }
 
     private void decide(String decision){
-        Review row=list.getSelectedValue();if(row==null||"imported".equals(row.decision))return;
+        Review row=selectedReview();if(row==null||"imported".equals(row.decision))return;
+        String reason=null;
+        if("rejected".equals(decision)){
+            JTextArea input=new JTextArea("rejected".equals(row.decision)&&row.error!=null?row.error:"",5,44);
+            input.setLineWrap(true);input.setWrapStyleWord(true);
+            JPanel prompt=new JPanel(new BorderLayout(0,8));
+            prompt.add(new JLabel("What is wrong, and what should change in the next photo?"),BorderLayout.NORTH);
+            prompt.add(new JScrollPane(input),BorderLayout.CENTER);
+            while(true){
+                if(JOptionPane.showConfirmDialog(this,prompt,"Reject photo — correction instructions",
+                        JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE)!=JOptionPane.OK_OPTION)return;
+                reason=input.getText().trim();
+                if(!reason.isEmpty()&&reason.length()<=2000)break;
+                JOptionPane.showMessageDialog(this,"Enter a rejection reason (up to 2,000 characters).");
+            }
+        }
+        final String savedReason=reason;
         setBusy(true);status.setText("Saving review for "+row.name+"…");
         new SwingWorker<Void,Void>(){
             @Override protected Void doInBackground() throws Exception {
                 uploadIfMissing(row);
-                row.revision=LanApiClient.decideStudioReview(row.productId,row.revision,decision,null);
-                row.decision=decision;row.error=null;save();return null;
+                row.revision=LanApiClient.decideStudioReview(row.productId,row.revision,decision,savedReason);
+                row.decision=decision;row.error=savedReason;save();return null;
             }
             @Override protected void done(){setBusy(false);try{get();refresh();}catch(Exception error){
                 status.setText("Review was not saved: "+message(error));loadSharedReviews();}}
@@ -218,7 +266,7 @@ public final class CatalogPhotoStudioDialog extends JDialog {
     }
 
     private void approveSelected(){
-        Review row=list.getSelectedValue();
+        Review row=selectedReview();
         if(row==null||"imported".equals(row.decision))return;
         if(loadedPhotos.getOrDefault(row.productId,-1L)!=row.revision
                 ||!Files.isRegularFile(HOME.resolve("previews/"+row.productId+".jpg"))){
@@ -230,6 +278,48 @@ public final class CatalogPhotoStudioDialog extends JDialog {
         if(answer!=JOptionPane.OK_OPTION)return;
         row.decision="approved";row.error=null;save();refresh();
         importApproved(row);
+    }
+
+    private void replaceRejected(){
+        Review row=rejectedList.getSelectedValue();
+        if(row==null){JOptionPane.showMessageDialog(this,"Select a rejected photo first.");return;}
+        Path candidates=HOME.resolve("reworked");
+        JFileChooser chooser=new JFileChooser(Files.isDirectory(candidates)?candidates.toFile():HOME.toFile());
+        chooser.setDialogTitle("Choose corrected JPEG for "+row.name);
+        chooser.setSelectedFile(candidates.resolve(row.productId+".jpg").toFile());
+        if(chooser.showOpenDialog(this)!=JFileChooser.APPROVE_OPTION)return;
+        Path selected=chooser.getSelectedFile().toPath();
+        if(!selected.getFileName().toString().equals(row.productId+".jpg")){
+            JOptionPane.showMessageDialog(this,"The corrected JPEG must be named "+row.productId+
+                    ".jpg so it cannot be assigned to another product.");return;
+        }
+        setBusy(true);status.setText("Replacing rejected preview for "+row.name+"…");
+        new SwingWorker<byte[],Void>(){
+            private long revision;
+            @Override protected byte[] doInBackground() throws Exception {
+                byte[] jpeg=Files.readAllBytes(selected);
+                var image=ImageIO.read(selected.toFile());
+                if(image==null||image.getWidth()!=image.getHeight())
+                    throw new IllegalArgumentException("Choose a valid square JPEG preview.");
+                revision=LanApiClient.replaceRejectedStudioReview(row.productId,row.revision,row.sha256,jpeg);
+                return jpeg;
+            }
+            @Override protected void done(){
+                setBusy(false);
+                try{
+                    byte[] jpeg=get();
+                    Path preview=HOME.resolve("previews/"+row.productId+".jpg");
+                    Files.createDirectories(preview.getParent());
+                    Files.write(preview,jpeg);
+                    row.revision=revision;row.decision="review";row.error=null;
+                    loadedPhotos.put(row.productId,revision);
+                    save();refresh();
+                    for(int i=0;i<model.size();i++)if(model.get(i).productId==row.productId){
+                        list.setSelectedIndex(i);list.ensureIndexIsVisible(i);break;
+                    }
+                }catch(Exception error){status.setText("Could not replace preview: "+message(error));loadSharedReviews();}
+            }
+        }.execute();
     }
 
     private void generate(){

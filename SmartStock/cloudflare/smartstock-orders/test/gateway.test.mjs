@@ -47,3 +47,19 @@ test('reports offline and outdated backends honestly',async()=>{
     globalThis.fetch=async()=>Response.json({ok:true});r=await worker.fetch(new Request(origin+'/employees/health'),env);assert.equal(r.status,200);
   }finally{globalThis.fetch=previous;}
 });
+test('pre-login company branding exposes only already-public company identity',async()=>{
+  const previous=globalThis.fetch;const calls=[];
+  globalThis.fetch=async(url,options)=>{
+    calls.push({url,options});assert.equal(options.redirect,'manual');
+    if(String(url).includes('/shop/image?'))return new Response(new Uint8Array([1,2,3]),{headers:{'Content-Type':'image/png'}});
+    return Response.json({branding:{name:'DECKERS',mottoLine1:'Service',addressLine1:'Store address',logo:'a'.repeat(64)},products:[{private:'excluded'}],employee:'excluded'});
+  };
+  try{
+    const response=await worker.fetch(new Request(origin+'/employees/branding',{headers:{Cookie:'ss_employee=private'}}),env);
+    assert.equal(response.status,200);const data=(await response.json()).data;
+    assert.equal(data.name,'DECKERS');assert.match(data.logo,/^data:image\/png;base64,/);
+    assert.equal(data.products,undefined);assert.equal(data.employee,undefined);
+    assert.equal(calls[0].url,'https://www.deckers.gy/shop/api/v1/catalog');
+    assert.equal(calls[0].options.headers.Cookie,undefined);assert.equal(calls[1].options.headers,undefined);
+  }finally{globalThis.fetch=previous;}
+});

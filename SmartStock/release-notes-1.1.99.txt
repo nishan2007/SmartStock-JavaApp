@@ -1,0 +1,5 @@
+SmartStock 1.1.99
+
+Adds Custom Order Items > Custom Inventory > Review missing template sizes. Review incomplete active items and variants with their photo, enter printable width/height and units, and use Save & Next or Skip for now. Starts with sublimation items, with an option to include other non-shirt inventory. Completed templates leave the queue. Template-only writes protect other item details and reject conflicting edits from another computer.
+
+Includes previous service-item photos and Item Type grouping changes. Sublimation models/designers without template sizes remain on hold. Update POS-SERVER before registers. Existing AI models are preserved separately from application updates. Physical hardware and live installed service behavior require separate verification.

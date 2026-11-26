@@ -1,0 +1,7 @@
+SmartStock 1.1.96
+
+Includes all combined workspace changes, plus SmartStock-managed CT221B USB label sharing for order labels and price tags, receipt connection retries before transmission with duplicate-print protection, readable Retry buttons, and invoice payment totals rounded consistently with displayed quotes and invoices.
+
+Update the store server before registers. Configure the CT221B host in Hardware Settings > Shared CT221B Setup / Status and keep SmartStock open on that host. Printer drivers and physical output require verification. AI models remain separate and are preserved during updates.
+
+Plaque website designer: individual active variant photo cards open the matching designer; template dimensions define the artwork area. Photo-textured plaque previews preserve each variant's distinctive shape and finish, with per-variant drafts, artwork editing, and design exports. Update POS-SERVER and the website bundle together.

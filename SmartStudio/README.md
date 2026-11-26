@@ -1,5 +1,21 @@
 # SmartStudio
 
+Windows update-only releases can be prepared after building with
+`tools/package-windows.ps1 -UpdateOnly -RuntimePath <existing-runtime>`.
+The resulting `SmartStudio-update-<version>.exe` contains application files and
+dependencies, excludes the Java runtime and model weights, and requires an
+existing installation. It preserves existing shortcuts and uninstall registration.
+Publish it only to the Studio update feed; keep the public first-install selection
+pointed at a full installer. Validate by applying it to an isolated copy of the
+previous release and launching that updated copy before publication.
+
+## PDF Editor (0.1.67)
+
+Sign in, then select **PDF Editor** in the workspace chooser. Local PDF merging,
+page organization, content additions, forms and optional Tesseract OCR are owned
+by SmartStudio. PDF editing is removed from SmartStock starting with 1.1.80.
+See [PDF Editor](docs/pdf-editor.md) for usage and OCR setup.
+
 ## Reuse this computer's SmartStock pairing
 
 On first launch, SmartStudio can reuse the current Windows user's saved SmartStock
@@ -62,12 +78,26 @@ The published installer was downloaded in full and verified. An installed
 updater handoff/reinstall was checked in a temporary fixture. Live paired
 staff-session update checks at the store remain a separate deployment check.
 
-SmartStudio uses its own white paintbrush icon on the existing Deckers colour
-tile, with a purple ferrule. The desktop executable, shortcuts and application
-window share this identity. Company Preferences still supplies the header logo.
-PNG assets and a seven-size Windows ICO (16–256 px) live under
-`src/main/resources/gy/deckers/studio/icons`. To regenerate them from the vector
-drawing, run `java tools/GenerateStudioIcons.java` from this folder.
+SmartStudio uses the approved Creative Brush v4 identity: a purple/gold brush
+crossing a warm-white page on a rounded plum tile. The editable, vector-only
+source is `src/main/resources/gy/deckers/studio/icons/SmartStudio.svg`. Company
+Preferences supplies the separate company logo in both login and editor headers;
+the app icon never substitutes for company branding.
+
+Icon resources include PNGs at 16, 24, 32, 48, 64, 128, 256, 512 and 1024 px,
+a seven-size Windows ICO, and macOS ICNS. Existing Windows launcher/installer
+packaging consumes `SmartStudio.ico`; macOS packaging should consume
+`SmartStudio.icns` (native macOS packaging remains a separate check).
+To regenerate from the exact SVG, provide the build-time `sharp` Node package
+through normal module resolution, then run from `SmartStudio`:
+
+```
+node tools/render-studio-icon.cjs
+java tools/GenerateStudioIcons.java
+```
+
+The PNG and dark/light compatibility resources deliberately share the same
+approved tile. No runtime SVG or image-rendering dependency is added.
 
 A dedicated Java 17 staff desktop client for SmartStock. Uses shared Deckers
 Swing styling and the store's Company Preferences name, motto, and logo on the

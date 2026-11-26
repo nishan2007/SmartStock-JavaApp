@@ -135,6 +135,9 @@ public class HardwareSettingsPanel extends JPanel {
         orderLabelPanel.setOpaque(false);
         orderLabelPanel.add(new JLabel("Default order label printer:"));
         orderLabelPanel.add(orderLabelDestinationBox);
+        JButton sharedLabelButton = new JButton("Shared CT221B Setup / Status");
+        sharedLabelButton.addActionListener(e -> SharedLabelPrinterDialog.show(this));
+        orderLabelPanel.add(sharedLabelButton);
         printerControls.add(orderLabelPanel);
         printerControls.add(badgePrinterPanel);
         localSettingsPanel.add(printerControls, BorderLayout.CENTER);

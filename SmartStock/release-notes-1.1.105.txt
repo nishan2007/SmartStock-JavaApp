@@ -1,0 +1,9 @@
+SmartStock 1.1.105
+
+Corrects unpaid customer account statements that included open invoices never charged to the account. Only account-charged invoices are included; cancelled documents and custom orders billed on an invoice are excluded. Additional/manual charge reconciliation now uses the connected store ledger instead of misclassifying other-store balances as manual charges.
+
+Letter statements now use a proper US Letter page layout with aligned document, date, total, paid and balance columns; repeated headings and page numbers; and a clear total on the final page. Preview and printing use the same page renderer. Receipt printing remains available.
+
+Verified that statement totals reconcile to account purchases after excluding an uncharged invoice. No customer debt or payment was changed to correct the printout.
+
+Update the store server first, then registers: the account-balance query correction runs on the server. Windows application update ZIP only. AI models remain separate and preserved. Physical printing and live server/register verification remain rollout checks.

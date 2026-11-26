@@ -1,0 +1,30 @@
+{
+  "installationName": "DeckersDrive",
+  "minimumFreeBytes": 5368709120,
+  "dataParent": "D:\\Shares",
+  "serverName": "DECKERSDRIVE",
+  "enrollmentRoot": "D:\\Shares\\DeckersDrive\\Private\\Workstations",
+  "publicOrigin": "https://drive.example.com",
+  "employeeOrigin": "https://employees.example.com",
+  "employeeServer": "https://smartstock.example.com",
+  "storeRoots": {
+    "1": "D:\\Shares\\DeckersDrive\\Stores\\1"
+  },
+  "scanStateRoot": "D:\\Shares\\DeckersDrive\\Private\\ScannerState",
+  "backupStateRoot": "D:\\Shares\\DeckersDrive\\Private\\BackupState",
+  "recoveryRoot": "D:\\Shares\\DeckersDrive\\Private\\Recovery",
+  "defenderScanner": "C:\\Program Files\\Windows Defender\\MpCmdRun.exe",
+  "office": {
+    "maxCacheBytes": 1073741824,
+    "converter": "C:\\Program Files\\LibreOffice\\program\\soffice.bin",
+    "cacheRoot": "D:\\Shares\\DeckersDrive\\Private\\OfficePreviews"
+  },
+  "scanners": [
+    {
+      "id": "Canon-C5040",
+      "storeId": "1",
+      "account": "sdscan_c5040",
+      "intake": "D:\\Shares\\DeckersDrive\\Private\\Intake\\Canon-C5040"
+    }
+  ]
+}

@@ -74,7 +74,8 @@ public final class ServerQuotationInvoiceViewService {
             QuotationInvoiceSchemaInstaller.ensureSchema(conn);
             try (PreparedStatement ps = conn.prepareStatement("""
                     SELECT de.invoice_delivery_event_id, de.delivery_number, so.invoice_number,
-                           so.customer_name, de.delivery_method, so.balance_due, de.created_at
+                           so.customer_name, de.delivery_method, so.balance_due, de.created_at,
+                           CASE WHEN EXISTS(SELECT 1 FROM invoice_audit_log a WHERE a.invoice_id=de.invoice_id AND a.action_type='DELIVERY_CANCELLED' AND a.field_name='cancelled_document_id' AND a.old_value=de.invoice_delivery_event_id::text) THEN 'CANCELLED' ELSE 'POSTED' END AS cancellation_status
                     FROM invoice_delivery_events de
                     JOIN invoices so ON so.invoice_id = de.invoice_id
                     ORDER BY de.created_at DESC, de.invoice_delivery_event_id DESC
@@ -90,7 +91,7 @@ public final class ServerQuotationInvoiceViewService {
                             rs.getString("customer_name"),
                             rs.getString("delivery_method"),
                             rs.getBigDecimal("balance_due"),
-                            rs.getString("created_at")
+                            rs.getString("created_at"), rs.getString("cancellation_status")
                     ));
                 }
                 return rows;
@@ -107,7 +108,8 @@ public final class ServerQuotationInvoiceViewService {
                            ABS(t.amount) AS payment_amount,
                            COALESCE(t.payment_method, '') AS payment_method,
                            COALESCE(t.payment_reference, '') AS payment_reference,
-                           COALESCE(t.user_name, '') AS taken_by, t.created_at
+                           COALESCE(t.user_name, '') AS taken_by, t.created_at,
+                           CASE WHEN EXISTS(SELECT 1 FROM invoice_audit_log a WHERE a.invoice_id=t.invoice_id AND a.action_type='PAYMENT_CANCELLED' AND a.field_name='cancelled_document_id' AND a.old_value=t.transaction_id::text) THEN 'CANCELLED' ELSE 'POSTED' END AS cancellation_status
                     FROM customer_account_transactions t
                     JOIN invoices i ON i.invoice_id = t.invoice_id
                     LEFT JOIN customer_accounts ca ON ca.customer_id = t.customer_id
@@ -121,7 +123,7 @@ public final class ServerQuotationInvoiceViewService {
                         rs.getString("invoice_number"), rs.getString("customer_name"),
                         rs.getBigDecimal("payment_amount"), rs.getString("payment_method"),
                         rs.getString("payment_reference"), rs.getString("taken_by"),
-                        rs.getString("created_at")));
+                        rs.getString("created_at"), rs.getString("cancellation_status")));
                 return rows;
             }
         }
@@ -162,13 +164,39 @@ public final class ServerQuotationInvoiceViewService {
         }
     }
 
+    public static List<PaymentSummary> listInvoicePayments(long invoiceId) throws SQLException {
+        try (Connection conn = DB.getConnection(); PreparedStatement ps = conn.prepareStatement("""
+                SELECT t.transaction_id, t.customer_id, i.invoice_number,
+                       COALESCE(i.customer_name, ca.name, '') AS customer_name,
+                       ABS(t.amount) AS payment_amount, COALESCE(t.payment_method, '') AS payment_method,
+                       COALESCE(t.payment_reference, '') AS payment_reference,
+                       COALESCE(t.user_name, '') AS taken_by, t.created_at,
+                           CASE WHEN EXISTS(SELECT 1 FROM invoice_audit_log a WHERE a.invoice_id=t.invoice_id AND a.action_type='PAYMENT_CANCELLED' AND a.field_name='cancelled_document_id' AND a.old_value=t.transaction_id::text) THEN 'CANCELLED' ELSE 'POSTED' END AS cancellation_status
+                FROM customer_account_transactions t
+                JOIN invoices i ON i.invoice_id = t.invoice_id
+                LEFT JOIN customer_accounts ca ON ca.customer_id = t.customer_id
+                WHERE t.transaction_type = 'PAYMENT' AND t.invoice_id = ?
+                ORDER BY t.created_at DESC, t.transaction_id DESC
+                LIMIT 500
+                """)) {
+            ps.setLong(1, invoiceId);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<PaymentSummary> rows = new ArrayList<>();
+                while (rs.next()) rows.add(new PaymentSummary(rs.getLong("transaction_id"), rs.getInt("customer_id"),
+                        rs.getString("invoice_number"), rs.getString("customer_name"), rs.getBigDecimal("payment_amount"),
+                        rs.getString("payment_method"), rs.getString("payment_reference"), rs.getString("taken_by"), rs.getString("created_at"), rs.getString("cancellation_status")));
+                return rows;
+            }
+        }
+    }
+
     public static List<CustomerOption> listCustomers() throws SQLException {
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement("""
-                     SELECT customer_id, account_number, name, is_business,COALESCE(invoice_discount_enabled,FALSE),COALESCE(invoice_discount_percent,0)
+                     SELECT customer_id, account_number, name, COALESCE((SELECT LOWER(BTRIM(ct.name)) IN ('business','businesses') FROM customer_types ct WHERE ct.customer_type_id=customer_accounts.customer_type_id),FALSE) AS business_account,COALESCE(invoice_discount_enabled,FALSE),COALESCE(invoice_discount_percent,0),COALESCE(phone,'')
                      FROM customer_accounts
                      WHERE is_active = TRUE
-                     ORDER BY is_business DESC, name
+                     ORDER BY business_account DESC, name
                      LIMIT 500
                      """);
              ResultSet rs = ps.executeQuery()) {
@@ -178,7 +206,7 @@ public final class ServerQuotationInvoiceViewService {
                         rs.getInt("customer_id"),
                         rs.getString("account_number"),
                         rs.getString("name"),
-                        rs.getBoolean("is_business"),rs.getBoolean(5),rs.getBigDecimal(6)
+                        rs.getBoolean("business_account"),rs.getBoolean(5),rs.getBigDecimal(6),rs.getString(7)
                 ));
             }
             return rows;
@@ -190,7 +218,7 @@ public final class ServerQuotationInvoiceViewService {
         String pattern = "%" + search + "%";
         try (Connection conn = DB.getConnection();
              PreparedStatement ps = conn.prepareStatement("""
-                     SELECT customer_id, account_number, name, is_business,COALESCE(invoice_discount_enabled,FALSE),COALESCE(invoice_discount_percent,0)
+                     SELECT customer_id, account_number, name, COALESCE((SELECT LOWER(BTRIM(ct.name)) IN ('business','businesses') FROM customer_types ct WHERE ct.customer_type_id=customer_accounts.customer_type_id),FALSE) AS business_account,COALESCE(invoice_discount_enabled,FALSE),COALESCE(invoice_discount_percent,0),COALESCE(phone,'')
                      FROM customer_accounts
                      WHERE is_active = TRUE
                        AND (
@@ -200,7 +228,7 @@ public final class ServerQuotationInvoiceViewService {
                             OR COALESCE(phone, '') ILIKE ?
                             OR COALESCE(email, '') ILIKE ?
                        )
-                     ORDER BY is_business DESC, name
+                     ORDER BY business_account DESC, name
                      LIMIT 75
                      """)) {
             ps.setString(1, search);
@@ -215,7 +243,7 @@ public final class ServerQuotationInvoiceViewService {
                             rs.getInt("customer_id"),
                             rs.getString("account_number"),
                             rs.getString("name"),
-                            rs.getBoolean("is_business"),rs.getBoolean(5),rs.getBigDecimal(6)
+                            rs.getBoolean("business_account"),rs.getBoolean(5),rs.getBigDecimal(6),rs.getString(7)
                     ));
                 }
                 return rows;
@@ -372,10 +400,12 @@ public final class ServerQuotationInvoiceViewService {
                     SELECT i.invoice_id, i.invoice_number, i.total_amount, i.amount_paid, i.balance_due,
                            COALESCE(ca.current_balance, 0) AS customer_balance,
                            COALESCE(ca.credit_limit, 0) AS credit_limit,
-                           GREATEST(COALESCE(ca.credit_limit, 0) - COALESCE(ca.current_balance, 0), 0) AS available_credit,
+                           GREATEST(COALESCE(ca.credit_limit, 0) - GREATEST(COALESCE(ca.current_balance, 0) - (COALESCE((SELECT SUM(pm.amount-pm.amount_paid) FROM phone_minutes_sales pm WHERE pm.customer_id=ca.customer_id AND pm.payment_method='CREDIT' AND pm.reversed_at IS NULL),0)+COALESCE((SELECT SUM(mr.document_balance) FROM sync_cross_store_customer_history_cache mr WHERE mr.customer_id=ca.customer_id AND mr.event_type='MINUTES' AND mr.cache_status='CURRENT'),0)),0), 0) AS available_credit,
                            i.customer_id,
                            COALESCE(ca.name, '') AS customer_name,
-                           COALESCE(ca.require_charge_authorization, FALSE) AS require_charge_authorization
+                           COALESCE(ca.require_charge_authorization, FALSE) AS require_charge_authorization,
+                           EXISTS (SELECT 1 FROM customer_account_transactions t
+                                   WHERE t.invoice_id=i.invoice_id AND t.transaction_type='INVOICE_CREDIT') AS account_charged
                     FROM invoices i
                     LEFT JOIN customer_accounts ca ON ca.customer_id = i.customer_id
                     WHERE i.invoice_id = ?
@@ -385,12 +415,21 @@ public final class ServerQuotationInvoiceViewService {
                     if (!rs.next()) {
                         throw new SQLException("Sales invoice not found.");
                     }
+                    BigDecimal total = rs.getBigDecimal("total_amount");
+                    BigDecimal paid = rs.getBigDecimal("amount_paid");
+                    BigDecimal due = rs.getBigDecimal("balance_due");
+                    if (paid != null && paid.signum() == 0 && due != null && due.signum() > 0
+                            && !rs.getBoolean("account_charged") && total != null
+                            && ServerQuotationInvoiceService.payableTotal(total).signum() > 0) {
+                        total = ServerQuotationInvoiceService.payableTotal(total);
+                        due = total;
+                    }
                     return new InvoiceFinancials(
                             rs.getLong("invoice_id"),
                             rs.getString("invoice_number"),
-                            rs.getBigDecimal("total_amount"),
-                            rs.getBigDecimal("amount_paid"),
-                            rs.getBigDecimal("balance_due"),
+                            total,
+                            paid,
+                            due,
                             rs.getBigDecimal("customer_balance"),
                             rs.getBigDecimal("credit_limit"),
                             rs.getBigDecimal("available_credit"), rs.getInt("customer_id"),
@@ -421,12 +460,12 @@ public final class ServerQuotationInvoiceViewService {
     }
 
     public record DeliverySummary(long deliveryEventId, String deliveryNumber, String invoiceNumber,
-                                  String customerName, String deliveryMethod, BigDecimal balanceDue, String createdAt) {
+                                  String customerName, String deliveryMethod, BigDecimal balanceDue, String createdAt, String status) {
     }
 
     public record PaymentSummary(long transactionId, int customerId, String invoiceNumber,
                                  String customerName, BigDecimal amount, String paymentMethod,
-                                 String paymentReference, String takenBy, String createdAt) {
+                                 String paymentReference, String takenBy, String createdAt, String status) {
     }
 
     public record InvoiceFinancials(long invoiceId, String invoiceNumber, BigDecimal totalAmount,
@@ -438,8 +477,9 @@ public final class ServerQuotationInvoiceViewService {
                              String oldValue, String newValue, String userName, String reason) {
     }
 
-    public record CustomerOption(int customerId, String accountNumber, String name, boolean business,boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent) {
-        public CustomerOption(int customerId,String accountNumber,String name,boolean business){this(customerId,accountNumber,name,business,false,BigDecimal.ZERO);}
+    public record CustomerOption(int customerId, String accountNumber, String name, boolean business,boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,String phone) {
+        public CustomerOption(int customerId,String accountNumber,String name,boolean business){this(customerId,accountNumber,name,business,false,BigDecimal.ZERO,null);}
+        public CustomerOption(int customerId,String accountNumber,String name,boolean business,boolean enabled,BigDecimal percent){this(customerId,accountNumber,name,business,enabled,percent,null);}
         @Override
         public String toString() {
             return (business ? "[Business] " : "") + name

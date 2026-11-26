@@ -1,0 +1,3 @@
+SmartStudio 0.1.72 (1072) - Windows update only.
+Refines the Task Ribbon to match the approved design: rounded controls, top group headings, outline icon tiles, labelled text controls, softer canvas styling and consistent Passport/PDF output actions. Adds the approved centered staff sign-in card, separate company-logo headers and exact purple/gold Creative Brush app icon. Existing authentication, badge PIN, permissions and offline limitations are retained.
+Requires an existing SmartStudio installation. Java runtime and AI model weights are excluded. No store-server or phone-page deployment is included.

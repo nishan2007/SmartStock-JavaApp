@@ -6,6 +6,20 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class EmployeeWebSecurityTest {
+    @Test void serverSelectedPersistenceUsesSecureCookies() {
+        String temporary=EmployeeWebServer.sessionCookieValue("test",false);
+        assertFalse(temporary.contains("Max-Age"));
+        assertTrue(temporary.contains("Secure; HttpOnly; SameSite=Strict"));
+        assertTrue(EmployeeWebServer.sessionCookieValue("test",true).contains("Max-Age=34560000"));
+    }
+
+    @Test void driveSignInAllowsActiveEmployeesWithoutGrantingOtherAppPermissions() {
+        assertTrue(EmployeeWebServer.canAuthenticate(Set.of(),true));
+        assertFalse(EmployeeWebServer.canAuthenticate(Set.of(),false));
+        assertDoesNotThrow(()->EmployeeWebServer.requireRouteAccess("auth/drive-session",Set.of()));
+        assertThrows(SecurityException.class,()->EmployeeWebServer.requireRouteAccess("history",Set.of()));
+        assertThrows(SecurityException.class,()->EmployeeWebServer.requireRouteAccess("inventory/search",Set.of()));
+    }
     @Test void employeeGatewayDoesNotCollideWithExistingListeners() {
         assertNotEquals(EmployeeRegistrationWebServer.PORT,EmployeeWebServer.DEFAULT_PORT);
         assertNotEquals(SchedulerWebServer.DEFAULT_PORT,EmployeeWebServer.DEFAULT_PORT);
@@ -20,6 +34,12 @@ class EmployeeWebSecurityTest {
         assertFalse(EmployeeWebHistoryService.canBrowse(Set.of("VIEW_ALL_EMPLOYEE_WEB")));
         assertFalse(EmployeeWebHistoryService.canBrowse(Set.of("EMPLOYEE_MANAGEMENT","PAYROLL_DASHBOARD")));
         assertThrows(SecurityException.class,()->EmployeeWebHistoryService.authorize(1,1,Set.of()));
+    }
+    @Test void minutesRequireCustomerAccountPermissionOnEveryRoute() {
+        for(String route:java.util.List.of("minutes/bootstrap","minutes/history","minutes/create","minutes/reverse")) {
+            assertThrows(SecurityException.class,()->EmployeeWebServer.requireRouteAccess(route,Set.of("ACCESS_EMPLOYEE_WEB")));
+            assertDoesNotThrow(()->EmployeeWebServer.requireRouteAccess(route,Set.of("CUSTOMER_ACCOUNTS")));
+        }
     }
     @Test void sessionAndCsrfBoundaries()throws Exception {
         Instant now=Instant.parse("2026-10-20T12:00:00Z");

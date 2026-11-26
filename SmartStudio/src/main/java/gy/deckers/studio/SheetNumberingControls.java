@@ -9,13 +9,14 @@ import java.util.function.Supplier;
 final class SheetNumberingControls extends JPanel {
     final JComboBox<String> order=new JComboBox<>(new String[]{"Current layout order","Rows: left to right, top first","Rows: right to left, top first","Rows: left to right, bottom first","Rows: right to left, bottom first","Columns: top to bottom, left first","Columns: top to bottom, right first","Columns: bottom to top, left first","Columns: bottom to top, right first","Custom position order"});
     final JTextField custom=new JTextField(20);
+    final JButton map=new JButton("Position map…");
     final JCheckBox cutStack=new JCheckBox("Cut and stack (consecutive set at each position)");
 
     SheetNumberingControls(Supplier<Publication> publication,Runnable changed){
         setOpaque(false);setLayout(new GridLayout(0,1));
         JPanel direction=row();direction.add(new JLabel("Numbering order"));direction.add(order);
         JPanel positions=row();positions.add(new JLabel("Custom positions"));positions.add(custom);
-        JButton map=new JButton("Position map…");positions.add(map);
+        positions.add(map);
         custom.setEnabled(false);custom.setToolTipText("Position IDs from Position map, separated by commas; include every position once.");
         JPanel stacking=row();stacking.add(cutStack);
         cutStack.setToolTipText("Example: 1,000 records in two positions use 500 sheets: first position 1–500, second 501–1000. Use separate pages, not mixed pages.");

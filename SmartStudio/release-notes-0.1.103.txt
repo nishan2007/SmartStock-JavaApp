@@ -1,0 +1,5 @@
+SmartStudio 0.1.103 - High-resolution banner artwork
+
+Removes the 100 MiB artwork file cap for banner import, paste, template save/reopen, printing and PDF export. Generated resampled PNGs are streamed to temporary disk files without reducing resolution to meet a compressed file limit. Temporary output is cleaned after the job. Existing pixel/heap checks and the 5 GiB total template budget remain.
+
+Includes the 0.1.102 native banner resolution correction and current Studio changes. Model-free quick Windows updater; preserves runtime and profile models. Physical printer validation remains separate.

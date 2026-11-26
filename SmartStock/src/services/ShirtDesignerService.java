@@ -9,7 +9,7 @@ import static services.StorefrontService.*;
 /** Local-store shirt catalogue, bounded design documents, and authoritative estimates. */
 public final class ShirtDesignerService {
     public static final List<String> AREAS=List.of("FRONT","CHEST","BACK");
-    public static final List<String> FONTS=List.of("Deckers Sans","Deckers Serif","Deckers Mono");
+    public static final List<String> FONTS=List.of("Deckers Sans","Deckers Serif","Deckers Mono","Impact");
     private ShirtDesignerService(){}
     public static String styleLabel(JsonObject config){
         String type=config==null||!config.has("shirtType")?"TEE":text(config,"shirtType");
@@ -90,7 +90,7 @@ public final class ShirtDesignerService {
     }
     static long positiveId(JsonObject o,String k,boolean zero){try{long n=o.get(k).getAsBigDecimal().longValueExact();if(n<(zero?0:1))throw new ArithmeticException();return n;}catch(RuntimeException e){throw new IllegalArgumentException("Invalid "+k+".");}}
     static JsonObject preset(Connection c,long id)throws SQLException{
-        JsonObject p=one(rows(c,"SELECT p.print_size_preset_id AS id,p.print_material_id AS \"materialId\",p.preset_name AS name,p.fixed_price AS price,m.material_name AS material,m.available_colors AS \"availableColors\" FROM custom_order_print_size_presets p JOIN custom_order_print_materials m USING(print_material_id) WHERE p.print_size_preset_id=? AND p.is_active AND m.is_active AND p.pricing_mode='FIXED_PRESET' AND p.fixed_price>=0",id));
+        JsonObject p=one(rows(c,"SELECT p.print_size_preset_id AS id,p.print_material_id AS \"materialId\",p.preset_name AS name,p.guide_width_in AS \"widthIn\",p.guide_height_in AS \"heightIn\",p.fixed_price AS price,m.material_name AS material,m.available_colors AS \"availableColors\" FROM custom_order_print_size_presets p JOIN custom_order_print_materials m USING(print_material_id) WHERE p.print_size_preset_id=? AND p.is_active AND m.is_active AND p.pricing_mode='FIXED_PRESET' AND p.fixed_price>=0",id));
         if(p.size()==0)throw new IllegalArgumentException("A shirt print preset is missing or inactive.");return p;
     }
     public static void validatePresets(Connection c,JsonObject config)throws SQLException{
@@ -136,16 +136,16 @@ public final class ShirtDesignerService {
     /** All active materials participate; names never determine eligibility, price, or print method. */
     static JsonArray systemAddOns(JsonArray presets,JsonObject config){
         JsonArray result=new JsonArray();
-        for(var value:presets){JsonObject p=value.getAsJsonObject().deepCopy();
+        for(var value:presets){JsonObject p=value.getAsJsonObject().deepCopy();for(String dimension:List.of("widthIn","heightIn"))if(p.has(dimension)&&p.get(dimension).isJsonNull())p.remove(dimension);
             p.addProperty("kind",text(p,"pricingMode").equals("PER_LINE")?"TEXT":"BOTH");
             if(config.has("addOns"))for(var override:config.getAsJsonArray("addOns")){JsonObject option=override.getAsJsonObject();if(positiveId(option,"presetId",false)==positiveId(p,"id",false)){
-                for(String key:List.of("widthIn","heightIn","mode"))if(option.has(key))p.add(key,option.get(key));
+                for(String key:List.of("widthIn","heightIn","mode"))if(option.has(key)&&(!p.has(key)||p.get(key).isJsonNull()))p.add(key,option.get(key));
             }}if(p.has("availableColors"))p.addProperty("mode",p.getAsJsonObject("availableColors").size()>0?"SINGLE":"FULL");result.add(p);
         }return result;
     }
     static JsonArray catalog(Connection c,int location,Long selected)throws SQLException{
         JsonArray result=new JsonArray();
-        JsonArray systemOptions=rows(c,"SELECT p.print_size_preset_id AS id,p.print_material_id AS \"materialId\",p.preset_name AS name,p.fixed_price AS price,p.pricing_mode AS \"pricingMode\",m.material_name AS material,m.available_colors AS \"availableColors\" FROM custom_order_print_size_presets p JOIN custom_order_print_materials m USING(print_material_id) WHERE p.is_active AND m.is_active AND p.pricing_mode IN ('FIXED_PRESET','PER_LINE') AND p.fixed_price>=0 ORDER BY m.material_name,p.preset_name,p.print_size_preset_id");
+        JsonArray systemOptions=rows(c,"SELECT p.print_size_preset_id AS id,p.print_material_id AS \"materialId\",p.preset_name AS name,p.guide_width_in AS \"widthIn\",p.guide_height_in AS \"heightIn\",p.fixed_price AS price,p.pricing_mode AS \"pricingMode\",m.material_name AS material,m.available_colors AS \"availableColors\" FROM custom_order_print_size_presets p JOIN custom_order_print_materials m USING(print_material_id) WHERE p.is_active AND m.is_active AND p.pricing_mode IN ('FIXED_PRESET','PER_LINE') AND p.fixed_price>=0 ORDER BY m.material_name,p.preset_name,p.print_size_preset_id");
         String query="SELECT custom_item_id AS id,item_name AS name,COALESCE(description,'') AS description,COALESCE(size,'') AS size,COALESCE(color,'') AS color,fixed_price AS price,has_variants AS \"hasVariants\",shirt_designer_config AS config FROM custom_order_items WHERE is_shirt AND NOT is_sublimation AND NOT is_business_cards AND NOT is_large_format_printing AND NOT is_laser AND is_active AND NOT is_archived AND product_type='INVENTORY' AND pricing_type='FIXED'"+(selected==null?"":" AND custom_item_id=?")+" ORDER BY item_name";
         for(var row:rows(c,query,selected==null?new Object[0]:new Object[]{selected})){
             JsonObject item=row.getAsJsonObject();try{
@@ -177,8 +177,8 @@ public final class ShirtDesignerService {
                 if(l.has("presetId"))cl.addProperty("presetId",positiveId(l,"presetId",false));
                 if(l.has("printMode")){String printMode=text(l,"printMode"),ink=text(l,"vinylColor").toLowerCase(Locale.ROOT);if(!List.of("SINGLE","FULL").contains(printMode)||!hex(ink))throw new IllegalArgumentException("Invalid element print colors.");cl.addProperty("printMode",printMode);cl.addProperty("vinylColor",ink);}
                 for(String k:List.of("x","y","w","h")){double n=number(l,k,0,1);if((k.equals("w")||k.equals("h"))&&n<.01)throw new IllegalArgumentException("A design layer is too small.");cl.addProperty(k,n);}cl.addProperty("rotation",number(l,"rotation",-180,180));
-                if(type.equals("TEXT")){String t=text(l,"text"),font=text(l,"font"),ink=text(l,"color");if(t.isBlank()||t.length()>300||!FONTS.contains(font)||!hex(ink))throw new IllegalArgumentException("Invalid text layer.");cl.addProperty("text",t);cl.addProperty("font",font);cl.addProperty("color",ink.toLowerCase(Locale.ROOT));}
-                else cl.addProperty("fileId",UUID.fromString(text(l,"fileId")).toString());cleanLayers.add(cl);
+                if(type.equals("TEXT")){String t=text(l,"text"),font=text(l,"font"),ink=text(l,"color");if(t.isBlank()||t.length()>300||!FONTS.contains(font)||!hex(ink))throw new IllegalArgumentException("Invalid text layer.");cl.addProperty("text",t);cl.addProperty("font",font);cl.addProperty("color",ink.toLowerCase(Locale.ROOT));if(l.has("arc"))cl.addProperty("arc",number(l,"arc",-180,180));if(l.has("fontSize"))cl.addProperty("fontSize",number(l,"fontSize",1,720));}
+                else{cl.addProperty("fileId",UUID.fromString(text(l,"fileId")).toString());if(l.has("imageZoom"))cl.addProperty("imageZoom",number(l,"imageZoom",.1,5));}cleanLayers.add(cl);
             }clean.add("layers",cleanLayers);cleanAreas.add(e.getKey(),clean);
         }if(count==0)throw new IllegalArgumentException("Add text or artwork to your shirt.");out.add("areas",cleanAreas);return out;
     }

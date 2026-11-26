@@ -26,9 +26,23 @@ class StudioPrintingTest {
             assertEquals(Color.BLACK.getRGB(),output.getRGB(179,340));
             assertEquals(Color.BLACK.getRGB(),output.getRGB(420,459));
             assertEquals(Printable.NO_SUCH_PAGE,content.print(g,page(),1));
-            assertThrows(PrinterException.class,()->StudioPrinting.printable(redImage(),600,120).print(g,page(),0));
+            assertThrows(PrinterException.class,()->StudioPrinting.printable(redImage(),800,600).print(g,page(),0));
         } finally {g.dispose();}
     }
+    @Test void badgeRotatesToFitPortraitCardPaperWithoutShrinking() throws Exception {
+        Paper paper=new Paper();paper.setSize(120,240);paper.setImageableArea(0,0,120,240);
+        PageFormat page=new PageFormat();page.setPaper(paper);
+        BufferedImage output=new BufferedImage(120,240,BufferedImage.TYPE_INT_RGB);
+        BufferedImage image=redImage();image.setRGB(0,0,Color.BLUE.getRGB());
+        Graphics2D g=output.createGraphics();
+        try {
+            assertEquals(Printable.PAGE_EXISTS,StudioPrinting.printable(image,240,120).print(g,page,0));
+            assertEquals(Color.RED.getRGB(),output.getRGB(0,120));
+            assertEquals(Color.RED.getRGB(),output.getRGB(119,239));
+            assertEquals(Color.BLUE.getRGB(),output.getRGB(119,0));
+        } finally {g.dispose();}
+    }
+
     @Test void imageFitsPrintableAreaAndPreservesAspectRatio() throws Exception {
         BufferedImage output=new BufferedImage(600,800,BufferedImage.TYPE_INT_RGB);
         Graphics2D g=output.createGraphics();

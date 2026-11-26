@@ -22,7 +22,7 @@ class CustomOrderItemSearchTest {
             AtomicInteger lookups = new AtomicInteger();
             var search = new CustomOrderItemSearch(field, chosen::set, lookups::incrementAndGet);
             var first = new ItemSearchOption(10L, 11L, "Shirt / Red / Small");
-            var second = new ItemSearchOption(10L, 12L, "Shirt / Blue / Large");
+            var second = new ItemSearchOption(10L, 12L, "Shirt / Blue / Large", "blue.png");
             search.model.addElement(first);
             search.model.addElement(second);
             search.list.setSelectedIndex(1);
@@ -62,6 +62,13 @@ class CustomOrderItemSearchTest {
         });
     }
 
+    @Test void searchPhotosSurviveTheLanContractWithoutChangingLabels(){
+        var json=services.LanJson.create();
+        var server=new services.ServerCustomOrderDataService.ItemSearchOption(10L,12L,"Blue shirt","blue.png");
+        var result=json.fromJson(json.toJson(server),ItemSearchOption.class);
+        assertEquals("blue.png",result.imageUrl());assertEquals("Blue shirt",result.toString());
+        assertNull(json.fromJson("{\"customItemId\":10,\"label\":\"Old server\"}",ItemSearchOption.class).imageUrl());
+    }
     @Test void barcodeEnterKeepsExplicitLookupWhenNoSuggestionIsOpen() throws Exception {
         SwingUtilities.invokeAndWait(() -> {
             JTextField field = new JTextField();

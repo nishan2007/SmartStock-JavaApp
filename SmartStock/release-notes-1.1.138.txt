@@ -1,0 +1,5 @@
+Transfer item dropdown improvements
+
+Inventory results show color, flavor, size and description when available. Adding or scanning an item clears the search and closes the results. Empty searches no longer reopen the list. Hide results or Escape dismisses results and cancels pending searches.
+
+Windows update only. Update the store server first, then registers. No automatic installation or service restart.

@@ -129,7 +129,7 @@ public final class EmployeeRegistrationService {
                     }}
                 }
                 var r=request;
-                var inactive=new LanEmployeeAdminService.SaveRequest(r.username(),null,r.firstName(),r.middleName(),r.lastName(),r.fullName(),r.nickname(),email,r.phone(),r.photoUrl(),url,r.dateOfBirth(),r.hireDate(),r.compensationType(),r.salary(),r.role(),false,r.locationIds(),r.payrollPeriodType(),r.workHourLimit(),true,null);
+                var inactive=new LanEmployeeAdminService.SaveRequest(r.username(),null,r.firstName(),r.middleName(),r.lastName(),r.fullName(),r.nickname(),email,r.phone(),r.photoUrl(),url,r.dateOfBirth(),r.hireDate(),r.compensationType(),r.salary(),r.role(),false,r.locationIds(),r.payrollPeriodType(),r.workHourLimit(),true,null,r.photoSourceUrl(),r.photoFrame());
                 c.setAutoCommit(false);
                 try {
                     employee=LanEmployeeAdminService.create(c,inactive,auth,actor,actorName);

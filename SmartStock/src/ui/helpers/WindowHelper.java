@@ -52,7 +52,13 @@ public class WindowHelper {
         GraphicsConfiguration graphicsConfiguration = getTargetGraphicsConfiguration(frame, anchor);
         Rectangle usableBounds = getUsableBounds(graphicsConfiguration);
 
-        frame.setMinimumSize(POS_MINIMUM_SIZE);
+        Object requestedMinimum = frame.getRootPane().getClientProperty("SmartStock.responsiveMinimumSize");
+        if (requestedMinimum instanceof Dimension requested) {
+            frame.setMinimumSize(new Dimension(Math.min(requested.width, usableBounds.width),
+                    Math.min(requested.height, usableBounds.height)));
+        } else {
+            frame.setMinimumSize(POS_MINIMUM_SIZE);
+        }
         frame.setExtendedState(Frame.NORMAL);
         frame.setBounds(usableBounds);
         frame.setExtendedState(frame.getExtendedState() | JFrame.MAXIMIZED_BOTH);

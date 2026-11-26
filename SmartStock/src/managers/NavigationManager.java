@@ -6,6 +6,7 @@ import ui.screens.ChangeBasket;
 import ui.screens.EditItem;
 import ui.screens.EnterInventory;
 import ui.screens.CustomerAccounts;
+import ui.screens.PhoneMinutes;
 import ui.screens.CompanyCustomization;
 import ui.screens.customorders.CustomOrderItems;
 import ui.screens.customorders.CustomOrders;
@@ -58,6 +59,8 @@ public final class NavigationManager {
     public enum ScreenType {
         MAIN_MENU,
         MAKE_SALE,
+        SALES_TASKS,
+        WORK_QUEUE,
         RETURN_SALE,
         BALANCE_DRAW,
         CHANGE_BASKET,
@@ -76,9 +79,11 @@ public final class NavigationManager {
         VIEW_INVENTORY,
         PRICE_TAG_PRINTING,
         CUSTOMER_ACCOUNTS,
+        PHONE_MINUTES,
         QUOTATIONS,
         INVOICES,
         CUSTOM_ORDERS,
+        OVERSEAS_ORDERS,
         ORDERS,
         TIME_CLOCK,
         PAYROLL_DASHBOARD,
@@ -94,13 +99,17 @@ public final class NavigationManager {
     }
 
     private static void openScreen(JFrame parent, ScreenType screenType) {
+        openScreen(parent, screenType, null);
+    }
+
+    private static void openScreen(JFrame parent, ScreenType screenType, Supplier<JFrame> factory) {
         if (transitionInProgress || screenType == null) return;
         transitionInProgress = true;
         MainMenu sourceMenu = parent instanceof MainMenu mainMenu ? mainMenu : null;
         if (sourceMenu != null) sourceMenu.setNavigationInProgress(true);
         long started = System.nanoTime();
         try {
-            JFrame screen = createScreen(screenType);
+            JFrame screen = factory == null ? createScreen(screenType) : factory.get();
             if (screen == null) {
                 transitionInProgress = false;
                 if (sourceMenu != null) sourceMenu.setNavigationInProgress(false);
@@ -199,6 +208,15 @@ public final class NavigationManager {
 
     public static void openPriceTagPrinting(JFrame parent) { openScreen(parent, ScreenType.PRICE_TAG_PRINTING); }
 
+    public static void openPhoneMinutes(JFrame parent, Integer customerId) {
+        if (customerId == null) {
+            openScreen(parent, ScreenType.PHONE_MINUTES);
+        } else {
+            openScreen(parent, ScreenType.PHONE_MINUTES,
+                    () -> deferred("Phone Minutes", "Preparing minutes...", () -> new PhoneMinutes(customerId)));
+        }
+    }
+
     public static void openCustomerAccounts(JFrame parent) {
         openScreen(parent, ScreenType.CUSTOMER_ACCOUNTS);
     }
@@ -211,12 +229,35 @@ public final class NavigationManager {
         openScreen(parent, ScreenType.INVOICES);
     }
 
+    public static void openOverseasOrders(JFrame parent) {
+        openScreen(parent, ScreenType.OVERSEAS_ORDERS);
+    }
+
     public static void openCustomOrders(JFrame parent) {
         openScreen(parent, ScreenType.CUSTOM_ORDERS);
     }
 
     public static void openOrders(JFrame parent) {
         openScreen(parent, ScreenType.ORDERS);
+    }
+
+    public static void openOrders(JFrame parent,long orderId,String number) {
+        openScreen(parent, ScreenType.ORDERS, () -> deferred("Orders", "Preparing order...", () -> {
+            Orders orders=new Orders();orders.openQueueOrder(orderId,number);return orders;
+        }));
+    }
+
+    public static void openSalesTasks(JFrame parent) {
+        openScreen(parent, ScreenType.SALES_TASKS);
+    }
+
+    public static void openWorkQueue(JFrame parent) {
+        openScreen(parent, ScreenType.WORK_QUEUE);
+    }
+
+    public static void openSalesTasks(JFrame parent, Long taskId) {
+        openScreen(parent, ScreenType.SALES_TASKS,
+                () -> deferred("Sales Tasks", "Preparing sales tasks...", () -> new ui.screens.SalesTasks(taskId)));
     }
 
     public static void openTimeClock(JFrame parent) {
@@ -268,6 +309,8 @@ public final class NavigationManager {
             case MAIN_MENU -> new DeferredScreenFrame(
                     "SmartStock", "Preparing main menu...", MainMenu::new, true);
             case MAKE_SALE -> deferred("Point of Sale", "Preparing point of sale...", MakeASale::new);
+            case SALES_TASKS -> deferred("Sales Tasks", "Preparing sales tasks...", ui.screens.SalesTasks::new);
+            case WORK_QUEUE -> deferred("Work Queue", "Preparing work queue...", ui.screens.WorkQueue::new);
             case RETURN_SALE -> deferred("Returns", "Preparing returns...", ReturnSale::new);
             case BALANCE_DRAW -> new DeferredScreenFrame(
                     "Balance Draw", "Preparing cash drawer...", BalanceDraw::new);
@@ -289,9 +332,11 @@ public final class NavigationManager {
             case VIEW_SALES -> deferred("View Sales", "Preparing sales history...", ViewSales::new);
             case VIEW_INVENTORY -> deferred("View Inventory", "Preparing inventory...", ViewInventory::new);
             case PRICE_TAG_PRINTING -> deferred("Price Tag Printing", "Preparing price tags...", PriceTagPrinting::new);
+            case PHONE_MINUTES -> deferred("Phone Minutes", "Preparing minutes...", () -> new PhoneMinutes(null));
             case CUSTOMER_ACCOUNTS -> deferred("Customers", "Preparing customer accounts...", CustomerAccounts::new);
             case QUOTATIONS -> deferred("Quotations", "Preparing quotations...", () -> new Invoices(Invoices.InitialTab.QUOTATIONS));
             case INVOICES -> deferred("Invoices", "Preparing invoices...", Invoices::new);
+            case OVERSEAS_ORDERS -> deferred("Overseas Orders", "Preparing overseas orders...", ui.screens.OverseasOrders::new);
             case CUSTOM_ORDERS -> deferred("Customer Orders", "Preparing customer orders...", CustomOrders::new);
             case ORDERS -> deferred("Orders", "Preparing orders...", Orders::new);
             case TIME_CLOCK -> deferred("Time Clock", "Preparing time clock...", TimeClock::new);
@@ -323,6 +368,8 @@ public final class NavigationManager {
         return switch (currentScreenName) {
             case "MainMenu" -> ScreenType.MAIN_MENU;
             case "MakeASale" -> ScreenType.MAKE_SALE;
+            case "SalesTasks" -> ScreenType.SALES_TASKS;
+            case "WorkQueue" -> ScreenType.WORK_QUEUE;
             case "ReturnSale" -> ScreenType.RETURN_SALE;
             case "BalanceDraw" -> ScreenType.BALANCE_DRAW;
             case "ChangeBasket" -> ScreenType.CHANGE_BASKET;
@@ -343,6 +390,7 @@ public final class NavigationManager {
             case "CustomerAccounts" -> ScreenType.CUSTOMER_ACCOUNTS;
             case "Quotations", "QuotationsOrders" -> ScreenType.QUOTATIONS;
             case "Invoices" -> ScreenType.INVOICES;
+            case "OverseasOrders" -> ScreenType.OVERSEAS_ORDERS;
             case "CustomOrders" -> ScreenType.CUSTOM_ORDERS;
             case "Orders" -> ScreenType.ORDERS;
             case "TimeClock" -> ScreenType.TIME_CLOCK;
@@ -374,7 +422,7 @@ public final class NavigationManager {
         if (childScreen.getRootPane() != null) {
             childScreen.getRootPane().putClientProperty("returnToMainMenu", Boolean.TRUE);
         }
-        childScreen.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        if (!(childScreen instanceof ui.screens.OverseasOrders)) childScreen.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         childScreen.addWindowListener(new WindowAdapter() {
             @Override
             public void windowOpened(WindowEvent e) {
@@ -399,7 +447,7 @@ public final class NavigationManager {
                 if (transitionInProgress) {
                     return;
                 }
-                closeApplication(childScreen);
+                if (!(childScreen instanceof ui.screens.OverseasOrders)) closeApplication(childScreen);
             }
         });
 
@@ -415,7 +463,7 @@ public final class NavigationManager {
         if (newScreen.getRootPane() != null) {
             newScreen.getRootPane().putClientProperty("returnToMainMenu", Boolean.TRUE);
         }
-        newScreen.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        if (!(newScreen instanceof ui.screens.OverseasOrders)) newScreen.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         newScreen.addWindowListener(new WindowAdapter() {
             @Override
             public void windowOpened(WindowEvent e) {
@@ -620,7 +668,7 @@ public final class NavigationManager {
         if (screen.getRootPane() != null) {
             screen.getRootPane().putClientProperty("returnToMainMenu", Boolean.TRUE);
         }
-        screen.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        if (!(screen instanceof ui.screens.OverseasOrders)) screen.setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
         screen.addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosed(WindowEvent event) {
@@ -634,7 +682,7 @@ public final class NavigationManager {
 
             @Override
             public void windowClosing(WindowEvent event) {
-                if (!transitionInProgress) closeApplication(screen);
+                if (!transitionInProgress && !(screen instanceof ui.screens.OverseasOrders)) closeApplication(screen);
             }
         });
         WindowHelper.showPosWindow(screen, shell);

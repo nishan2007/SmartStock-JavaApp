@@ -153,7 +153,7 @@ final class LanProductAdminService {
                                                     int userId, int locationId) throws Exception {
         requireAnyPermission(connection, userId, "VIEW_INVENTORY", "EDIT_ITEM", "NEW_ITEM", "MAKE_SALE");
         String query = clean(search, 300);
-        String sql = """
+        String sql = ("""
                 SELECT item_type,name,variant_name,size,color,brand,description,code,price,current_quantity,item_id FROM (
                   SELECT 'Product' item_type,p.name,'' variant_name,COALESCE(p.size,'') size,COALESCE(p.color,'') color,
                     COALESCE((SELECT ib.name FROM item_brands ib WHERE ib.brand_id=p.brand_id),'') brand,
@@ -166,7 +166,7 @@ final class LanProductAdminService {
                   SELECT 'Custom item',coi.item_name,'',COALESCE(coi.size,''),COALESCE(coi.color,''),
                     COALESCE((SELECT ib.name FROM item_brands ib WHERE ib.brand_id=coi.brand_id),''),COALESCE(coi.description,''),
                     COALESCE(NULLIF(coi.sku,''),NULLIF(coi.barcode,''),'CUSTOM-'||coi.custom_item_id),
-                    COALESCE(coi.fixed_price,0),COALESCE(coi.quantity_on_hand,0),coi.custom_item_id FROM custom_order_items coi
+                    COALESCE(coi.fixed_price,0),COALESCE(custom_stock_value(coi.custom_item_id,NULL,__CUSTOM_STORE__,'quantity_on_hand'),0),coi.custom_item_id FROM custom_order_items coi
                     WHERE coi.is_active=TRUE AND coi.is_archived=FALSE AND COALESCE(coi.has_variants,FALSE)=FALSE AND %s
                   UNION ALL
                   SELECT 'Custom variant',coi.item_name,v.variant_name,
@@ -174,11 +174,11 @@ final class LanProductAdminService {
                     COALESCE((SELECT ib.name FROM item_brands ib WHERE ib.brand_id=COALESCE(v.brand_id,coi.brand_id)),''),
                     COALESCE(coi.description,''),COALESCE(NULLIF(v.sku,''),NULLIF(v.barcode,''),
                     'CUSTOM-'||coi.custom_item_id||'-'||v.custom_variant_id),COALESCE(v.fixed_price,coi.fixed_price,0),
-                    COALESCE(v.quantity_on_hand,0),v.custom_variant_id FROM custom_order_item_variants v
+                    COALESCE(custom_stock_value(v.custom_item_id,v.custom_variant_id,__CUSTOM_STORE__,'quantity_on_hand'),0),v.custom_variant_id FROM custom_order_item_variants v
                     JOIN custom_order_items coi ON coi.custom_item_id=v.custom_item_id
                     WHERE coi.is_active=TRUE AND coi.is_archived=FALSE AND v.is_active=TRUE AND %s
                 ) tags ORDER BY name LIMIT 300
-                """.formatted(locationId,ProductSearchHelper.predicate("p", locationId, query),
+                """).replace("__CUSTOM_STORE__",Integer.toString(locationId)).formatted(locationId,ProductSearchHelper.predicate("p", locationId, query),
                 ProductSearchHelper.customItemPredicate("coi", query),
                 ProductSearchHelper.customVariantPredicate("coi", "v", query));
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -358,6 +358,8 @@ final class LanProductAdminService {
         if("SMARTSTOCK-MISC".equalsIgnoreCase(sku))throw rule(409,"SYSTEM_ITEM","The system miscellaneous item cannot be archived.");
         if(archive&&!active)throw rule(409,"ALREADY_ARCHIVED","This product is already archived.");
         if(!archive&&active)throw rule(409,"ALREADY_ACTIVE","This product is already active.");
+        if(!archive&&CatalogIdentityService.canonicalProductId(connection,productId)!=productId)
+            throw rule(409,"PRODUCT_MERGED","This item was merged into another product and cannot be restored separately.");
         if(archive){
             List<String> stock=new ArrayList<>();
             try(PreparedStatement ps=connection.prepareStatement("""

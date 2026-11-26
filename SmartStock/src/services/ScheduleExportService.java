@@ -10,7 +10,6 @@ import services.EmployeeScheduleService.Assignment;
 import services.EmployeeScheduleService.Holiday;
 
 import javax.imageio.ImageIO;
-import java.awt.BasicStroke;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.FontMetrics;
@@ -29,23 +28,20 @@ import java.util.Map;
 
 public final class ScheduleExportService {
     private static final int MARGIN = 48;
-    private static final int HEADER_HEIGHT = 112;
+    private static final int HEADER_HEIGHT = 180;
     private static final int FOOTER_HEIGHT = 58;
     private static final int GAP = 12;
-    private static final Color PAGE_BACKGROUND = new Color(246, 247, 249);
-    private static final Color TILE_BACKGROUND = Color.WHITE;
+    private static final Color PAGE_BACKGROUND = new Color(241, 245, 249);
     private static final Color SUNDAY_BACKGROUND = new Color(242, 243, 246);
-    private static final Color HOLIDAY_BACKGROUND = new Color(255, 239, 250);
-    private static final Color TEXT = new Color(29, 31, 36);
-    private static final Color MUTED = new Color(92, 98, 108);
-    private static final Color BORDER = new Color(202, 206, 214);
+    private static final Color TEXT = new Color(23, 50, 77);
+    private static final Color MUTED = new Color(83, 106, 130);
+    private static final Color BORDER = new Color(201, 213, 226);
     private static final Color HOLIDAY = new Color(174, 28, 135);
     private static final Color[] EMPLOYEE_COLORS = {
             new Color(221, 105, 36), new Color(166, 47, 146), new Color(52, 134, 67),
             new Color(42, 105, 176), new Color(141, 92, 190), new Color(194, 65, 72)
     };
     private static final DateTimeFormatter PERIOD_DATE = DateTimeFormatter.ofPattern("MMM d, yyyy");
-    private static final DateTimeFormatter DAY_DATE = DateTimeFormatter.ofPattern("MMM d");
     private static final DateTimeFormatter FULL_TIME = DateTimeFormatter.ofPattern("h:mm a");
     private static final DateTimeFormatter HOUR_TIME = DateTimeFormatter.ofPattern("h a");
     private static final DateTimeFormatter GENERATED_TIME = DateTimeFormatter.ofPattern("MMM d, yyyy h:mm a");
@@ -85,8 +81,8 @@ public final class ScheduleExportService {
                                 Map<LocalDate, Holiday> holidays,
                                 BufferedImage companyLogo) throws IOException {
         int dayCount = (int) (periodEnd.toEpochDay() - periodStart.toEpochDay()) + 1;
-        int pdfColumns = Math.min(4, Math.max(1, columns));
-        int daysPerPage = pdfColumns * 2;
+        int pdfColumns = columns;
+        int daysPerPage = dayCount;
         int pageCount = Math.max(1, (dayCount + daysPerPage - 1) / daysPerPage);
         PDRectangle landscapeLetter = new PDRectangle(PDRectangle.LETTER.getHeight(), PDRectangle.LETTER.getWidth());
         try (PDDocument document = new PDDocument()) {
@@ -126,191 +122,215 @@ public final class ScheduleExportService {
                                         Map<LocalDate, List<Assignment>> assignments,
                                         Map<LocalDate, Holiday> holidays, BufferedImage companyLogo,
                                         String pageLabel) {
-        int safeColumns = Math.max(1, columns);
-        int tileWidth = compact ? 220 : 250;
+        if (columns == 7) return renderWeekly(storeName, fullStart, fullEnd, assignments, holidays, companyLogo);
+        int tileWidth = 276;
+        int offset = renderStart.getDayOfWeek().getValue() - 1;
         int dayCount = (int) (renderEnd.toEpochDay() - renderStart.toEpochDay()) + 1;
-        int rowCount = Math.max(1, (dayCount + safeColumns - 1) / safeColumns);
+        int rowCount = (dayCount + offset + 6) / 7;
         List<Integer> rowHeights = new ArrayList<>();
         for (int row = 0; row < rowCount; row++) {
-            int busiest = 0;
-            for (int column = 0; column < safeColumns; column++) {
-                LocalDate date = renderStart.plusDays((long) row * safeColumns + column);
-                if (!date.isAfter(renderEnd)) {
-                    busiest = Math.max(busiest, assignments.getOrDefault(date, List.of()).size());
-                }
+            int tallest = 210;
+            for (int col = 0; col < 7; col++) {
+                int index = row * 7 + col - offset;
+                if (index < 0 || index >= dayCount) continue;
+                LocalDate date = renderStart.plusDays(index);
+                int required = 100;
+                for (Assignment entry : assignments.getOrDefault(date, List.of())) required += assignmentHeight(entry, tileWidth - 52);
+                Holiday holiday = holidays.get(date);
+                if (holiday != null) required += wrapped(holiday.name(), tileWidth - 28, 20, true).size() * 26;
+                tallest = Math.max(tallest, required);
             }
-            int entryHeight = compact ? 32 : 76;
-            rowHeights.add(Math.max(compact ? 150 : 175, 92 + (busiest * entryHeight)));
+            rowHeights.add(tallest);
         }
-        int gridWidth = safeColumns * tileWidth + (safeColumns - 1) * GAP;
-        int width = MARGIN * 2 + gridWidth;
-        int height = MARGIN + HEADER_HEIGHT + FOOTER_HEIGHT + rowHeights.stream().mapToInt(Integer::intValue).sum()
-                + Math.max(0, rowCount - 1) * GAP;
-        BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
-        Graphics2D g = image.createGraphics();
+        int width = MARGIN * 2 + 7 * tileWidth + 6 * GAP;
+        int height = MARGIN + HEADER_HEIGHT + 60 + FOOTER_HEIGHT
+                + rowHeights.stream().mapToInt(Integer::intValue).sum() + rowCount * GAP;
+        BufferedImage image = image(width, height);
+        Graphics2D g = graphics(image);
         try {
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g.setColor(PAGE_BACKGROUND);
-            g.fillRect(0, 0, width, height);
             drawHeader(g, storeName, fullStart, fullEnd, compact, companyLogo, pageLabel, width);
-
             int y = MARGIN + HEADER_HEIGHT;
+            for (int col = 0; col < 7; col++) {
+                int x = MARGIN + col * (tileWidth + GAP);
+                g.setColor(TEXT); g.fillRect(x, y, tileWidth, 48);
+                g.setFont(new Font("SansSerif", Font.BOLD, 23)); g.setColor(Color.WHITE);
+                g.drawString(capitalize(java.time.DayOfWeek.of(col + 1).name()), x + 14, y + 32);
+            }
+            y += 60;
             for (int row = 0; row < rowCount; row++) {
-                int rowHeight = rowHeights.get(row);
-                for (int column = 0; column < safeColumns; column++) {
-                    LocalDate date = renderStart.plusDays((long) row * safeColumns + column);
-                    if (date.isAfter(renderEnd)) break;
-                    int x = MARGIN + column * (tileWidth + GAP);
-                    drawDay(g, x, y, tileWidth, rowHeight, date, compact,
-                            assignments.getOrDefault(date, List.of()), holidays.get(date));
+                for (int col = 0; col < 7; col++) {
+                    int index = row * 7 + col - offset;
+                    if (index < 0 || index >= dayCount) continue;
+                    LocalDate date = renderStart.plusDays(index);
+                    drawDay(g, MARGIN + col * (tileWidth + GAP), y, tileWidth, rowHeights.get(row), date,
+                            compact, assignments.getOrDefault(date, List.of()), holidays.get(date));
                 }
-                y += rowHeight + GAP;
+                y += rowHeights.get(row) + GAP;
             }
             drawFooter(g, width, height);
-        } finally {
-            g.dispose();
+        } finally { g.dispose(); }
+        return image;
+    }
+
+    private static BufferedImage image(int width, int height) {
+        if ((long) width * height > 24_000_000L) throw new IllegalArgumentException("Schedule is too large for one image. Export a shorter period.");
+        return new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
+    }
+
+    private static Graphics2D graphics(BufferedImage image) {
+        Graphics2D g = image.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setColor(Color.WHITE); g.fillRect(0, 0, image.getWidth(), image.getHeight());
+        return g;
+    }
+
+    private static List<String> wrapped(String value, int width, int size, boolean bold) {
+        BufferedImage scratch = new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = scratch.createGraphics();
+        try {
+            g.setFont(new Font("SansSerif", bold ? Font.BOLD : Font.PLAIN, size));
+            List<String> lines = new ArrayList<>(); String line = "";
+            for (char ch : (value == null ? "" : value).toCharArray()) {
+                if (ch == '\n') { lines.add(line); line = ""; continue; }
+                if (!line.isEmpty() && g.getFontMetrics().stringWidth(line + ch) > width) { lines.add(line); line = ""; }
+                line += ch;
+            }
+            lines.add(line); return lines;
+        } finally { g.dispose(); }
+    }
+
+    private static int drawWrapped(Graphics2D g, String value, int x, int y, int width, int size, boolean bold, Color color) {
+        g.setColor(color); g.setFont(new Font("SansSerif", bold ? Font.BOLD : Font.PLAIN, size));
+        List<String> lines = wrapped(value, width, size, bold);
+        for (String line : lines) { g.drawString(line, x, y); y += size + 7; }
+        return y;
+    }
+
+    private static String exportShift(Assignment a) {
+        return a.shiftStartTime() == null || a.shiftEndTime() == null ? "Shift not assigned"
+                : shortTime(a.shiftStartTime()) + " – " + shortTime(a.shiftEndTime());
+    }
+
+    private static int assignmentHeight(Assignment a, int width) {
+        return 20 + wrapped(a.displayName(), width, 24, true).size() * 31
+                + wrapped(exportShift(a), width, 22, true).size() * 29
+                + wrapped(lunchLine(a), width, 19, false).size() * 26 + 12;
+    }
+
+    private static BufferedImage renderWeekly(String storeName, LocalDate start, LocalDate end,
+            Map<LocalDate, List<Assignment>> assignments, Map<LocalDate, Holiday> holidays, BufferedImage logo) {
+        int days = (int) (end.toEpochDay() - start.toEpochDay()) + 1, cell = 248, nameWidth = 260;
+        Map<Integer, Assignment> employees = new java.util.TreeMap<>();
+        for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1))
+            for (Assignment a : assignments.getOrDefault(d, List.of())) employees.put(a.userId(), a);
+        List<Assignment> people = new ArrayList<>(employees.values());
+        people.sort(java.util.Comparator.comparing(a -> a.displayName() == null ? "" : a.displayName(), String.CASE_INSENSITIVE_ORDER));
+        List<Integer> heights = new ArrayList<>();
+        for (Assignment person : people) {
+            int rowHeight = Math.max(140, 40 + wrapped(person.displayName(), nameWidth - 40, 30, true).size() * 37);
+            for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+                int needed = 30;
+                for (Assignment a : assignments.getOrDefault(d, List.of())) if (a.userId() == person.userId())
+                    needed += wrapped(exportShift(a), cell - 28, 23, true).size() * 30
+                            + wrapped(lunchLine(a), cell - 28, 20, false).size() * 27 + 14;
+                rowHeight = Math.max(rowHeight, needed);
+            }
+            heights.add(rowHeight);
         }
+        int header = 80;
+        for (Holiday holiday : holidays.values()) if (!holiday.holidayDate().isBefore(start) && !holiday.holidayDate().isAfter(end))
+            header = Math.max(header, 50 + wrapped(holiday.name(), cell - 28, 18, true).size() * 25);
+        int width = MARGIN * 2 + nameWidth + days * cell;
+        int height = MARGIN + HEADER_HEIGHT + header + Math.max(150, heights.stream().mapToInt(Integer::intValue).sum()) + FOOTER_HEIGHT;
+        BufferedImage image = image(width, height); Graphics2D g = graphics(image);
+        try {
+            drawHeader(g, storeName, start, end, false, logo, null, width);
+            int y = MARGIN + HEADER_HEIGHT;
+            g.setColor(new Color(7, 136, 151)); g.fillRect(MARGIN, y, width - 2 * MARGIN, header);
+            drawWrapped(g, "Employee", MARGIN + 20, y + 45, nameWidth - 40, 28, true, Color.WHITE);
+            for (int i = 0; i < days; i++) {
+                LocalDate date = start.plusDays(i); int x = MARGIN + nameWidth + i * cell;
+                drawWrapped(g, DateTimeFormatter.ofPattern("EEE d MMM").format(date), x + 14, y + 33, cell - 28, 23, true, Color.WHITE);
+                if (holidays.containsKey(date)) drawWrapped(g, holidays.get(date).name(), x + 14, y + 61, cell - 28, 18, true, Color.WHITE);
+            }
+            y += header;
+            if (people.isEmpty()) drawWrapped(g, "No employees scheduled for this period.", MARGIN + 20, y + 65, width - MARGIN * 2 - 40, 28, false, MUTED);
+            for (int row = 0; row < people.size(); row++) {
+                Assignment person = people.get(row); int h = heights.get(row);
+                Color accent = EMPLOYEE_COLORS[Math.floorMod(person.userId(), EMPLOYEE_COLORS.length)];
+                g.setColor(accent); g.fillRect(MARGIN, y, 8, h);
+                drawWrapped(g, person.displayName(), MARGIN + 22, y + 46, nameWidth - 40, 30, true, TEXT);
+                for (int i = 0; i < days; i++) {
+                    int x = MARGIN + nameWidth + i * cell; LocalDate date = start.plusDays(i);
+                    g.setColor(mix(Color.WHITE, accent, .10)); g.fillRect(x, y, cell, h);
+                    g.setColor(BORDER); g.drawLine(x, y, x, y + h);
+                    int cy = y + 40; boolean found = false;
+                    for (Assignment a : assignments.getOrDefault(date, List.of())) if (a.userId() == person.userId()) {
+                        found = true;
+                        cy = drawWrapped(g, exportShift(a), x + 14, cy, cell - 28, 23, true, TEXT);
+                        cy = drawWrapped(g, lunchLine(a), x + 14, cy, cell - 28, 20, false, MUTED) + 14;
+                    }
+                    if (!found) drawWrapped(g, "OFF", x + 14, y + 48, cell - 28, 25, true, MUTED);
+                }
+                g.setColor(BORDER); g.drawLine(MARGIN, y + h, width - MARGIN, y + h); y += h;
+            }
+            drawFooter(g, width, height);
+        } finally { g.dispose(); }
         return image;
     }
 
     private static void drawHeader(Graphics2D g, String storeName, LocalDate start, LocalDate end,
                                    boolean compact, BufferedImage companyLogo, String pageLabel, int width) {
-        g.setColor(TEXT);
-        g.setFont(new Font("SansSerif", Font.BOLD, 30));
-        g.drawString("Employee Schedule", MARGIN, MARGIN + 32);
-        g.setFont(new Font("SansSerif", Font.BOLD, 16));
-        g.drawString(storeName, MARGIN, MARGIN + 61);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 15));
-        g.setColor(MUTED);
-        String period = PERIOD_DATE.format(start) + " - " + PERIOD_DATE.format(end)
-                + "  |  " + (compact ? "Compact" : "Detailed") + " view";
-        g.drawString(period, MARGIN, MARGIN + 86);
-        drawCenteredLogo(g, companyLogo, width);
-        if (pageLabel != null) {
-            g.setFont(new Font("SansSerif", Font.BOLD, 14));
-            int labelWidth = g.getFontMetrics().stringWidth(pageLabel);
-            g.drawString(pageLabel, width - MARGIN - labelWidth, MARGIN + 32);
+        if (companyLogo == null) {
+            try (var in = ScheduleExportService.class.getResourceAsStream("/Images/Deckers.png")) {
+                if (in != null) companyLogo = ImageIO.read(in);
+            } catch (IOException ignored) { /* The schedule remains usable without a logo. */ }
         }
-    }
-
-    private static void drawCenteredLogo(Graphics2D g, BufferedImage logo, int width) {
-        if (logo == null || logo.getWidth() <= 0 || logo.getHeight() <= 0) return;
-        int maxWidth = 220;
-        int maxHeight = 68;
-        double scale = Math.min((double) maxWidth / logo.getWidth(), (double) maxHeight / logo.getHeight());
-        int drawWidth = Math.max(1, (int) Math.round(logo.getWidth() * scale));
-        int drawHeight = Math.max(1, (int) Math.round(logo.getHeight() * scale));
-        int x = (width - drawWidth) / 2;
-        int y = MARGIN + 3;
-        Object previousInterpolation = g.getRenderingHint(RenderingHints.KEY_INTERPOLATION);
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-        g.drawImage(logo, x, y, drawWidth, drawHeight, null);
-        if (previousInterpolation != null) {
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, previousInterpolation);
+        if (companyLogo != null) {
+            double scale = Math.min(340d / companyLogo.getWidth(), 125d / companyLogo.getHeight());
+            g.drawImage(companyLogo, MARGIN, MARGIN - 12, (int) (companyLogo.getWidth() * scale), (int) (companyLogo.getHeight() * scale), null);
         }
+        drawWrapped(g, "Employee Schedule", MARGIN + 392, MARGIN + 34, width - MARGIN * 2 - 392, 50, true, TEXT);
+        int y = drawWrapped(g, storeName, MARGIN + 392, MARGIN + 85, width - MARGIN * 2 - 392, 29, true, new Color(7, 136, 151));
+        drawWrapped(g, PERIOD_DATE.format(start) + " – " + PERIOD_DATE.format(end), MARGIN + 392, y + 8, width - MARGIN * 2 - 392, 25, false, TEXT);
+        g.setColor(new Color(7, 136, 151)); g.fillRect(MARGIN, MARGIN + HEADER_HEIGHT - 16, width - MARGIN * 2, 4);
     }
 
     private static void drawDay(Graphics2D g, int x, int y, int width, int height, LocalDate date,
                                 boolean compact, List<Assignment> assignments, Holiday holiday) {
-        boolean sunday = date.getDayOfWeek().getValue() == 7;
-        g.setColor(holiday != null ? HOLIDAY_BACKGROUND : sunday ? SUNDAY_BACKGROUND : TILE_BACKGROUND);
-        g.fillRoundRect(x, y, width, height, 12, 12);
-        g.setColor(holiday != null ? HOLIDAY : BORDER);
-        g.setStroke(new BasicStroke(holiday != null ? 2f : 1f));
-        g.drawRoundRect(x, y, width, height, 12, 12);
-
-        int left = x + 14;
-        g.setColor(TEXT);
-        g.setFont(new Font("SansSerif", Font.BOLD, 17));
-        g.drawString(capitalize(date.getDayOfWeek().name()), left, y + 25);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 13));
-        g.setColor(MUTED);
-        g.drawString(DAY_DATE.format(date), left, y + 46);
-
-        String marker = holiday != null ? holiday.name() : sunday ? "Manual scheduling only" : null;
-        if (marker != null) {
-            g.setFont(new Font("SansSerif", holiday != null ? Font.BOLD : Font.ITALIC, 11));
-            g.setColor(holiday != null ? HOLIDAY : MUTED);
-            g.drawString(fit(marker, g.getFontMetrics(), width - 28), left, y + 65);
+        g.setColor(date.getDayOfWeek().getValue() == 7 ? SUNDAY_BACKGROUND : PAGE_BACKGROUND);
+        g.fillRect(x, y, width, height);
+        int cy = drawWrapped(g, DateTimeFormatter.ofPattern("MMM d (EEE)").format(date), x + 14, y + 34, width - 28, 25, true, TEXT) + 8;
+        if (holiday != null) cy = drawWrapped(g, holiday.name(), x + 14, cy, width - 28, 20, true, HOLIDAY) + 8;
+        if (assignments.isEmpty()) { drawWrapped(g, "Not scheduled", x + 14, cy + 20, width - 28, 22, false, MUTED); return; }
+        for (Assignment a : assignments) {
+            Color accent = EMPLOYEE_COLORS[Math.floorMod(a.userId(), EMPLOYEE_COLORS.length)];
+            int h = assignmentHeight(a, width - 52) - 12;
+            g.setColor(mix(Color.WHITE, accent, .10)); g.fillRoundRect(x + 10, cy, width - 20, h, 8, 8);
+            g.setColor(accent); g.fillRect(x + 10, cy, 5, h);
+            int ty = drawWrapped(g, a.displayName(), x + 24, cy + 28, width - 52, 24, true, TEXT);
+            ty = drawWrapped(g, exportShift(a), x + 24, ty, width - 52, 22, true, TEXT);
+            drawWrapped(g, lunchLine(a), x + 24, ty, width - 52, 19, false, MUTED);
+            cy += h + 12;
         }
-
-        int contentY = y + 78;
-        if (assignments.isEmpty()) {
-            g.setFont(new Font("SansSerif", Font.ITALIC, 12));
-            g.setColor(MUTED);
-            g.drawString(holiday == null ? "Not scheduled" : "Closed - manual scheduling only", left, contentY + 18);
-            return;
-        }
-        int cardHeight = compact ? 26 : 68;
-        int cardGap = compact ? 6 : 8;
-        for (Assignment assignment : assignments) {
-            drawAssignment(g, left, contentY, width - 28, cardHeight, assignment, compact);
-            contentY += cardHeight + cardGap;
-        }
-    }
-
-    private static void drawAssignment(Graphics2D g, int x, int y, int width, int height,
-                                       Assignment assignment, boolean compact) {
-        Color accent = EMPLOYEE_COLORS[Math.floorMod(assignment.userId(), EMPLOYEE_COLORS.length)];
-        g.setColor(mix(Color.WHITE, accent, 0.10));
-        g.fillRoundRect(x, y, width, height, 8, 8);
-        g.setColor(accent);
-        g.fillRoundRect(x, y, 5, height, 5, 5);
-        int textX = x + 12;
-        if (compact) {
-            g.setFont(new Font("SansSerif", Font.BOLD, 11));
-            g.setColor(TEXT);
-            String shift = compactShift(assignment);
-            FontMetrics metrics = g.getFontMetrics();
-            int shiftWidth = metrics.stringWidth(shift);
-            g.drawString(fit(assignment.displayName(), metrics, width - shiftWidth - 25), textX, y + 18);
-            g.setColor(accent.darker());
-            g.drawString(shift, x + width - shiftWidth - 8, y + 18);
-            return;
-        }
-        g.setFont(new Font("SansSerif", Font.BOLD, 12));
-        g.setColor(TEXT);
-        g.drawString(fit(assignment.displayName(), g.getFontMetrics(), width - 22), textX, y + 18);
-        g.setFont(new Font("SansSerif", Font.BOLD, 10));
-        g.setColor(accent.darker());
-        g.drawString(fit(shiftLine(assignment), g.getFontMetrics(), width - 22), textX, y + 37);
-        g.setFont(new Font("SansSerif", Font.PLAIN, 10));
-        g.setColor(MUTED);
-        g.drawString(fit(lunchLine(assignment), g.getFontMetrics(), width - 22), textX, y + 55);
     }
 
     private static void drawFooter(Graphics2D g, int width, int height) {
-        g.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        g.setFont(new Font("SansSerif", Font.PLAIN, 19));
         g.setColor(MUTED);
         String footer = "SmartStock  |  Generated " + GENERATED_TIME.format(LocalDateTime.now())
-                + "  |  Sundays and holidays are manual scheduling only";
+                + "  |  OFF = Not scheduled";
         g.drawString(fit(footer, g.getFontMetrics(), width - MARGIN * 2), MARGIN, height - 34);
-        g.setFont(new Font("SansSerif", Font.BOLD, 11));
+        g.setFont(new Font("SansSerif", Font.BOLD, 19));
         g.setColor(TEXT);
         String changeNotice = "Schedule is subject to change. Please check for updates before each shift.";
         g.drawString(fit(changeNotice, g.getFontMetrics(), width - MARGIN * 2), MARGIN, height - 16);
     }
 
-    private static String shiftLine(Assignment assignment) {
-        if (assignment.shiftStartTime() == null || assignment.shiftEndTime() == null) return "Shift not assigned";
-        String name = assignment.shiftName() == null || assignment.shiftName().isBlank() ? "Shift" : assignment.shiftName();
-        return name + "  " + fullTime(assignment.shiftStartTime()) + " - " + fullTime(assignment.shiftEndTime());
-    }
-
-    private static String compactShift(Assignment assignment) {
-        if (assignment.shiftStartTime() == null || assignment.shiftEndTime() == null) return "No shift";
-        return shortTime(assignment.shiftStartTime()) + "-" + shortTime(assignment.shiftEndTime());
-    }
-
     private static String lunchLine(Assignment assignment) {
         if (assignment.lunchStartTime() == null) return "Lunch not set";
-        return "Lunch " + fullTime(assignment.lunchStartTime()) + " - "
-                + fullTime(assignment.lunchStartTime().plusMinutes(EmployeeScheduleService.LUNCH_DURATION_MINUTES));
-    }
-
-    private static String fullTime(LocalTime time) {
-        return FULL_TIME.format(time);
+        return "Lunch " + shortTime(assignment.lunchStartTime());
     }
 
     private static String shortTime(LocalTime time) {

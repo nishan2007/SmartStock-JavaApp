@@ -1,0 +1,13 @@
+SmartStock 1.1.90
+
+- Balance Sheet now opens its dedicated web address: https://balancesheet.deckers.gy.
+- Adds Web App and Pair Balance Sheet Device controls to the desktop Balance Sheet.
+- Balance Sheet device activation QR codes open the dedicated Balance Sheet site.
+- Sign-in requires Balance Sheet permission without Employee Web App permission.
+- Keeps existing accounting, live updates, captured input history and snapshot comparisons.
+- Includes the dedicated Balance Sheet home-screen icon and activation-link entry.
+
+Update the store server first, then registers. Approval on the new Balance Sheet
+hostname is separate from approval on the old Time Clock address. The website is
+already deployed; this update adds the dedicated desktop pairing controls.
+AI models remain separate from application updates and are preserved in the store profile.

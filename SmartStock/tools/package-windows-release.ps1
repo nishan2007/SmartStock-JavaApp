@@ -122,6 +122,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "jpackage failed." }
 
     $AppImage = Join-Path $Work "SmartStock"
+    $UpdateServiceScripts = Join-Path $AppImage 'update-service'
+    New-Item -ItemType Directory -Force -Path $UpdateServiceScripts | Out-Null
+    Copy-Item -LiteralPath (Join-Path $Root 'installer\windows\install-display-update-service.ps1'), (Join-Path $Root 'installer\windows\run-display-update-service.ps1') -Destination $UpdateServiceScripts
     if (-not (Test-Path (Join-Path $AppImage "runtime"))) {
         throw "The Windows package was created without its bundled Java runtime."
     }
@@ -271,7 +274,11 @@ Name: "{group}\SmartStock"; Filename: "{app}\SmartStock.exe"
 Name: "{autodesktop}\SmartStock"; Filename: "{app}\SmartStock.exe"; Tasks: desktopicon
 
 [Run]
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\update-service\install-display-update-service.ps1"" -AppDirectory ""{app}"""; Flags: runhidden waituntilterminated; Check: IsAdminInstallMode
 Filename: "{app}\SmartStock.exe"; Description: "Launch SmartStock"; Flags: nowait skipifsilent runasoriginaluser
+
+[UninstallRun]
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\update-service\install-display-update-service.ps1"" -AppDirectory ""{app}"" -Remove"; Flags: runhidden waituntilterminated; Check: IsAdminInstallMode
 
 [Code]
 procedure CurStepChanged(CurStep: TSetupStep);

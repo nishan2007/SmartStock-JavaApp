@@ -14,7 +14,9 @@ import java.util.List;
 final class RegisterConnectionSetup {
     private RegisterConnectionSetup() { }
 
-    static boolean open(Component owner) {
+    static boolean open(Component owner) { return open(owner, DatabaseMode.CLIENT); }
+    static boolean open(Component owner, DatabaseMode mode) {
+        String role = mode == DatabaseMode.DISPLAY ? "Display" : "Register";
         Settings settings;
         try {
             settings = ResponsiveTask.await(owner, "Loading the register connection...",
@@ -22,7 +24,7 @@ final class RegisterConnectionSetup {
             if (settings == null) return false;
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(owner, "The saved register connection could not be loaded.\n\n"
-                    + rootMessage(ex), "Configure Register Connection", JOptionPane.ERROR_MESSAGE);
+                    + rootMessage(ex), "Configure " + role + " Connection", JOptionPane.ERROR_MESSAGE);
             return false;
         }
         JTextField host = new JTextField(settings.host(), 24);
@@ -51,7 +53,7 @@ final class RegisterConnectionSetup {
         }
 
         int choice = JOptionPane.showConfirmDialog(owner, content,
-                "Configure Register Connection", JOptionPane.OK_CANCEL_OPTION,
+                "Configure " + role + " Connection", JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.PLAIN_MESSAGE);
         if (choice != JOptionPane.OK_OPTION) return false;
         String selectedHost = host.getText() == null ? "" : host.getText().trim();
@@ -59,26 +61,26 @@ final class RegisterConnectionSetup {
         int selectedLocation = (Integer) location.getValue();
         if (selectedHost.isBlank()) {
             JOptionPane.showMessageDialog(owner, "Enter POS-SERVER or the server's LAN address.",
-                    "Configure Register Connection", JOptionPane.WARNING_MESSAGE);
+                    "Configure " + role + " Connection", JOptionPane.WARNING_MESSAGE);
             return false;
         }
         try {
             Boolean saved = ResponsiveTask.await(owner, "Saving the register connection...", () -> {
                 LanApiClient.configureEndpoint(selectedHost, selectedPort);
-                DatabaseConfig.fromForm(DatabaseMode.CLIENT, "", "", "",
+                DatabaseConfig.fromForm(mode, "", "", "",
                         selectedHost, selectedPort, selectedLocation, settings.interval()).save();
                 return Boolean.TRUE;
             });
             if (saved == null) return false;
             JOptionPane.showMessageDialog(owner,
-                    "Register mode saved.\nServer: " + selectedHost + ":" + selectedPort
+                    (mode == DatabaseMode.DISPLAY ? "Display" : "Register") + " mode saved.\nServer: " + selectedHost + ":" + selectedPort
                             + "\nStore location: " + selectedLocation
-                            + "\n\nYou can now pair this register.",
-                    "Register Connection Saved", JOptionPane.INFORMATION_MESSAGE);
+                            + "\n\nYou can now pair this " + role.toLowerCase(java.util.Locale.ROOT) + ".",
+                    role + " Connection Saved", JOptionPane.INFORMATION_MESSAGE);
             return true;
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(owner, "The register connection could not be saved.\n\n"
-                            + rootMessage(ex), "Configure Register Connection", JOptionPane.ERROR_MESSAGE);
+                            + rootMessage(ex), "Configure " + role + " Connection", JOptionPane.ERROR_MESSAGE);
             return false;
         }
     }

@@ -1,0 +1,1 @@
+Fix SmartStudio shared badge template saves rejected with Only reusable template fields may be shared. Accept and validate rotation, hidden layers and transparency while retaining personal-data restrictions. Update the store server first.

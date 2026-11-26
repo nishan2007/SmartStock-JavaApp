@@ -17,6 +17,22 @@ public final class OverseasOrderService {
     public record Actor(int userId, String name, int locationId, String deviceId, String deviceName,
                         Set<String> permissions, boolean web) { }
     private OverseasOrderService() { }
+    /** Only known operator guidance may cross the API boundary; never expose database errors. */
+    static String rejectionMessage(SQLException error) {
+        if (CustomerPhoneOwnership.isConflict(error)) return CustomerPhoneOwnership.MESSAGE;
+        String message = error.getMessage();
+        if (Set.of(
+                "Open a drawer enabled for overseas cash first.",
+                "This draw is not enabled for overseas-order cash. Use an enabled drawer.",
+                "This register needs an active assigned cash drawer for cash payments or refunds.",
+                "This device is not assigned to an active cash drawer for the selected store. Open Company Preferences > Cash Drawer Manager and assign this device before taking cash.",
+                "Payment amount must be greater than zero.",
+                "A payment reference is required for this method.",
+                "Payment cannot be more than the balance due.",
+                "Insufficient overseas cash in this draw for the refund. Replenish through new collections or use another refund method."
+        ).contains(message == null ? "" : message)) return message;
+        return "Order could not be saved. Check item quantities, customer details and the register cash drawer.";
+    }
 
     public static Set<String> permissions(Connection c,int user)throws SQLException {
         Set<String> permissions=new HashSet<>();
@@ -115,7 +131,7 @@ public final class OverseasOrderService {
                     JsonArray patches=new JsonArray();Set<String> selected=new HashSet<>();for(JsonElement line:b.getAsJsonArray("lineIds"))selected.add(line.getAsString());
                     for(JsonElement element:lines(c,id)){JsonObject l=element.getAsJsonObject();if(!selected.remove(l.get("line_id").getAsString()))continue;
                         JsonObject patch=new JsonObject();patch.add("line_id",l.get("line_id"));patch.add("purchased",l.get("quantity"));
-                        if(stage.equals("ARRIVED")){patch.add("shipped",l.get("quantity"));patch.add("arrived",l.get("quantity"));}patches.add(patch);
+                        if(stage.equals("ARRIVED")){if(digital(l))throw new IllegalArgumentException("Digital items do not require arrival tracking.");patch.add("shipped",l.get("quantity"));patch.add("arrived",l.get("quantity"));}patches.add(patch);
                     }
                     if(!selected.isEmpty()||patches.isEmpty())throw new IllegalArgumentException("Select items belonging to this order.");
                     JsonObject update=b.deepCopy();update.add("lines",patches);shipment(c,actor,id,update,before,false);
@@ -130,7 +146,11 @@ public final class OverseasOrderService {
                 default -> throw new IllegalArgumentException("Unsupported action.");
             }
         }
-        if(Set.of("PAYMENT","SAVE").contains(action)&&!lock(c,actor,id,false).get("custom_order_id").isJsonNull()) {
+        JsonObject current=lock(c,actor,id,false);
+        if(current.get("state").getAsString().equals("ISSUED") && !current.get("custom_order_id").isJsonNull() && finance(c,current).get("balance_due").getAsBigDecimal().signum()==0) {
+            try(var p=c.prepareStatement("UPDATE overseas_order_lines SET shipped=purchased,arrived=purchased,collected=purchased WHERE overseas_order_id=? AND digital")){p.setObject(1,id);p.executeUpdate();}
+        }
+        if(Set.of("PAYMENT","SAVE","TRACK","SHIPMENT").contains(action)&&!lock(c,actor,id,false).get("custom_order_id").isJsonNull()) {
             JsonObject active=lock(c,actor,id,false);
             if(finance(c,active).get("balance_due").getAsBigDecimal().signum()==0&&quantities(lines(c,id)).stream().allMatch(q->q.collected()==q.quantity())) {
                 try(var p=c.prepareStatement("UPDATE overseas_orders SET state='COMPLETED' WHERE overseas_order_id=?")){p.setObject(1,id);p.executeUpdate();}
@@ -159,17 +179,17 @@ public final class OverseasOrderService {
         try{phone=utils.CustomerPhoneNumber.normalize(supplied);if(phone.isBlank())throw new IllegalArgumentException();}
         catch(IllegalArgumentException e){out.addProperty("validPhone",false);out.addProperty("reserved",false);return out;}
         out.addProperty("validPhone",true);out.addProperty("phone",phone);
-        try(var p=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM customer_phone_ownership WHERE phone_key=public.customer_phone_key(?))")) {
+        try(var p=c.prepareStatement("SELECT EXISTS(SELECT 1 FROM customer_accounts WHERE public.customer_phone_key(phone)=public.customer_phone_key(?) AND customer_id=public.canonical_customer_id(customer_id))")) {
             p.setString(1,phone);try(var r=p.executeQuery()){r.next();out.addProperty("reserved",r.getBoolean(1));}
         }
         try(var p=c.prepareStatement("""
             SELECT customer_id,name,COALESCE(phone,''),COALESCE(account_number,''),is_active,
               COALESCE(email,''),require_charge_authorization,custom_order_discount_enabled,custom_order_discount_percent,custom_order_deposit_exempt
             FROM customer_accounts WHERE public.customer_phone_key(phone)=public.customer_phone_key(?)
-              OR customer_id=(SELECT customer_id FROM customer_phone_ownership WHERE phone_key=public.customer_phone_key(?))
+              AND customer_id=public.canonical_customer_id(customer_id)
             ORDER BY customer_id LIMIT 100
             """)) {
-            p.setString(1,phone);p.setString(2,phone);try(var r=p.executeQuery()){while(r.next()){
+            p.setString(1,phone);try(var r=p.executeQuery()){while(r.next()){
                 JsonObject customer=new JsonObject();customer.addProperty("customerId",r.getInt(1));customer.addProperty("name",r.getString(2));
                 customer.addProperty("phone",r.getString(3));customer.addProperty("accountNumber",r.getString(4));customer.addProperty("active",r.getBoolean(5));
                 customer.addProperty("email",r.getString(6));customer.addProperty("requireChargeAuthorization",r.getBoolean(7));
@@ -185,8 +205,8 @@ public final class OverseasOrderService {
                 COALESCE(f.amount_paid,0),COALESCE(f.balance_due,o.total),COALESCE(f.order_number,'Draft'),o.expected_date,
                 (SELECT name FROM locations WHERE location_id=o.location_id),
                 CASE WHEN o.state='DRAFT' THEN 'DRAFT' WHEN o.state='CANCELLED' THEN 'CANCELLED' WHEN o.state='COMPLETED' THEN 'COLLECTED'
-                  WHEN (SELECT bool_and(l.arrived=l.quantity) FROM overseas_order_lines l WHERE l.overseas_order_id=o.overseas_order_id) THEN 'ARRIVED'
-                  WHEN EXISTS(SELECT 1 FROM overseas_order_lines l WHERE l.overseas_order_id=o.overseas_order_id AND l.arrived>0) THEN 'PARTIALLY_ARRIVED'
+                  WHEN (SELECT bool_and(l.arrived=l.quantity) FROM overseas_order_lines l WHERE l.overseas_order_id=o.overseas_order_id) AND EXISTS(SELECT 1 FROM overseas_order_lines l WHERE l.overseas_order_id=o.overseas_order_id AND NOT l.digital) THEN 'ARRIVED'
+                  WHEN EXISTS(SELECT 1 FROM overseas_order_lines l WHERE l.overseas_order_id=o.overseas_order_id AND NOT l.digital AND l.arrived>0) THEN 'PARTIALLY_ARRIVED'
                   WHEN (SELECT bool_and(l.purchased=l.quantity) FROM overseas_order_lines l WHERE l.overseas_order_id=o.overseas_order_id) THEN 'ORDERED'
                   WHEN EXISTS(SELECT 1 FROM overseas_order_lines l WHERE l.overseas_order_id=o.overseas_order_id AND l.purchased>0) THEN 'PARTIALLY_ORDERED'
                   WHEN COALESCE(f.amount_paid,0)>0 OR o.total=0 THEN 'PROCESSING' ELSE 'WAITING_FOR_PAYMENT' END
@@ -210,10 +230,10 @@ public final class OverseasOrderService {
     private static JsonObject detail(Connection c,Actor a,UUID id)throws SQLException {
         JsonObject order=lock(c,a,id,true);order.add("lines",lines(c,id));
         try(var p=c.prepareStatement("SELECT name FROM locations WHERE location_id=?")){p.setInt(1,a.locationId);try(var r=p.executeQuery()){r.next();order.addProperty("store_name",r.getString(1));}}
-        if(!order.get("custom_order_id").isJsonNull())try(var p=c.prepareStatement("SELECT order_number,total_amount,amount_paid,balance_due FROM custom_orders WHERE custom_order_id=?")) {
-            p.setLong(1,order.get("custom_order_id").getAsLong());try(var r=p.executeQuery()){r.next();order.addProperty("number",r.getString(1));order.addProperty("paid",r.getBigDecimal(3));order.addProperty("balance",r.getBigDecimal(4));}
+        if(!order.get("custom_order_id").isJsonNull())try(var p=c.prepareStatement("SELECT o.order_number,o.total_amount,o.amount_paid,o.balance_due,ca.account_number,o.taken_by_name FROM custom_orders o LEFT JOIN customer_accounts ca ON ca.customer_id=o.customer_id WHERE o.custom_order_id=?")) {
+            p.setLong(1,order.get("custom_order_id").getAsLong());try(var r=p.executeQuery()){r.next();order.addProperty("number",r.getString(1));order.addProperty("paid",r.getBigDecimal(3));order.addProperty("balance",r.getBigDecimal(4));order.addProperty("customer_account_number",r.getString(5));order.addProperty("taken_by_name",r.getString(6));}
         } else {order.addProperty("number","Draft");order.addProperty("paid",BigDecimal.ZERO);order.add("balance",order.get("total"));}
-        for(JsonElement element:order.getAsJsonArray("lines")){JsonObject l=element.getAsJsonObject();l.addProperty("tracking",OverseasOrderRules.tracking(order.get("state").getAsString(),order.get("paid").getAsBigDecimal(),order.get("total").getAsBigDecimal(),quantity(l)));}
+        for(JsonElement element:order.getAsJsonArray("lines")){JsonObject l=element.getAsJsonObject();l.addProperty("tracking",digital(l)&&!Set.of("DRAFT","CANCELLED").contains(order.get("state").getAsString())?(l.get("collected").getAsInt()==l.get("quantity").getAsInt()?"DIGITAL_FULFILLED":l.get("purchased").getAsInt()==l.get("quantity").getAsInt()?"DIGITAL_ORDERED":"DIGITAL_PROCESSING"):OverseasOrderRules.tracking(order.get("state").getAsString(),order.get("paid").getAsBigDecimal(),order.get("total").getAsBigDecimal(),quantity(l)));}
         JsonArray payments=new JsonArray();
         if(!order.get("custom_order_id").isJsonNull())try(var p=c.prepareStatement("SELECT row_to_json(p)::text FROM custom_order_payments p WHERE custom_order_id=? ORDER BY created_at,custom_order_payment_id")) {
             p.setLong(1,order.get("custom_order_id").getAsLong());try(var r=p.executeQuery()){while(r.next())payments.add(JsonParser.parseString(r.getString(1)));}
@@ -262,6 +282,7 @@ public final class OverseasOrderService {
             if(!Objects.equals(customer,nullableInt(before,"customer_id"))||!name.equals(before.get("customer_name").getAsString())||!phone.equals(before.get("customer_phone").getAsString()))throw new IllegalArgumentException("Customer identity cannot change after quote issue.");
             updateFinanceTotal(c,a,before,total,text(b,"reason",2000,false));
         }
+        for(JsonElement value:incoming){JsonObject line=value.getAsJsonObject();for(JsonElement prior:old){JsonObject previous=prior.getAsJsonObject();if(line.has("line_id")&&line.get("line_id").equals(previous.get("line_id"))&&digital(line)!=digital(previous)&&previous.get("purchased").getAsInt()>0)throw new IllegalArgumentException("Item type cannot change after purchase tracking starts.");}}
         Set<UUID> existing=new HashSet<>();for(JsonElement l:old){JsonObject row=l.getAsJsonObject();UUID lid=UUID.fromString(row.get("line_id").getAsString());existing.add(lid);if(!ids.contains(lid)&&row.get("purchased").getAsInt()>0)throw new IllegalArgumentException("Purchased items cannot be removed.");}
         for(UUID lid:ids)if(!existing.contains(lid))throw new IllegalArgumentException("Item identifier does not belong to this order.");
         try(var p=c.prepareStatement("UPDATE overseas_orders SET customer_id=?,customer_name=?,customer_phone=?,expected_date=?::date,notes=?,shipping=?,total=? WHERE overseas_order_id=?")) {
@@ -272,11 +293,11 @@ public final class OverseasOrderService {
             JsonObject l=value.getAsJsonObject();UUID lid=l.has("line_id")&&!l.get("line_id").isJsonNull()&&!l.get("line_id").getAsString().isBlank()?UUID.fromString(l.get("line_id").getAsString()):UUID.randomUUID();
             String screenshot=text(l,"screenshot",100,false);if(!screenshot.isBlank())requireImage(c,id,screenshot);
             try(var p=c.prepareStatement("""
-                INSERT INTO overseas_order_lines(line_id,overseas_order_id,description,product_url,options,quantity,unit_price,usd_cost,exchange_rate,screenshot,sort_order,seller)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(line_id) DO UPDATE SET description=EXCLUDED.description,product_url=EXCLUDED.product_url,seller=EXCLUDED.seller,
+                INSERT INTO overseas_order_lines(line_id,overseas_order_id,description,product_url,options,quantity,unit_price,usd_cost,exchange_rate,screenshot,sort_order,seller,digital)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(line_id) DO UPDATE SET description=EXCLUDED.description,product_url=EXCLUDED.product_url,seller=EXCLUDED.seller,digital=EXCLUDED.digital,
                 options=EXCLUDED.options,quantity=EXCLUDED.quantity,unit_price=EXCLUDED.unit_price,usd_cost=EXCLUDED.usd_cost,exchange_rate=EXCLUDED.exchange_rate,screenshot=EXCLUDED.screenshot,sort_order=EXCLUDED.sort_order
                 """)) {
-                p.setObject(1,lid);p.setObject(2,id);p.setString(3,text(l,"description",1000,true));p.setString(4,text(l,"product_url",3000,false));p.setString(5,text(l,"options",1000,false));p.setInt(6,l.get("quantity").getAsInt());p.setBigDecimal(7,OverseasOrderRules.money(l.get("unit_price").getAsBigDecimal()));p.setBigDecimal(8,optionalMoney(l,"usd_cost"));p.setBigDecimal(9,optionalMoney(l,"exchange_rate"));p.setString(10,screenshot);p.setInt(11,sort++);p.setString(12,text(l,"seller",200,false));p.executeUpdate();
+                p.setObject(1,lid);p.setObject(2,id);p.setString(3,text(l,"description",1000,true));p.setString(4,text(l,"product_url",3000,false));p.setString(5,text(l,"options",1000,false));p.setInt(6,l.get("quantity").getAsInt());p.setBigDecimal(7,OverseasOrderRules.money(l.get("unit_price").getAsBigDecimal()));p.setBigDecimal(8,optionalMoney(l,"usd_cost"));p.setBigDecimal(9,optionalMoney(l,"exchange_rate"));p.setString(10,screenshot);p.setInt(11,sort++);p.setString(12,text(l,"seller",200,false));p.setBoolean(13,digital(l));p.executeUpdate();
             }
         }
         // Never permit a quote edit to manufacture a fully collected order with debt.
@@ -373,6 +394,7 @@ public final class OverseasOrderService {
     private static void remember(Connection c,Actor a,UUID key,String hash,JsonObject out)throws SQLException {try(var p=c.prepareStatement("INSERT INTO overseas_order_requests(request_id,actor_id,location_id,request_hash,response) VALUES(?,?,?,?,?::jsonb)")){p.setObject(1,key);p.setInt(2,a.userId);p.setInt(3,a.locationId);p.setString(4,hash);p.setString(5,out.toString());p.executeUpdate();}}
     private static List<OverseasOrderRules.Quantities> quantities(JsonArray lines){List<OverseasOrderRules.Quantities> out=new ArrayList<>();for(JsonElement e:lines)out.add(quantity(e.getAsJsonObject()));return out;}
     private static OverseasOrderRules.Quantities quantity(JsonObject l){return new OverseasOrderRules.Quantities(l.get("quantity").getAsInt(),l.get("purchased").getAsInt(),l.get("shipped").getAsInt(),l.get("arrived").getAsInt(),l.get("collected").getAsInt());}
+    private static boolean digital(JsonObject l){return l.has("digital")&&!l.get("digital").isJsonNull()&&l.get("digital").getAsBoolean();}
     private static Integer nullableInt(JsonObject o,String key){return !o.has(key)||o.get(key).isJsonNull()?null:o.get(key).getAsInt();}
     private static int count(JsonObject o,String key){try{return o.get(key).getAsBigDecimal().intValueExact();}catch(Exception e){throw new IllegalArgumentException("Enter a whole number for "+key+".");}}
     private static long revision(JsonObject o){try{return o.get("revision").getAsBigDecimal().longValueExact();}catch(Exception e){throw new IllegalArgumentException("Reload this order to obtain its current revision.");}}

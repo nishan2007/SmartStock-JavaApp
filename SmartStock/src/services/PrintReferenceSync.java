@@ -27,14 +27,14 @@ final class PrintReferenceSync {
                         row.addProperty("print_material_id",r.getLong(1));
                     }
                 }
-                fields="print_material_id,preset_name,pricing_mode,fixed_price,is_active,created_at,updated_at";
+                fields="print_material_id,preset_name,pricing_mode,fixed_price,is_active,guide_width_in,guide_height_in,created_at,updated_at";
                 conflict="print_material_id,preset_name";
             }
             default -> throw new SQLException("Unsupported print reference table.");
         }
         String updates=java.util.Arrays.stream(fields.split(","))
                 .filter(f->!f.equals("created_at") && !java.util.List.of(conflict.split(",")).contains(f))
-                .map(f->f+"=EXCLUDED."+f).collect(java.util.stream.Collectors.joining(","));
+                .map(f->(f.equals("guide_width_in")||f.equals("guide_height_in"))?f+"=COALESCE(EXCLUDED."+f+","+table+"."+f+")":f+"=EXCLUDED."+f).collect(java.util.stream.Collectors.joining(","));
         try(var p=c.prepareStatement("INSERT INTO "+table+" ("+fields+") SELECT "+fields
                 +" FROM jsonb_populate_record(NULL::"+table+",?::jsonb) ON CONFLICT ("+conflict
                 +") DO UPDATE SET "+updates+" WHERE "+table+".updated_at<EXCLUDED.updated_at")) {

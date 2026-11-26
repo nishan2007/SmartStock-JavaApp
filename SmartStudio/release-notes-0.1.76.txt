@@ -1,0 +1,2 @@
+SmartStudio 0.1.76
+New File tab before Home, with Save As, Rename and file management. Home remains the default. Refined workspace chooser, grouped settings ribbons, consistent template tools and floating Badge Layers with saved visibility. Passport Pictures adds Photo Queue selection. Windows update handoff waits for SmartStudio to close before starting setup.

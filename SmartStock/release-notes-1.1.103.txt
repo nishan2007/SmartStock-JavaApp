@@ -1,0 +1,7 @@
+SmartStock 1.1.103
+
+Additional Store Transfer search and barcode-scanner fixes. Scanner Enter waits for the current lookup and adds an unambiguous match once. Query edits and Escape invalidate pending results immediately. Search results use a reusable plain-text renderer for large result sets and remain inline without a global popup input grab.
+
+Checked delayed and failed searches, responsiveness of another application window, repeated additions, name and barcode lookup, stock isolation, and transfer create/receive/edit/cancel workflows. Physical scanner verification on the affected register remains outstanding.
+
+Update the store server before registers. Application update ZIP only; existing AI models remain separate and are preserved.

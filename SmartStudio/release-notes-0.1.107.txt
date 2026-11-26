@@ -1,0 +1,1 @@
+Show actionable background-removal wait reasons in the shared Photo Queue. Use with SmartStock server 1.1.142 for the queued removal fix.

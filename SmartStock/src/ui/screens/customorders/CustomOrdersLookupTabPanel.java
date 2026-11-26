@@ -1,6 +1,7 @@
 package ui.screens.customorders;
 
 import ui.helpers.UiDebouncer;
+import com.google.gson.JsonObject;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -20,12 +21,14 @@ class CustomOrdersLookupTabPanel extends JPanel {
     final JComboBox<String> methodBox;
     final JTextField amountField;
     final JTextField referenceField;
+    final OrdersDetailWorkspace workspace;
+    final OrdersListWorkspace orderList;
 
     CustomOrdersLookupTabPanel(Handler handler) {
         super(new BorderLayout(10, 10));
         setBorder(new EmptyBorder(12, 12, 12, 12));
 
-        searchField = new JTextField();
+        searchField = new OrdersDesign.SearchField();
         JButton searchButton = new JButton("Search");
         JPanel searchPanel = new JPanel(new BorderLayout(8, 0));
         searchPanel.add(new JLabel("Search:"), BorderLayout.WEST);
@@ -33,7 +36,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         searchPanel.add(searchButton, BorderLayout.EAST);
 
         model = new DefaultTableModel(
-                CustomOrderListColumns.headings(),
+                CustomOrderListColumns.workspaceHeadings(),
                 0
         ) {
             @Override
@@ -44,6 +47,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         table = new JTable(model);
         CustomOrderListColumns.installSorting(table, new javax.swing.table.TableRowSorter<>(model));
         CustomOrderListColumns.installDateRenderers(table);
+        table.getRowSorter().setSortKeys(List.of(new RowSorter.SortKey(model.findColumn("Due"),SortOrder.ASCENDING),new RowSorter.SortKey(model.findColumn("ID"),SortOrder.DESCENDING)));
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.setRowHeight(28);
         table.getColumnModel().getColumn(0).setMaxWidth(70);
@@ -53,8 +57,8 @@ class CustomOrdersLookupTabPanel extends JPanel {
         detailsArea.setLineWrap(true);
         detailsArea.setWrapStyleWord(true);
 
-        methodBox = new JComboBox<>(new String[]{"Cash", "Card", "Cheque", "MMG", "Account"});
-        amountField = new JTextField(8);
+        methodBox = new JComboBox<>(new String[]{"Cash", "Card", "Cheque", "MMG"});
+        amountField = new OrdersDesign.MoneyField(8);
         referenceField = new JTextField(14);
         JButton payButton = new JButton("Apply Payment");
         JButton cancelButton = new JButton("Cancel Order");
@@ -63,6 +67,9 @@ class CustomOrdersLookupTabPanel extends JPanel {
         JButton finalizePriceButton = new JButton("Finalize price");
         styleDialogButton(finalizePriceButton);finalizePriceButton.setEnabled(handler.canFinalizePrice());
         finalizePriceButton.addActionListener(e->{Long id=handler.selectedLookupOrderId(table,model);if(id==null){JOptionPane.showMessageDialog(this,"Select an order first.");return;}handler.finalizePrice(id,success->{if(success)refreshAfterMutation(handler,id);});});
+        JButton reversePaymentButton = new JButton("Reverse selected payment");
+        styleDialogButton(reversePaymentButton);
+        reversePaymentButton.setVisible(handler.canReversePayments());
         JButton refundButton = new JButton("Refund");
         JButton productionButton = new JButton("Production");
         JButton mediaButton = new JButton("Files & Design Approval");
@@ -89,6 +96,16 @@ class CustomOrdersLookupTabPanel extends JPanel {
         reprintLabelButton.setEnabled(false);
 
         orderDetails = new CustomOrderDetailsPanel(enabled -> payButton.setEnabled(enabled));
+        reversePaymentButton.addActionListener(e->{
+            Long id=handler.selectedLookupOrderId(table,model);
+            JsonObject payment=orderDetails.selectedPayment();
+            if(id==null||payment==null){JOptionPane.showMessageDialog(this,"Select a payment in the Payments tab first.");return;}
+            if(!"PAYMENT".equals(CustomOrderDetailsPanel.text(payment,"payment_action"))||Boolean.parseBoolean(CustomOrderDetailsPanel.text(payment,"reversed"))) {
+                JOptionPane.showMessageDialog(this,"Select a received payment that has not been reversed.");return;
+            }
+            handler.reversePayment(id,payment,success->{if(success)refreshAfterMutation(handler,id);});
+        });
+
         if(handler.canUpdateProduction())orderDetails.setProductionUpdater((orderId,lineId,status,completion)->
                 handler.updateProductionLines(orderId,List.of(lineId),status,"Updated from line details",this,success->{
                     completion.accept(success);
@@ -97,7 +114,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
         JPanel printControls = new JPanel(new OrderDetailsWrapLayout());
         printControls.add(mediaButton);
         printControls.add(previewSlipButton);
-        JButton printMenu = new JButton("Print ▾");
+        JButton printMenu = new JButton("Print");
         JPopupMenu printOptions = new JPopupMenu();
         JMenuItem slipOption = new JMenuItem("Print Slip"); slipOption.addActionListener(e -> printSlipButton.doClick()); printOptions.add(slipOption);
         JMenuItem labelsOption = new JMenuItem("Reprint Order Labels"); labelsOption.addActionListener(e -> reprintLabelButton.doClick()); printOptions.add(labelsOption);
@@ -120,15 +137,21 @@ class CustomOrdersLookupTabPanel extends JPanel {
         paymentControls.add(referenceField);
         paymentControls.add(payButton);
         paymentControls.add(refundButton);
+        paymentControls.add(reversePaymentButton);
         paymentControls.add(finalizePriceButton);
         orderDetails.itemActions.add(productionButton);
+        JButton exchangeButton=new JButton("Exchange item");
+        styleDialogButton(exchangeButton);
+        exchangeButton.setVisible(handler.canExchangeItems());
+        exchangeButton.addActionListener(e->{Long id=handler.selectedLookupOrderId(table,model);if(id==null){JOptionPane.showMessageDialog(this,"Select an order first.");return;}handler.exchangeItem(id,success->{if(success)refreshAfterMutation(handler,id);});});
+        orderDetails.itemActions.add(exchangeButton);
 
         orderDetails.itemActions.add(deliveredButton);
         actionPanel.add(cancelButton);
         actionPanel.add(closeButton);
 
         searchButton.addActionListener(e -> handler.loadLookupOrders(model, searchField.getText().trim()));
-        mediaButton.addActionListener(e -> { Long orderId=handler.selectedLookupOrderId(table,model);if(orderId==null)JOptionPane.showMessageDialog(this,"Select an order first.");else handler.openMedia(orderId,this); });
+        mediaButton.addActionListener(e -> { Long orderId=handler.selectedLookupOrderId(table,model);if(orderId==null)JOptionPane.showMessageDialog(this,"Select an order first.");else {handler.openMedia(orderId,this);handler.loadStructuredOrderDetails(orderId,orderDetails);} });
         searchField.addActionListener(e -> handler.loadLookupOrders(model, searchField.getText().trim()));
         UiDebouncer.bind(searchField, 300,
                 () -> handler.loadLookupOrders(model, searchField.getText().trim()));
@@ -141,7 +164,7 @@ class CustomOrdersLookupTabPanel extends JPanel {
                     reprintLabelButton.setEnabled(true);
                     handler.loadStructuredOrderDetails(orderId, orderDetails);
                     BigDecimal balance = handler.parseNullableMoneyValue(model.getValueAt(table.convertRowIndexToModel(table.getSelectedRow()), model.findColumn("Balance")));
-                    amountField.setText(balance == null ? "" : balance.toPlainString());
+                    amountField.setText(balance == null ? "" : new java.text.DecimalFormat("#,##0").format(balance));
                 } else {
                     orderDetails.empty();
                     previewSlipButton.setEnabled(false);
@@ -297,10 +320,63 @@ class CustomOrdersLookupTabPanel extends JPanel {
         methodBox.setSelectedItem("Cash");
         referenceField.setEnabled(false);
 
-        add(searchPanel, BorderLayout.NORTH);
-        add(center, BorderLayout.CENTER);
-        add(actionPanel, BorderLayout.SOUTH);
+        // Keep the established action handlers and replace only their presentation.
+        setBorder(null);setLayout(new BorderLayout());
+        orderList=new OrdersListWorkspace(table,model,searchField);
+        orderList.newOrder.setEnabled(handler.canCreateOrders());
+        orderList.newOrder.addActionListener(e->handler.newOrder());
+        workspace=new OrdersDetailWorkspace(orderDetails);
+        if(handler.canUpdateProduction())workspace.setProductionUpdater((orderId,lineIds,status,completion)->
+                handler.updateProductionLines(orderId,lineIds,status,"Whole order updated from production overview",this,success->{
+                    completion.accept(success);
+                    if(success)refreshAfterMutation(handler,orderId);
+                }));
+        workspace.actions(mediaButton::doClick,
+                ()->handler.changeAssignment(handler.selectedLookupOrderId(table,model)),this::showDetailedOrder);
+        workspace.allowAssignment(handler.canAssignOrders());
+        if(handler.canAssignOrders())workspace.setDueDateUpdater((orderId,date,completion)->
+            handler.setMissingDueDate(orderId,date,success->{completion.accept(success);if(success)refreshAfterMutation(handler,orderId);}));
+        if(handler.canDeliverOrderLines())workspace.setDeliveryUpdater((orderId,status,completion)->
+            handler.loadDeliverableLines(orderId,lines->{
+                if(lines==null){completion.accept(false);return;}
+                List<Long> ids=lines.stream().filter(line->!"DELIVERED".equals(line.deliveryStatus())&&!"FULL".equals(line.returnStatus())).map(LineDeliveryOption::lineId).toList();
+                if(ids.isEmpty()){completion.accept(false);JOptionPane.showMessageDialog(this,"There are no order lines left to update.");return;}
+                handler.updateLookupLineDelivery(orderId,ids,status,"Whole order updated from delivery overview",this,success->{
+                    completion.accept(success);if(success)refreshAfterMutation(handler,orderId);
+                });
+            }));
+        workspace.setAssignmentHandler(new OrdersDetailWorkspace.AssignmentHandler(){
+            public void load(Consumer<List<services.CustomOrderDataService.EmployeeOption>> completion){handler.loadAssignmentEmployees(completion);}
+            public void save(long orderId,Integer employeeId,String status,Consumer<Boolean> completion){
+                handler.assignOrder(orderId,employeeId,status,success->{completion.accept(success);if(success)refreshAfterMutation(handler,orderId);});
+            }
+        });
+        JPanel paymentFields=OrdersDesign.panel(new GridBagLayout());
+        JPanel[] fields={paymentField("Amount",amountField),paymentField("Method",methodBox),paymentField("Reference (optional)",referenceField)};double[] weights={.26,.30,.44};for(int i=0;i<fields.length;i++){GridBagConstraints constraints=new GridBagConstraints();constraints.gridx=i;constraints.fill=GridBagConstraints.BOTH;constraints.weightx=weights[i];constraints.weighty=1;constraints.insets=new Insets(0,0,0,i==2?0:16);fields[i].setPreferredSize(new Dimension(0,60));fields[i].setMinimumSize(new Dimension(0,60));paymentFields.add(fields[i],constraints);}
+        JPanel paymentBody=OrdersDesign.panel(new BorderLayout(8,8));paymentBody.add(paymentFields);OrdersDesign.style(payButton,true);payButton.setBorder(new EmptyBorder(6,12,6,12));JPanel payAction=OrdersDesign.panel(new FlowLayout(FlowLayout.RIGHT,0,0));payAction.add(payButton);paymentBody.add(payAction,BorderLayout.SOUTH);workspace.paymentForm.add(paymentBody);
+        paymentControls.removeAll();
+        JPanel toolbar=OrdersDesign.panel(new OrderDetailsWrapLayout());
+        for(JButton b:List.of(productionButton,mediaButton,deliveredButton,previewSlipButton,printMenu)){OrdersDesign.style(b,b==productionButton);b.setFont(OrdersDesign.font(Font.PLAIN,16));b.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(OrdersDesign.line()),new EmptyBorder(10,8,10,8)));toolbar.add(b);}
+        OrdersIcons.install(productionButton,"production",true);OrdersIcons.install(mediaButton,"file",false);OrdersIcons.install(deliveredButton,"delivery",false);OrdersIcons.install(previewSlipButton,"print",false);OrdersIcons.install(printMenu,"print",false);
+        JButton more=OrdersDesign.button("More",false);more.setFont(OrdersDesign.font(Font.PLAIN,16));more.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(OrdersDesign.line()),new EmptyBorder(10,8,10,8)));JPopupMenu moreOptions=new JPopupMenu();
+        moreOptions.add(menuAction("Item details / loyalty / account authorization",this::showDetailedOrder));
+        if(handler.canExchangeItems())moreOptions.add(menuButton(exchangeButton));
+        moreOptions.add(menuButton(refundButton));moreOptions.add(menuButton(cancelButton));moreOptions.add(menuButton(finalizePriceButton));
+        handler.addMoreActions(moreOptions,()->handler.selectedLookupOrderId(table,model));
+        OrdersIcons.install(more,"more",false);more.addActionListener(e->moreOptions.show(more,0,more.getHeight()));toolbar.add(more);workspace.add(toolbar,BorderLayout.SOUTH);
+        JScrollPane detailsScroll=new JScrollPane(workspace);detailsScroll.setBorder(null);detailsScroll.setMinimumSize(new Dimension(550,300));detailsScroll.getVerticalScrollBar().setUnitIncrement(24);
+        JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,orderList,detailsScroll);split.setBorder(null);split.setDividerSize(6);split.setResizeWeight(.40);add(split);
+        Runnable sizeQueue=()->{if(split.getWidth()>0)split.setDividerLocation(queueWidth(split.getWidth()));};
+        addComponentListener(new java.awt.event.ComponentAdapter(){public void componentResized(java.awt.event.ComponentEvent e){SwingUtilities.invokeLater(sizeQueue);}});
+        addHierarchyListener(e->{if((e.getChangeFlags()&java.awt.event.HierarchyEvent.SHOWING_CHANGED)!=0&&isShowing())SwingUtilities.invokeLater(sizeQueue);});
     }
+
+    static int queueWidth(int availableWidth){return Math.min(Math.max(660,(int)Math.round(availableWidth*.40)),Math.max(0,availableWidth-556));}
+
+    private JPanel paymentField(String title,JComponent field){JPanel p=OrdersDesign.panel(new BorderLayout(0,6));JLabel label=OrdersDesign.label(title,15,false);label.setLabelFor(field);p.add(label,BorderLayout.NORTH);OrdersDesign.field(field);p.add(field);return p;}
+    private JMenuItem menuAction(String text,Runnable action){JMenuItem item=new JMenuItem(text);item.addActionListener(e->action.run());return item;}
+    private JMenuItem menuButton(JButton button){JMenuItem item=menuAction(button.getText(),button::doClick);item.setEnabled(button.isEnabled());button.addPropertyChangeListener("enabled",e->item.setEnabled(button.isEnabled()));return item;}
+    private void showDetailedOrder(){if(table.getSelectedRow()<0){JOptionPane.showMessageDialog(this,"Select an order first.");return;}Window owner=SwingUtilities.getWindowAncestor(this);JDialog dialog=new JDialog(owner,"Order details",Dialog.ModalityType.APPLICATION_MODAL);dialog.setContentPane(orderDetails);dialog.setSize(900,680);dialog.setLocationRelativeTo(this);dialog.setVisible(true);}
 
     static JPanel detailsHeader(JPanel controls) {
         JPanel header = new JPanel(new BorderLayout(0, 4));
@@ -584,15 +660,10 @@ class CustomOrdersLookupTabPanel extends JPanel {
         productionTable.getColumnModel().getColumn(1).setMaxWidth(0);
         productionTable.getColumnModel().getColumn(1).setPreferredWidth(0);
 
-        JComboBox<String> statusBox = new JComboBox<>(new String[]{
-                "Started",
-                "Waiting for approval",
-                "Design Approved",
-                "Printed",
-                "Finished",
-                "Quality Checked",
-                "Ready"
-        });
+        JComboBox<String> statusBox = new JComboBox<>(services.CustomOrderProductionStages.CODES.stream().map(services.CustomOrderProductionStages::label).toArray(String[]::new));
+        String currentProduction=services.CustomOrderProductionStages.summarize(lines.stream().map(line->services.CustomOrderProductionStages.code(line.productionStatus())).collect(java.util.stream.Collectors.joining(",")));
+        if("MIXED".equals(currentProduction)){statusBox.insertItemAt("Choose production stage",0);statusBox.setSelectedIndex(0);}
+        else statusBox.setSelectedItem(services.CustomOrderProductionStages.label(currentProduction));
         JTextArea notesArea = new JTextArea(3, 38);
         notesArea.setLineWrap(true);
         notesArea.setWrapStyleWord(true);
@@ -623,11 +694,13 @@ class CustomOrdersLookupTabPanel extends JPanel {
             JOptionPane.showMessageDialog(this, "Select at least one order line to update.");
             return null;
         }
-        return new ProductionUpdateRequest(lineIds, statusCode(statusBox.getSelectedItem()), notesArea.getText() == null ? "" : notesArea.getText().trim());
+        String chosenStage=statusCode(statusBox.getSelectedItem());
+        if(!services.CustomOrderProductionStages.CODES.contains(chosenStage)){JOptionPane.showMessageDialog(this,"Choose a production stage.");return null;}
+        return new ProductionUpdateRequest(lineIds, chosenStage, notesArea.getText() == null ? "" : notesArea.getText().trim());
     }
 
     private String statusCode(Object value) {
-        String text = value == null ? "" : value.toString().trim().toUpperCase().replace(" ", "_");
+        String text = services.CustomOrderProductionStages.code(value == null ? "" : value.toString());
         return text.isBlank() ? "DESIGN_APPROVED" : text;
     }
 
@@ -691,6 +764,14 @@ class CustomOrdersLookupTabPanel extends JPanel {
     }
 
     interface Handler {
+        default boolean canCreateOrders(){return false;}
+        default void newOrder(){}
+        default boolean canAssignOrders(){return false;}
+        default void changeAssignment(Long id){}
+        default void setMissingDueDate(long orderId,java.time.LocalDate date,Consumer<Boolean> completion){completion.accept(false);}
+        default void loadAssignmentEmployees(Consumer<List<services.CustomOrderDataService.EmployeeOption>> completion){completion.accept(null);}
+        default void assignOrder(long orderId,Integer employeeId,String status,Consumer<Boolean> completion){completion.accept(false);}
+        default void addMoreActions(JPopupMenu menu,java.util.function.Supplier<Long> selected){}
         void loadLookupOrders(DefaultTableModel model, String search);
         Long selectedLookupOrderId(JTable table, DefaultTableModel model);
         void loadOrderDetails(Long orderId, JTextArea detailsArea);
@@ -717,8 +798,12 @@ class CustomOrdersLookupTabPanel extends JPanel {
         default void loadCancellationLines(Long id,Consumer<List<LineReturnOption>> completion){loadReturnableLines(id,completion);}
         default void cancelOrder(Long id,CancellationRequest request,Consumer<Boolean> completion){completion.accept(false);}
         default boolean canFinalizePrice(){return false;}
+        default boolean canExchangeItems(){return false;}
+        default void exchangeItem(Long id,Consumer<Boolean> completion){completion.accept(false);}
         default void finalizePrice(Long id,Consumer<Boolean> completion){completion.accept(false);}
         default void refundPendingDeposit(Long id,String method,String reference,Consumer<Boolean> completion){completion.accept(false);}
+        default boolean canReversePayments(){return false;}
+        default void reversePayment(Long id,JsonObject payment,Consumer<Boolean> completion){completion.accept(false);}
         boolean canRefundPayments();
         boolean canDeliverOrderLines();
         boolean canUpdateProduction();

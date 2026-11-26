@@ -178,7 +178,8 @@ public final class ServerQuotationInvoiceDocumentBuilder {
             try (PreparedStatement ps = conn.prepareStatement("""
                     SELECT de.invoice_id, de.delivery_number, de.delivery_method, de.receiver_name,
                            de.delivery_notes, de.remaining_balance, de.delivered_by_name, de.created_at,
-                           so.invoice_number, so.customer_name, so.customer_phone, so.balance_due, so.location_id
+                           so.invoice_number, so.customer_name, so.customer_phone, so.balance_due, so.location_id,
+                           EXISTS(SELECT 1 FROM invoice_audit_log a WHERE a.invoice_id=de.invoice_id AND a.action_type='DELIVERY_CANCELLED' AND a.field_name='cancelled_document_id' AND a.old_value=de.invoice_delivery_event_id::text) AS cancelled
                     FROM invoice_delivery_events de
                     JOIN invoices so ON so.invoice_id = de.invoice_id
                     WHERE de.invoice_delivery_event_id = ?
@@ -277,7 +278,7 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                                             String addressLine4,
                                             ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings printSettings) throws SQLException {
         List<DocumentLine> lines = deliveryLines(conn, deliveryEventId);
-        return renderPagedDocument(receiptSettings, addressLine4, printSettings, printSettings.deliveryTitle(), header.getString("delivery_number"), date(header, "created_at"),
+        return renderPagedDocument(receiptSettings, addressLine4, printSettings, (header.getBoolean("cancelled") ? "CANCELLED — " : "") + printSettings.deliveryTitle(), header.getString("delivery_number"), date(header, "created_at"),
                 new String[][]{{"Delivery #", header.getString("delivery_number")}, {"Invoice #", header.getString("invoice_number")}, {"Method", header.getString("delivery_method")}, {"Delivered At", date(header, "created_at")}},
                 header.getString("customer_name"), header.getString("customer_phone"), header.getString("receiver_name"), header.getString("customer_name"),
                 lines, true, null, null, "REMAINING BALANCE", header.getBigDecimal("balance_due"), true, true, header.getString("receiver_name"), false);
@@ -399,7 +400,9 @@ public final class ServerQuotationInvoiceDocumentBuilder {
                 .append(" &nbsp; Date: ").append(esc(date)).append(" &nbsp; Page: ").append(esc(page))
                 .append("</span>");
         for (String[] field : fields) {
-            if (("Valid Until".equals(field[0]) || "Quotation #".equals(field[0]) && !field[1].equals(number)) && !clean(field[1]).isBlank())
+            if (("Valid Until".equals(field[0]) || "Production Due".equals(field[0])
+                    || "DRAFT PREVIEW".equals(field[1])
+                    || "Quotation #".equals(field[0]) && !field[1].equals(number)) && !clean(field[1]).isBlank())
                 html.append("<br><span style='font-size:8px'>").append(esc(field[0])).append(": ").append(esc(field[1])).append("</span>");
         }
         html.append("</td></tr></table>");
@@ -917,12 +920,26 @@ public final class ServerQuotationInvoiceDocumentBuilder {
         return percent.setScale(2, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString() + "%";
     }
 
-    record DocumentLine(int quantity, Integer deliveredNow, Integer remaining,
+    public record DocumentLine(int quantity, Integer deliveredNow, Integer remaining,
                                 String description, BigDecimal unitPrice, BigDecimal discountPercent,
                                 BigDecimal discountedAmount) {
         BigDecimal originalTotal() {
             return (unitPrice == null ? BigDecimal.ZERO : unitPrice).multiply(BigDecimal.valueOf(quantity));
         }
+    }
+
+    /** Pure rendering entry point; callers calculate draft amounts on the store server. */
+    public static String renderDraftQuotation(ServerCompanyCustomizationRepository.ReceiptSettings receipt,
+            String addressLine4, ServerCompanyCustomizationRepository.QuotationInvoicePrintSettings settings,
+            String customer, String phone, String email, String validUntil, String productionDue,
+            List<DocumentLine> lines, BigDecimal total, boolean compact) {
+        return renderPagedDocument(receipt, addressLine4, settings, settings.quotationTitle(), "UNSAVED",
+                java.time.LocalDate.now().format(DATE),
+                new String[][]{{"Quotation #", "UNSAVED"}, {"Status", "DRAFT PREVIEW"},
+                        {"Valid Until", validUntil}, {"Production Due", productionDue}},
+                customer, phone, email, customer, lines, false,
+                "Draft preview — save before issuing or printing. " + settings.quotationValidityNote(),
+                null, "GRAND TOTAL", total, false, false, null, compact);
     }
 
     private static void appendQuotationLines(StringBuilder out, Connection conn, long quotationId) throws SQLException {

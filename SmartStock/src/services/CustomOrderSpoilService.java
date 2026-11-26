@@ -22,18 +22,24 @@ public final class CustomOrderSpoilService {
     public static Map<String,Object> state(Connection c,int location,long order)throws SQLException{
         var orders=rows(c,"SELECT custom_order_id AS \"orderId\",order_number AS \"number\",customer_name AS customer,status FROM custom_orders WHERE custom_order_id=? AND location_id=?",order,location);
         if(orders.isEmpty())throw new IllegalArgumentException("Order unavailable at this store.");
-        var lines=rows(c,"""
+        var lines=rows(c,("""
           SELECT l.custom_order_line_id AS "lineId",l.item_name AS item,COALESCE(l.variant_name,'') AS variant,
+          l.item_size AS size,l.item_color AS color,l.customization_details AS customization,
+          l.width_value AS width,l.length_value AS length,l.dimension_unit AS "dimensionUnit",
           COALESCE(l.order_instructions,'') AS notes,COALESCE(l.production_status,'NOT_STARTED') AS production,
           l.delivery_status AS delivery,l.return_status AS returned,
           COALESCE(i.product_type,'SERVICE') AS "productType",
-          CASE WHEN l.custom_variant_id IS NULL THEN i.quantity_on_hand ELSE v.quantity_on_hand END AS stock
+          CASE WHEN l.custom_variant_id IS NULL THEN custom_stock_value(i.custom_item_id,NULL,__CUSTOM_STORE__,'quantity_on_hand') ELSE custom_stock_value(v.custom_item_id,v.custom_variant_id,__CUSTOM_STORE__,'quantity_on_hand') END AS stock
           FROM custom_order_lines l JOIN custom_orders o ON o.custom_order_id=l.custom_order_id
           LEFT JOIN custom_order_items i ON i.custom_item_id=l.custom_item_id
           LEFT JOIN custom_order_item_variants v ON v.custom_variant_id=l.custom_variant_id
           WHERE o.custom_order_id=? AND o.location_id=? ORDER BY l.sort_order,l.custom_order_line_id
-          """,order,location);
-        for(var line:lines)line.put("eligible",eligible(String.valueOf(orders.get(0).get("status")),String.valueOf(line.get("delivery")),String.valueOf(line.get("returned"))));
+          """).replace("__CUSTOM_STORE__",Integer.toString(location)),order,location);
+        var addons=rows(c,"SELECT a.custom_order_line_id AS \"lineId\",a.print_material_name AS material,a.print_size_name AS size,a.print_description AS description FROM custom_order_line_print_addons a JOIN custom_order_lines l ON l.custom_order_line_id=a.custom_order_line_id WHERE l.custom_order_id=? ORDER BY a.sort_order,a.custom_order_line_print_addon_id",order);
+        for(var line:lines){
+            line.put("eligible",eligible(String.valueOf(orders.get(0).get("status")),String.valueOf(line.get("delivery")),String.valueOf(line.get("returned"))));
+            line.put("addons",addons.stream().filter(a->Objects.equals(a.get("lineId"),line.get("lineId"))).toList());
+        }
         var reports=rows(c,"""
           SELECT spoil_id AS id,custom_order_line_id AS "lineId",reason,stock_deducted AS "stockDeducted",
           created_by_name AS employee,created_at AS "createdAt",reversed_at AS "reversedAt",
@@ -88,15 +94,9 @@ public final class CustomOrderSpoilService {
     }
     private static BigDecimal move(Connection c,long item,Long variant,int location,long order,long line,UUID id,int delta,String why,int user,String employee)throws SQLException{
         var parent=rows(c,"SELECT custom_item_id FROM custom_order_items WHERE custom_item_id=? FOR UPDATE",item);if(parent.isEmpty())throw new SQLException("Replacement item unavailable.");
-        List<Map<String,Object>> updated;
-        if(variant==null)updated=rows(c,"UPDATE custom_order_items SET quantity_on_hand=COALESCE(quantity_on_hand,0)+?,updated_at=now() WHERE custom_item_id=? RETURNING quantity_on_hand AS stock",delta,item);
-        else{
-            updated=rows(c,"UPDATE custom_order_item_variants SET quantity_on_hand=COALESCE(quantity_on_hand,0)+?,updated_at=now() WHERE custom_variant_id=? AND custom_item_id=? RETURNING quantity_on_hand AS stock",delta,variant,item);
-            execute(c,"UPDATE custom_order_items SET quantity_on_hand=COALESCE((SELECT SUM(quantity_on_hand) FROM custom_order_item_variants WHERE custom_item_id=? AND is_active),0),updated_at=now() WHERE custom_item_id=?",item,item);
-        }
-        if(updated.isEmpty())throw new SQLException("Replacement variant unavailable.");
+        BigDecimal stock=CustomItemStockService.move(c,item,variant,location,BigDecimal.valueOf(delta),BigDecimal.ZERO,false);
         execute(c,"INSERT INTO custom_order_item_movements(custom_item_id,custom_variant_id,location_id,change_qty,reason,note,user_name,user_id,device_name,custom_order_id,custom_order_line_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",item,variant,location,delta,delta<0?"SPOIL_REPLACEMENT":"SPOIL_REVERSAL","spoil_id="+id+"; "+why,employee,user,"WEB APP",order,line);
-        return (BigDecimal)updated.get(0).get("stock");
+        return stock;
     }
     private static void execute(Connection c,String sql,Object...args)throws SQLException{try(var p=c.prepareStatement(sql)){bind(p,args);p.executeUpdate();}}
     private static void bind(PreparedStatement p,Object[] args)throws SQLException{for(int i=0;i<args.length;i++)p.setObject(i+1,args[i]);}

@@ -25,6 +25,39 @@ public final class ServerQuotationInvoiceService {
     private ServerQuotationInvoiceService() {
     }
 
+    /** Read-only preview: no numbering, approvals, audit events or saved rows are consumed. */
+    public record DraftPreview(String text, BigDecimal total) { }
+
+    public static DraftPreview previewDraftQuotation(Connection conn, int customerId, LocalDate validUntil,
+            LocalDate productionDueDate, List<QuotationLineInput> lines, boolean compact) throws SQLException {
+        if (lines == null || lines.size() > 500) throw new SQLException("Preview supports up to 500 lines.");
+        for (QuotationLineInput line : lines) {
+            if (line == null || line.quantity() <= 0 || line.unitPrice() == null || line.unitPrice().signum() < 0
+                    || line.discountPercent() == null || line.discountPercent().signum() < 0
+                    || line.discountPercent().compareTo(BigDecimal.valueOf(100)) > 0)
+                throw new SQLException("Enter valid quantities, prices and discounts before previewing.");
+        }
+        int locationId = requireLocationId();
+        CustomerInfo customer = loadCustomer(conn, customerId);
+        SalesVatSettings vat = loadSalesVatSettings(conn, locationId);
+        List<Receipt.ServerQuotationInvoiceDocumentBuilder.DocumentLine> documentLines = new ArrayList<>();
+        for (QuotationLineInput line : lines) {
+            LineAmounts amounts = lineAmounts(conn, vat, line);
+            documentLines.add(new Receipt.ServerQuotationInvoiceDocumentBuilder.DocumentLine(line.quantity(), null, null,
+                    line.itemName() + (blankToNull(line.notes()) == null ? "" : " — " + line.notes()),
+                    line.unitPrice(), line.discountPercent(), amounts.preVatTotal().add(amounts.vatAmount())));
+        }
+        BigDecimal total = totals(conn, locationId, lines).total();
+        String text = Receipt.ServerQuotationInvoiceDocumentBuilder.renderDraftQuotation(
+                managers.ServerCompanyCustomizationRepository.loadReceiptSettingsForLocation(locationId),
+                managers.ServerCompanyCustomizationRepository.loadDocumentAddressLine4ForLocation(locationId),
+                managers.ServerCompanyCustomizationRepository.loadQuotationInvoicePrintSettingsForLocation(locationId),
+                customer.name(), customer.phone(), customer.email(), validUntil == null ? "" : validUntil.toString(),
+                productionDueDate == null ? "" : productionDueDate.toString(), documentLines,
+                total, compact);
+        return new DraftPreview(text, total);
+    }
+
     public static QuotationResult createQuotation(int customerId, LocalDate validUntil, String notes, List<QuotationLineInput> lines) throws SQLException {
         if (lines == null || lines.isEmpty()) {
             throw new SQLException("Add at least one quotation line.");
@@ -75,8 +108,8 @@ public final class ServerQuotationInvoiceService {
                 configureTransactionTimeouts(conn);
                 QuotationInvoiceSchemaInstaller.ensureSchema(conn);
                 QuotationHeader quotation = lockQuotation(conn, quotationId);
-                if (!"DRAFT".equals(quotation.status())) {
-                    throw new SQLException("Only draft quotations can be edited.");
+                if (!isEditableQuotationStatus(quotation.status())) {
+                    throw new SQLException("Only draft or issued quotations can be edited.");
                 }
                 int locationId = quotation.locationId() == null ? requireLocationId() : quotation.locationId();
                 CustomerInfo customer = loadCustomer(conn, customerId);
@@ -163,6 +196,7 @@ public final class ServerQuotationInvoiceService {
                 if (invoice.balanceDue().compareTo(BigDecimal.ZERO) <= 0) {
                     throw new SQLException("This invoice has no remaining balance to pay.");
                 }
+                invoice = roundUnchargedInvoice(conn, invoice);
                 boolean accountCharged = hasAccountCharge(conn, invoiceId);
                 BigDecimal applied = amount.min(invoice.balanceDue());
                 boolean accountChargedByThisPayment = false;
@@ -218,12 +252,14 @@ public final class ServerQuotationInvoiceService {
                 configureTransactionTimeouts(conn);
                 QuotationInvoiceSchemaInstaller.ensureSchema(conn);
                 InvoiceHeader invoice = lockInvoice(conn, invoiceId);
+                if ("CANCELLED".equals(invoice.status())) throw new SQLException("Cancelled invoices cannot be charged.");
                 if (hasAccountCharge(conn, invoiceId)) {
                     throw new SQLException("This invoice is already on the customer account.");
                 }
                 if (invoice.balanceDue().compareTo(BigDecimal.ZERO) <= 0) {
                     throw new SQLException("This invoice has no remaining balance to place on account.");
                 }
+                invoice = roundUnchargedInvoice(conn, invoice);
                 boolean exceeded = updateCustomerBalance(conn, invoice.customerId(), invoice.balanceDue(),
                         invoice.locationId(), creditLimitOverride);
                 long transactionId = insertAccountCharge(conn, invoice, reason);
@@ -300,7 +336,7 @@ public final class ServerQuotationInvoiceService {
                                                         String notes,List<QuotationLineInput> lines)throws SQLException{
         if(lines==null||lines.isEmpty())throw new SQLException("Add at least one quotation line.");
         configureTransactionTimeouts(conn);QuotationInvoiceSchemaInstaller.ensureSchema(conn);QuotationHeader quotation=lockQuotation(conn,quotationId);
-        if(!"DRAFT".equals(quotation.status()))throw new SQLException("Only draft quotations can be edited.");
+        if(!isEditableQuotationStatus(quotation.status()))throw new SQLException("Only draft or issued quotations can be edited.");
         int locationId=quotation.locationId()==null?requireLocationId():quotation.locationId();CustomerInfo customer=loadCustomer(conn,customerId);
         LocalDate safe=validUntil==null?quotation.validUntil():validUntil;if(safe==null)safe=LocalDate.now().plusDays(QuotationInvoiceNumberManager.defaultQuotationValidityDays(conn,locationId));
         Totals totals=totals(conn,locationId,lines);updateQuotationHeader(conn,quotationId,customer,safe,productionDueDate,notes,totals);replaceQuotationLines(conn,quotationId,lines,locationId);
@@ -349,6 +385,7 @@ public final class ServerQuotationInvoiceService {
         if("ACCOUNT".equals(safeMethod)){chargeInvoiceToAccount(conn,invoiceId,"Placed on customer account.",creditLimitOverride,creditOverrideReason);return null;}
         configureTransactionTimeouts(conn);QuotationInvoiceSchemaInstaller.ensureSchema(conn);InvoiceHeader invoice=lockInvoice(conn,invoiceId);
         if("CANCELLED".equals(invoice.status()))throw new SQLException("Cancelled invoices cannot be paid.");if(invoice.balanceDue().signum()<=0)throw new SQLException("This invoice has no remaining balance to pay.");
+        invoice=roundUnchargedInvoice(conn,invoice);
         boolean accountCharged=hasAccountCharge(conn,invoiceId);BigDecimal applied=amount.min(invoice.balanceDue());boolean accountChargedByThisPayment=false;
         if(!accountCharged){BigDecimal remainingAfterPayment=invoice.balanceDue().subtract(applied);boolean exceeded=updateCustomerBalance(conn,invoice.customerId(),remainingAfterPayment,invoice.locationId(),creditLimitOverride);long charge=insertAccountCharge(conn,invoice,"Placed on customer account before direct invoice payment.");insertAccountAllocation(conn,charge,invoice,invoice.balanceDue());markInvoicePaymentMethod(conn,invoiceId,"ACCOUNT",null);accountCharged=true;accountChargedByThisPayment=true;if(exceeded)QuotationInvoiceAuditService.recordInvoiceAudit(conn,invoiceId,"CREDIT_LIMIT_OVERRIDE","balance_due",null,remainingAfterPayment,creditOverrideReason);}
         CashDrawerContext drawer=cashDrawerForPayment(conn,safeMethod);insertPayment(conn,invoice,applied,safeMethod,reference,drawer);updateInvoicePaymentTotals(conn,invoiceId,applied,safeMethod,reference);
@@ -363,8 +400,10 @@ public final class ServerQuotationInvoiceService {
     public static void chargeInvoiceToAccount(Connection conn,long invoiceId,String reason,boolean creditLimitOverride,String creditOverrideReason,
                                               CustomerChargeAuthorizationService.Authorization authorization,java.util.UUID deviceId,int userId,String userName)throws Exception{
         configureTransactionTimeouts(conn);QuotationInvoiceSchemaInstaller.ensureSchema(conn);InvoiceHeader invoice=lockInvoice(conn,invoiceId);
+        if("CANCELLED".equals(invoice.status()))throw new SQLException("Cancelled invoices cannot be charged.");
         if(hasAccountCharge(conn,invoiceId))throw new SQLException("This invoice is already on the customer account.");if(invoice.balanceDue().signum()<=0)throw new SQLException("This invoice has no remaining balance to place on account.");
         CustomerChargeAuthorizationService.validateRequired(conn,invoice.customerId(),authorization);
+        invoice=roundUnchargedInvoice(conn,invoice);
         boolean exceeded=updateCustomerBalance(conn,invoice.customerId(),invoice.balanceDue(),invoice.locationId(),creditLimitOverride);long transaction=insertAccountCharge(conn,invoice,reason);insertAccountAllocation(conn,transaction,invoice,invoice.balanceDue());markInvoicePaymentMethod(conn,invoiceId,"ACCOUNT",null);
         CustomerChargeAuthorizationService.insert(conn,transaction,invoice.customerId(),invoice.locationId(),"INVOICE",invoiceId,authorization,userId,userName,deviceId,currentDocumentDeviceName());
         QuotationInvoiceAuditService.recordInvoiceAudit(conn,invoiceId,"ACCOUNT_CHARGE_CREATED","balance_due",null,invoice.balanceDue(),reason);if(exceeded)QuotationInvoiceAuditService.recordInvoiceAudit(conn,invoiceId,"CREDIT_LIMIT_OVERRIDE","balance_due",null,invoice.balanceDue(),creditOverrideReason);SyncOutboxService.recordEvent(conn,"INVOICE_ACCOUNT_CHARGE_CREATED",Map.of("invoice_id",invoiceId,"amount",invoice.balanceDue()));
@@ -396,12 +435,22 @@ public final class ServerQuotationInvoiceService {
         }
     }
 
-    private static void configureTransactionTimeouts(Connection conn) throws SQLException {
+    static void configureTransactionTimeouts(Connection conn) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             stmt.execute("SET LOCAL lock_timeout = '5s'");
             stmt.execute("SET LOCAL statement_timeout = '20s'");
             stmt.execute("SET LOCAL idle_in_transaction_session_timeout = '60s'");
         }
+    }
+
+    static boolean isEditableQuotationStatus(String status) {
+        return "DRAFT".equals(status) || "ISSUED".equals(status);
+    }
+
+    static void validateQuotationStatusChange(String status, String newStatus) throws SQLException {
+        if ("CANCELLED".equals(newStatus) && isEditableQuotationStatus(status)) return;
+        if ("ISSUED".equals(newStatus) && "DRAFT".equals(status)) return;
+        throw new SQLException("Only draft quotations can be issued; only draft or issued quotations can be cancelled.");
     }
 
     private static void updateQuotationStatus(long quotationId, String newStatus, String reason) throws SQLException {
@@ -411,6 +460,7 @@ public final class ServerQuotationInvoiceService {
                 configureTransactionTimeouts(conn);
                 QuotationInvoiceSchemaInstaller.ensureSchema(conn);
                 QuotationHeader quotation = lockQuotation(conn, quotationId);
+                validateQuotationStatusChange(quotation.status(), newStatus);
                 try (PreparedStatement ps = conn.prepareStatement("UPDATE quotations SET status = ? WHERE quotation_id = ?")) {
                     ps.setString(1, newStatus);
                     ps.setLong(2, quotationId);
@@ -430,6 +480,7 @@ public final class ServerQuotationInvoiceService {
 
     private static void updateQuotationStatus(Connection conn,long quotationId,String newStatus,String reason)throws SQLException{
         configureTransactionTimeouts(conn);QuotationInvoiceSchemaInstaller.ensureSchema(conn);QuotationHeader quotation=lockQuotation(conn,quotationId);
+        validateQuotationStatusChange(quotation.status(), newStatus);
         try(PreparedStatement ps=conn.prepareStatement("UPDATE quotations SET status = ? WHERE quotation_id = ?")){ps.setString(1,newStatus);ps.setLong(2,quotationId);ps.executeUpdate();}
         QuotationInvoiceAuditService.recordQuotationStatus(conn,quotationId,quotation.status(),newStatus,reason);
         SyncOutboxService.recordEvent(conn,"QUOTATION_STATUS_CHANGED",Map.of("quotation_id",quotationId,"status",newStatus));
@@ -621,8 +672,8 @@ public final class ServerQuotationInvoiceService {
             ps.setBigDecimal(11, quotation.vatAmount());
             ps.setBigDecimal(12, quotation.vatRatePercent());
             ps.setString(13, blankToEmpty(quotation.vatMode()));
-            ps.setBigDecimal(14, quotation.totalAmount());
-            ps.setBigDecimal(15, quotation.totalAmount());
+            ps.setBigDecimal(14, payableTotal(quotation.totalAmount()));
+            ps.setBigDecimal(15, payableTotal(quotation.totalAmount()));
             setNullableInteger(ps, 16, quotation.locationId());
             ps.setString(17, blankToNull(quotation.locationName()));
             ps.setString(18, blankToNull(currentDocumentDeviceId()));
@@ -933,7 +984,7 @@ public final class ServerQuotationInvoiceService {
         }
     }
 
-    private static String recomputeDeliveryStatus(Connection conn, long invoiceId) throws SQLException {
+    static String recomputeDeliveryStatus(Connection conn, long invoiceId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT
                     SUM(quantity_delivered) AS delivered,
@@ -958,11 +1009,11 @@ public final class ServerQuotationInvoiceService {
         return "OPEN";
     }
 
-    private static void updateInvoiceStatus(Connection conn, long invoiceId, String status) throws SQLException {
+    static void updateInvoiceStatus(Connection conn, long invoiceId, String status) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
                 UPDATE invoices
                 SET status = ?,
-                    delivered_at = CASE WHEN ? = 'DELIVERED' THEN CURRENT_TIMESTAMP ELSE delivered_at END
+                    delivered_at = CASE WHEN ? = 'DELIVERED' THEN CURRENT_TIMESTAMP ELSE NULL END
                 WHERE invoice_id = ?
                 """)) {
             ps.setString(1, status);
@@ -1025,7 +1076,7 @@ public final class ServerQuotationInvoiceService {
         throw new SQLException("Sales quotation not found.");
     }
 
-    private static InvoiceHeader lockInvoice(Connection conn, long invoiceId) throws SQLException {
+    static InvoiceHeader lockInvoice(Connection conn, long invoiceId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT *
                 FROM invoices
@@ -1051,7 +1102,7 @@ public final class ServerQuotationInvoiceService {
         throw new SQLException("Sales invoice not found.");
     }
 
-    private static InvoiceLine lockInvoiceLine(Connection conn, long lineId) throws SQLException {
+    static InvoiceLine lockInvoiceLine(Connection conn, long lineId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement("""
                 SELECT invoice_line_id, invoice_id, product_id, item_name,
                        quantity_invoiced, quantity_delivered
@@ -1094,12 +1145,13 @@ public final class ServerQuotationInvoiceService {
     private static boolean updateCustomerBalance(Connection conn,int customerId,BigDecimal delta,Integer locationId,boolean creditLimitOverride)throws SQLException{
         int location=locationId==null?requireLocationId():locationId;
         if(money(delta).signum()>0)CustomerAccountLedgerService.requireCurrentMultiStoreBalance(conn,location);
+        PhoneMinutesService.lockCustomer(conn,customerId,false);
         CustomerAccountLedgerService.repairCustomerBalance(conn,customerId);
         try(PreparedStatement ps=conn.prepareStatement("SELECT current_balance,credit_limit,is_active,customer_card_expires_on FROM customer_accounts WHERE customer_id=? FOR UPDATE")){
             ps.setInt(1,customerId);try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw new SQLException("Customer account was not found.");
                 if(!rs.getBoolean(3))throw new SQLException("Customer account is inactive.");java.time.LocalDate expiry=rs.getObject(4,java.time.LocalDate.class);if(delta.signum()>0&&expiry!=null&&expiry.isBefore(java.time.LocalDate.now()))throw new SQLException("This customer card has expired. Renew it before charging this purchase to the account.");BigDecimal next=money(rs.getBigDecimal(1)).add(money(delta)).max(BigDecimal.ZERO);
-                boolean exceeded=delta.signum()>0&&next.compareTo(money(rs.getBigDecimal(2)))>0;
-                if(exceeded&&!creditLimitOverride)throw new SQLException("Customer account credit limit would be exceeded. Available credit: $"+money(rs.getBigDecimal(2)).subtract(money(rs.getBigDecimal(1))).max(BigDecimal.ZERO));
+                boolean exceeded=delta.signum()>0&&next.subtract(PhoneMinutesService.minutesDue(conn,customerId)).max(BigDecimal.ZERO).compareTo(money(rs.getBigDecimal(2)))>0;
+                if(exceeded&&!creditLimitOverride)throw new SQLException("Customer account credit limit would be exceeded. Available credit: $"+money(rs.getBigDecimal(2)).subtract(money(rs.getBigDecimal(1)).subtract(PhoneMinutesService.minutesDue(conn,customerId)).max(BigDecimal.ZERO)).max(BigDecimal.ZERO));
                 try(PreparedStatement update=conn.prepareStatement("UPDATE customer_accounts SET current_balance=?,updated_at=CURRENT_TIMESTAMP WHERE customer_id=?")){update.setBigDecimal(1,next);update.setInt(2,customerId);update.executeUpdate();return exceeded;}}}
     }
 
@@ -1107,7 +1159,7 @@ public final class ServerQuotationInvoiceService {
         updateCustomerBalance(conn,customerId,money(amount).negate(),null,false);
     }
 
-    private static CashDrawerContext cashDrawerForPayment(Connection conn, String method) throws SQLException {
+    static CashDrawerContext cashDrawerForPayment(Connection conn, String method) throws SQLException {
         if (!"CASH".equals(method)) {
             return null;
         }
@@ -1134,7 +1186,30 @@ public final class ServerQuotationInvoiceService {
                 ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
                 : vatAmount.multiply(BigDecimal.valueOf(100)).divide(preVatTotal, 2, RoundingMode.HALF_UP);
         String mode = settings.vatEnabled() ? (settings.vatUseDepartmentRates() ? "DEPARTMENT" : "FIXED") : "";
-        return new Totals(money(subtotal), money(discount), vatAmount, effectiveRate, mode, money(preVatTotal.add(vatAmount)));
+        return new Totals(money(subtotal), money(discount), vatAmount, effectiveRate, mode, payableTotal(preVatTotal.add(vatAmount)));
+    }
+
+    static BigDecimal payableTotal(BigDecimal total) {
+        return utils.CurrencyFormatter.normalize(total).setScale(2);
+    }
+
+    // Legacy documents displayed whole dollars while retaining cents in the header.
+    // Repair before the first ledger charge, while the invoice row is locked.
+    private static InvoiceHeader roundUnchargedInvoice(Connection conn, InvoiceHeader invoice) throws SQLException {
+        BigDecimal total = payableTotal(invoice.totalAmount());
+        if (total.compareTo(invoice.totalAmount()) == 0 || invoice.amountPaid().signum() != 0
+                || hasAccountCharge(conn, invoice.salesInvoiceId())) return invoice;
+        if (total.signum() <= 0) return invoice;
+        try (PreparedStatement ps = conn.prepareStatement(
+                "UPDATE invoices SET total_amount=?,balance_due=?,updated_at=CURRENT_TIMESTAMP WHERE invoice_id=?")) {
+            ps.setBigDecimal(1, total);
+            ps.setBigDecimal(2, total);
+            ps.setLong(3, invoice.salesInvoiceId());
+            ps.executeUpdate();
+        }
+        QuotationInvoiceAuditService.recordInvoiceAudit(conn, invoice.salesInvoiceId(), "TOTAL_ROUNDED",
+                "total_amount", invoice.totalAmount(), total, "Match the whole-dollar total displayed on the invoice.");
+        return lockInvoice(conn, invoice.salesInvoiceId());
     }
 
     private static LineAmounts lineAmounts(Connection conn, SalesVatSettings settings, QuotationLineInput line) throws SQLException {
@@ -1304,12 +1379,12 @@ public final class ServerQuotationInvoiceService {
     }
     private record LinkedOrder(long id,String number){}
 
-    private record InvoiceHeader(long salesInvoiceId, String invoiceNumber, int customerId, String status,
+    record InvoiceHeader(long salesInvoiceId, String invoiceNumber, int customerId, String status,
                                BigDecimal totalAmount, BigDecimal amountPaid, BigDecimal balanceDue,
                                Integer locationId) {
     }
 
-    private record InvoiceLine(long salesInvoiceLineId, long salesInvoiceId, Integer productId, String itemName,
+    record InvoiceLine(long salesInvoiceLineId, long salesInvoiceId, Integer productId, String itemName,
                              int quantityInvoiceed, int quantityDelivered) {
     }
 

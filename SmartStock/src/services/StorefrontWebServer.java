@@ -66,10 +66,17 @@ public final class StorefrontWebServer implements AutoCloseable {
                 if(!allow("template-submit:"+Objects.toString(x.getRequestHeaders().getFirst("X-Submission-Client"),"unknown"))){send(x,429,Map.of("message","Too many requests. Try again later."));return;}
                 byte[] bytes=x.getRequestBody().readNBytes(StudioSubmissionQueue.MAX_BYTES+1);
                 if(bytes.length>StudioSubmissionQueue.MAX_BYTES){send(x,413,Map.of("message","Submission exceeds 12 MB."));return;}
-                try(Connection c=DB.getConnection()){
+                try{
                     var body=JsonParser.parseString(new String(bytes,StandardCharsets.UTF_8)).getAsJsonObject();
-                    send(x,200,StudioSubmissionQueue.publicRequest(c,body));
+                    if("REMOVE_BACKGROUND".equals(StudioSubmissionQueue.text(body,"action"))){
+                        try(Connection c=DB.getConnection()){StudioSubmissionQueue.authorizePermitRemoval(c,body);}
+                        var image=Base64.getDecoder().decode(StudioSubmissionQueue.text(body,"image"));
+                        if(image.length>2*1024*1024)throw new IllegalArgumentException("Choose a photo of at most 2 MB.");
+                        byte[] cutout=StudioBackgroundService.remove(image);
+                        send(x,200,Map.of("image",Base64.getEncoder().encodeToString(cutout)));
+                    }else try(Connection c=DB.getConnection()){send(x,200,StudioSubmissionQueue.publicRequest(c,body));}
                 }catch(SecurityException ex){send(x,403,Map.of("message",ex.getMessage()));}
+                catch(StudioBackgroundService.BusyException ex){send(x,429,Map.of("message",ex.getMessage()));}
                 catch(IllegalStateException ex){send(x,409,Map.of("message",ex.getMessage()));}
                 catch(IllegalArgumentException ex){send(x,400,Map.of("message","Check the link, code, fields and photos, then retry."));}
                 catch(java.nio.file.NoSuchFileException ex){send(x,403,Map.of("message","This template is unavailable."));}
@@ -311,6 +318,16 @@ public final class StorefrontWebServer implements AutoCloseable {
     private void image(HttpExchange x)throws Exception{
         Map<String,String> q=new HashMap<>();for(String v:Objects.toString(x.getRequestURI().getQuery(),"").split("&")){String[] a=v.split("=",2);if(a.length==2)q.put(a[0],a[1]);}
         try(Connection c=DB.getConnection()){JsonObject s=cached(c,Integer.parseInt(q.getOrDefault("storeId","0")));int id=Integer.parseInt(q.getOrDefault("id","0"));
+            if("custom-item".equals(q.get("kind"))){
+                var manifest=ServiceProductPhotos.image(s,id,Integer.parseInt(q.getOrDefault("variantId","0")),Integer.parseInt(q.getOrDefault("photoIndex","0")));
+                if(manifest!=null){var photo=ServerImageAssetService.loadStorefrontSnapshot(manifest);respond(x,200,photo.contentType(),photo.bytes());return;}
+                respond(x,404,"text/plain",new byte[0]);return;
+            }
+            if("plaque".equals(q.get("kind"))){
+                var manifest=PlaqueCatalog.image(s,id,Integer.parseInt(q.getOrDefault("variantId","0")));
+                if(manifest!=null){var photo=ServerImageAssetService.loadStorefrontSnapshot(manifest);respond(x,200,photo.contentType(),photo.bytes());return;}
+                respond(x,404,"text/plain",new byte[0]);return;
+            }
             if("logo".equals(q.get("kind"))&&s.has("branding")){
                 var branding=s.getAsJsonObject("branding");
                 if(branding.has("_logoManifest")){

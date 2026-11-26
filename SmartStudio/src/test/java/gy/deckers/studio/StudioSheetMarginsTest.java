@@ -16,12 +16,12 @@ class StudioSheetMarginsTest {
                     double[] values={20,3,15,4};
                     for(int index=0;index<fields.length;index++){
                         var field=BusinessCardsPanel.class.getDeclaredField(fields[index]);field.setAccessible(true);
-                        ((JSpinner)field.get(panel)).setValue(values[index]);
+                        ((JSpinner)field.get(panel)).setValue(values[index]/25.4);
                     }
                     var output=panel.output();
                     var saved=PublicationFiles.read(PublicationFiles.archive(output));
-                    assertEquals(20,saved.print.left);assertEquals(3,saved.print.right);
-                    assertEquals(15,saved.print.top);assertEquals(4,saved.print.bottom);
+                    assertEquals(20,saved.print.left,.000001);assertEquals(3,saved.print.right,.000001);
+                    assertEquals(15,saved.print.top,.000001);assertEquals(4,saved.print.bottom,.000001);
                     var layout=SheetLayout.pack(output.width,output.height,output.print);
                     assertTrue(layout.capacity()>0);
                     for(var placement:layout.placements()){
@@ -32,8 +32,8 @@ class StudioSheetMarginsTest {
                     if(mode==2){
                         panel.restoreSheetSize(saved.print);
                         var restored=panel.output();
-                        assertEquals(20,restored.print.left);assertEquals(3,restored.print.right);
-                        assertEquals(15,restored.print.top);assertEquals(4,restored.print.bottom);
+                        assertEquals(20,restored.print.left,.000001);assertEquals(3,restored.print.right,.000001);
+                        assertEquals(15,restored.print.top,.000001);assertEquals(4,restored.print.bottom,.000001);
                     }
                 }catch(Exception ex){throw new RuntimeException(ex);}
                 finally{

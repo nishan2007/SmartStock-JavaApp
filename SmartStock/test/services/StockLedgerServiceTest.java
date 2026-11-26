@@ -45,7 +45,7 @@ class StockLedgerServiceTest {
             SchemaContractService.requireLocalReady(c); // Match DB.getConnection: upgrades precede business transactions.
             sql(c,"INSERT INTO locations(location_id,name,timezone,receipt_store_code) VALUES(501,'Ledger Test','America/Guyana','0501'),(502,'Other','America/Guyana','0502')");
             sql(c,"INSERT INTO roles(role_id,role_name) VALUES(501,'Ledger Test')");
-            sql(c,"INSERT INTO role_permissions(role_id,permission_id) SELECT 501,permission_id FROM permissions WHERE permission_key IN ('RECORD_STOCK_EXPENSE','REVERSE_STOCK_LEDGER','RECEIVING_INVENTORY','RECEIVING_STOCK_OVERRIDE','VIEW_REPORTS','BALANCE_SHEET','VIEW_COST_PRICE','CUSTOMER_ACCOUNTS','PROCESS_RETURNS','RETURN_OVERRIDE')");
+            sql(c,"INSERT INTO role_permissions(role_id,permission_id) SELECT 501,permission_id FROM permissions WHERE permission_key IN ('RECORD_STOCK_EXPENSE','REVERSE_STOCK_LEDGER','RECEIVING_INVENTORY','RECEIVING_STOCK_OVERRIDE','VIEW_REPORTS','BALANCE_SHEET','VIEW_COST_PRICE','CUSTOMER_ACCOUNTS','PROCESS_RETURNS','RETURN_OVERRIDE','MAKE_SALE')");
             sql(c,"INSERT INTO users(user_id,username,full_name,role_id) VALUES(501,'ledger_employee','Employee',501),(502,'ledger_denied','Denied',NULL)");
             sql(c,"INSERT INTO devices(device_id,installation_id,last_store_id,receipt_device_code) VALUES('"+device+"','ledger-test',501,'0501')");
             sql(c,"INSERT INTO products(product_id,name,sku,price,cost_price) VALUES(501,'Stapler','LEDGER501',100,60),(502,'Medal','LEDGER502',50,20)");
@@ -228,6 +228,93 @@ class StockLedgerServiceTest {
         sql(c,"INSERT INTO sales(sale_id,location_id,customer_id,total_amount,payment_method,payment_status,amount_paid,receipt_number,created_at) VALUES(901,501,501,200,'ACCOUNT','UNPAID',0,'COMPANY-901','2026-01-02 10:00-04'),(902,501,501,100,'ACCOUNT','PARTIAL',50,'COMPANY-902','2026-01-03 10:00-04')");
         sql(c,"INSERT INTO sale_items(sale_item_id,sale_id,product_id,item_name,quantity,unit_price) VALUES(901,901,501,'Stapler',2,100),(902,902,501,'Stapler',1,100)");
         sql(c,"INSERT INTO customer_account_transactions(customer_id,sale_id,location_id,amount,transaction_type,credit_applied_amount) VALUES(501,901,501,200,'SALE_CREDIT',0),(501,902,501,100,'SALE_CREDIT',0),(501,902,501,-50,'PAYMENT',50)");
+    }
+
+    @Test void expenseCheckoutScopesAndSignsTheWholeCart() throws Exception {
+        try (Connection c = open()) {
+            c.setAutoCommit(false);
+            UUID checkoutDevice = device;
+            JsonObject request = com.google.gson.JsonParser.parseString("""
+                    {"storeId":501,"representativeName":"Store representative",
+                     "lines":[{"productId":501,"quantity":2},{"productId":502,"quantity":1}]}
+                    """).getAsJsonObject();
+            assertThrows(LanInventoryService.RuleViolation.class,
+                    () -> StockLedgerService.checkout(c, request, checkoutDevice, 501, "Employee", 501));
+            request.addProperty("signaturePngBase64", signature(true));
+            assertThrows(LanInventoryService.RuleViolation.class,
+                    () -> StockLedgerService.checkout(c, request, checkoutDevice, 502, "Denied", 501));
+            assertThrows(LanInventoryService.RuleViolation.class,
+                    () -> StockLedgerService.checkout(c, request, checkoutDevice, 501, "Employee", 502));
+            assertEquals("Deckers Other Expense", StockLedgerService.expenseAccountName(c, 502));
+
+            var savepoint = c.setSavepoint();
+            var secondLine = request.getAsJsonArray("lines").get(1).getAsJsonObject();
+            secondLine.addProperty("quantity", 11);
+            assertThrows(LanInventoryService.RuleViolation.class,
+                    () -> StockLedgerService.checkout(c, request, checkoutDevice, 501, "Employee", 501));
+            c.rollback(savepoint);
+            assertEquals(10, number(c, "SELECT quantity_on_hand FROM inventory WHERE product_id=501 AND location_id=501"));
+            assertEquals(0, number(c, "SELECT count(*) FROM stock_ledger_entries"));
+
+            secondLine.addProperty("quantity", 1);
+            String key = UUID.randomUUID().toString();
+            String hash = LanSecurity.sha256(request.toString());
+            assertNull(LanApiServer.loadIdempotentResult(c, device, key, "stock-ledger.checkout.v1", hash));
+            var result = StockLedgerService.checkout(c, request, device, 501, "Employee", 501);
+            LanApiServer.completeIdempotency(c, device, key, result);
+            assertEquals(result.get("checkoutId"),
+                    LanApiServer.loadIdempotentResult(c, device, key, "stock-ledger.checkout.v1", hash).get("checkoutId"));
+            assertEquals("Deckers Ledger Test Expense", result.get("accountName"));
+            assertEquals(250, ((java.math.BigDecimal) result.get("total")).intValueExact());
+            assertEquals(2, number(c, """
+                    SELECT count(*) FROM stock_ledger_entries WHERE user_id=501 AND location_id=501
+                        AND category='Company Use' AND representative_name='Store representative' AND signature_png IS NOT NULL
+                    """));
+            assertEquals(1, number(c, "SELECT count(DISTINCT expense_checkout_id) FROM stock_ledger_entries"));
+            assertEquals(17, number(c, "SELECT sum(quantity_on_hand) FROM inventory WHERE location_id=501 AND product_id IN (501,502)"));
+            assertEquals(0, number(c, "SELECT count(*) FROM sales"));
+            assertEquals(0, number(c, "SELECT count(*) FROM customer_account_transactions"));
+            assertEquals(0, number(c, "SELECT count(*) FROM cash_drawer_sessions"));
+            c.rollback();
+        }
+    }
+
+    @Test void skeldonBindingPreservesAccountReferencesAndOnlyAssignsReviewedCompanyUse() throws Exception {
+        try (Connection c = open()) {
+            c.setAutoCommit(false);
+            companyAccount(c);
+            sql(c, "UPDATE locations SET name='Skeldon' WHERE location_id=501");
+            sql(c, "UPDATE users SET role_id=(SELECT role_id FROM roles WHERE upper(role_name)='ADMIN') WHERE user_id=501");
+            sql(c, """
+                    INSERT INTO expenses(location_id, category, amount)
+                    VALUES (NULL, 'Company Use', 10), (NULL, 'Rent', 20), (502, 'Company Use', 30)
+                    """);
+            JsonObject request = new JsonObject();
+            request.addProperty("customerId", 501);
+            var preview = CompanyExpenseTransferService.preview(c, request, 501, 501);
+            assertEquals(Boolean.TRUE, preview.get("canBindLegacy"));
+            assertEquals(1, ((java.util.List<?>) preview.get("unassignedExpenses")).size());
+            request.addProperty("previewToken", preview.get("previewToken").toString());
+            request.addProperty("signaturePngBase64", signature(true));
+            request.addProperty("legacyAccountNumber", "DECKERS-TEST");
+            request.addProperty("assignUnassignedExpenses", true);
+            var result = CompanyExpenseTransferService.transfer(c, request, device, 501, "Employee", 501);
+            assertEquals(Boolean.TRUE, result.get("legacyAccountBound"));
+            assertEquals(1, result.get("assignedExpenses"));
+            assertEquals(501, number(c, """
+                    SELECT internal_expense_location_id FROM customer_accounts
+                    WHERE customer_id=501 AND account_number='DECKERS-TEST' AND NOT is_active
+                    """));
+            assertEquals(10, number(c, "SELECT sum(amount) FROM expenses WHERE location_id=501"));
+            assertEquals(20, number(c, "SELECT sum(amount) FROM expenses WHERE location_id IS NULL"));
+            assertEquals(30, number(c, "SELECT sum(amount) FROM expenses WHERE location_id=502"));
+            LanCustomerAccountService.requireVisible(c, 501, 501);
+            assertThrows(LanCustomerAccountService.RuleViolation.class,
+                    () -> LanCustomerAccountService.requireVisible(c, 501, 502));
+            assertThrows(LanInventoryService.RuleViolation.class,
+                    () -> CompanyExpenseTransferService.preview(c, request, 501, 502));
+            c.rollback();
+        }
     }
 
     @Test @Order(Integer.MAX_VALUE) void retriesDoNotDoubleDeductAndConcurrentExpenseCannotOverspendStock()throws Exception {

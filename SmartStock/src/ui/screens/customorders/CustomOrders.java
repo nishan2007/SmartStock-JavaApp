@@ -59,6 +59,8 @@ public class CustomOrders extends JFrame {
     private final DefaultTableModel myModel=model(CustomOrderListColumns.headings());private final JTable myTable=new JTable(myModel);private final JTextArea myDetails=details();private final JTextField mySearch=new JTextField();private final JComboBox<String>myStatus=new JComboBox<>(new String[]{"All","ASSIGNED","IN_PROGRESS","READY","COMPLETED","DELIVERED","CANCELLED"});private final TableRowSorter<DefaultTableModel>mySorter=new TableRowSorter<>(myModel);
     private CustomOrdersLookupTabPanel lookup, allOrders;
     private JTabbedPane orderTabs;
+    private ui.screens.OrdersWorkQueuePanel workQueue;
+    private Long requestedLookupOrder;
     private boolean tabsShowingAllOrders(){return orderTabs!=null&&orderTabs.getSelectedComponent()==allOrders;}
     private CustomOrdersNewOrderTabPanel guidedOrder;
     private String selectedPaymentMethod;
@@ -77,40 +79,38 @@ public class CustomOrders extends JFrame {
     private TableRowSorter<DefaultTableModel> cartSorter;
     private final List<String> summarySetIds=new ArrayList<>();
     private final CustomOrderSubmission<SaveOutcome> orderSubmission = new CustomOrderSubmission<>();
+    private ManagerApprovalService.ApprovalResult orderCreditApproval;
     private final List<Path> draftFiles = new ArrayList<>();
     private final LoadingStatePanel loadingState=new LoadingStatePanel();
     private final Map<JsonObject,String> mutationKeys=new java.util.IdentityHashMap<>();
 
     public CustomOrders(){this(false);}
     protected CustomOrders(boolean orderManagementMode){
-        setTitle(orderManagementMode?"Orders":"Custom Orders");
+        setTitle(orderManagementMode?"SmartStock – Custom Orders":"Custom Orders");
         setSize(1320,800);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setJMenuBar(AppMenuBar.create(this,orderManagementMode?"Orders":"CustomOrders"));
 
+        if(orderManagementMode){getJMenuBar().setPreferredSize(new Dimension(0,39));}
         JTabbedPane tabs=new JTabbedPane();
+        boolean customAccess=can("CREATE_CUSTOM_ORDER")||can("MANAGE_CUSTOM_ORDERS")||can("CUSTOM_ORDER_LOOKUP")||can("CUSTOM_ORDER_OVERRIDES")||can("VIEW_ASSIGNED_CUSTOM_ORDERS")||can("ORDERS_MANAGER_DASHBOARD");
         if(!orderManagementMode&&can("CREATE_CUSTOM_ORDER")){
             tabs.addTab("New Order",newOrderTab());
         }
-        if(orderManagementMode){
+        if(orderManagementMode&&customAccess){
             tabs.addTab("Order Lookup",lookupTab());
-            allOrders = new CustomOrdersLookupTabPanel(handler());
-            allOrders.table.getRowSorter().setSortKeys(List.of(new RowSorter.SortKey(allOrders.model.findColumn("Created"),SortOrder.DESCENDING),new RowSorter.SortKey(0,SortOrder.DESCENDING)));
-            tabs.addTab("All Orders",allOrders);
-            if(can("VIEW_ASSIGNED_CUSTOM_ORDERS")||can("MANAGE_CUSTOM_ORDERS")){
-                tabs.addTab("My Orders",myOrdersTab());
-            }
         }
 
-        tabs.addChangeListener(e->{if(allOrders!=null&&tabs.getSelectedComponent()==allOrders)allOrders.load(handler());});
+        tabs.addChangeListener(e->{if(allOrders!=null&&tabs.getSelectedComponent()==allOrders)allOrders.load(handler());if(workQueue!=null&&tabs.getSelectedComponent()==workQueue)workQueue.refresh();});
         orderTabs=tabs;
         if(tabs.getTabCount()==0){
             add(new JLabel("You do not have permission to access this screen.",SwingConstants.CENTER));
         }else{
-            add(tabs,BorderLayout.CENTER);
+            if(orderManagementMode){JPanel root=new JPanel(new BorderLayout());root.add(OrdersDesign.header(SessionManager.getCurrentLocationName(),SessionManager.getCurrentUserDisplayName(),LocalDate.now(ui.helpers.StoreTimeZoneHelper.getStoreZone())),BorderLayout.NORTH);root.add(lookup,BorderLayout.CENTER);add(root,BorderLayout.CENTER);setSize(1490,1056);setMinimumSize(new Dimension(1100,760));}
+            else add(tabs,BorderLayout.CENTER);
         }
         JPanel footer=new JPanel(new BorderLayout());footer.add(loadingState,BorderLayout.CENTER);
-        if(can("RECORD_CUSTOM_ORDER_SPOILS")||can("REVERSE_CUSTOM_ORDER_SPOILS")||can("MANAGE_CUSTOM_ORDERS")){
+        if(!orderManagementMode&&(can("RECORD_CUSTOM_ORDER_SPOILS")||can("REVERSE_CUSTOM_ORDER_SPOILS")||can("MANAGE_CUSTOM_ORDERS"))){
             JButton phone=new JButton("Custom Order Spoils / Phone QR");
             phone.addActionListener(e->new ui.screens.MobileItemWebDialog(this,"spoils=1").setVisible(true));
             JPanel actions=new JPanel();actions.add(phone);
@@ -122,9 +122,20 @@ public class CustomOrders extends JFrame {
         WindowHelper.configurePosWindow(this);
         if(!orderManagementMode){
             loadCatalog();
-        }else{
+        }else if(customAccess){
             loadOrders();
         }
+    }
+
+    public void openQueueOrder(long id,String number) {
+        if(lookup==null)return;
+        requestedLookupOrder=id;lookup.searchField.setText(number);lookup.load(handler());
+    }
+
+    private void openWorkItem(services.OrdersWorkQueueService.Row row) {
+        if("SALES_TASK".equals(row.kind())){managers.NavigationManager.openSalesTasks(this,row.id());return;}
+        if(lookup==null){JOptionPane.showMessageDialog(this,row.instructions(),row.number(),JOptionPane.INFORMATION_MESSAGE);return;}
+        requestedLookupOrder=row.id();orderTabs.setSelectedComponent(lookup);lookup.searchField.setText(row.number());lookup.load(handler());
     }
 
     private JPanel newOrderTab(){
@@ -169,6 +180,7 @@ public class CustomOrders extends JFrame {
             boolean set = !guidedOrder.sizeSetEditor.selections().isEmpty();
             guidedOrder.lineQuantityField.setEnabled(!set && editingLine < 0);
             guidedOrder.linePriceField.setEnabled(!set);
+            refreshItemPictures();
         });
         cartSorter = new TableRowSorter<>(guidedOrder.orderLineModel);
         for (int col=0; col<guidedOrder.orderLineModel.getColumnCount(); col++) cartSorter.setSortable(col,false);
@@ -372,15 +384,24 @@ public class CustomOrders extends JFrame {
     private void editDiscount(){String v=JOptionPane.showInputDialog(this,"Discount percentage:",guidedOrder.lineDiscountPercentField.getText());if(v==null)return;guidedOrder.lineDiscountPercentField.setText(v.trim());String reason=JOptionPane.showInputDialog(this,"Discount reason:",guidedOrder.lineDiscountReasonField.getText());if(reason!=null)guidedOrder.lineDiscountReasonField.setText(reason.trim());}
     private void configureSizeSet(){
         if(guidedOrder==null||buildingSet)return;
+        refreshItemPictures();
         CustomItemOption item=(CustomItemOption)guidedOrder.orderItemBox.getSelectedItem();
         VariantOption selected=(VariantOption)guidedOrder.variantBox.getSelectedItem();
-        guidedOrder.sizeSetEditor.configure(customerItem==null?item:null,
+        if(customerItem!=null){guidedOrder.sizeSetEditor.configureCustomer(customerItem.color(),this::sizeUnitPrice);return;}
+        guidedOrder.sizeSetEditor.configure(item,
             item==null||item.customItemId()==null?List.of():variantsByItem.getOrDefault(item.customItemId(),List.of()),selected,this::sizeUnitPrice);
+    }
+    private void refreshItemPictures(){
+        if(guidedOrder==null||buildingSet)return;
+        var item=(CustomItemOption)guidedOrder.orderItemBox.getSelectedItem();
+        var variant=(VariantOption)guidedOrder.variantBox.getSelectedItem();
+        guidedOrder.itemPictures.showPictures(customerItem==null?item:null,variant,
+            guidedOrder.sizeSetEditor.selections(),customerItem!=null);
     }
     private BigDecimal sizeUnitPrice(VariantOption variant){
         if(pricePending())return null;
         CustomItemOption item=(CustomItemOption)guidedOrder.orderItemBox.getSelectedItem();
-        BigDecimal base=variant.fixedPrice()==null?item.fixedPrice():variant.fixedPrice();
+        BigDecimal base=customerItem!=null?BigDecimal.ZERO:variant.fixedPrice()==null?item.fixedPrice():variant.fixedPrice();
         if(base==null)throw new IllegalArgumentException("This size has no catalogue price.");
         BigDecimal original=base.add(printAddons().stream().map(PrintAddonRequest::printCharge).reduce(BigDecimal.ZERO,BigDecimal::add));
         BigDecimal pct=decimal(guidedOrder.lineDiscountPercentField,"discount",false);if(pct==null)pct=BigDecimal.ZERO;
@@ -419,12 +440,12 @@ public class CustomOrders extends JFrame {
         var members=selected.setId()==null?List.of(selected):lines.stream().filter(line->selected.setId().equals(line.setId())).toList();
         Map<Long,Integer> numbers=new java.util.HashMap<>();
         for(var member:members){
-            int number=numbers.merge(member.request().customVariantId(),1,Integer::sum);
+            int number=numbers.merge(member.variant()==null?member.request().customVariantId():member.variant().variantId(),1,Integer::sum);
             var saved=member.personalization();if(saved==null)continue;
             for(int addon=0;addon<saved.texts().size()&&addon<guidedOrder.printAddonModel.getRowCount();addon++){
                 String text=saved.texts().get(addon);if(text==null||text.isBlank())continue;
                 var values=new java.util.LinkedHashMap<>(CustomOrderShirtText.values(guidedOrder.printAddonModel.getValueAt(addon,8)));
-                values.put(CustomOrderShirtText.key(member.request().customVariantId(),number),text);
+                values.put(CustomOrderShirtText.key(member.variant()==null?member.request().customVariantId():member.variant().variantId(),number),text);
                 guidedOrder.printAddonModel.setValueAt(values,addon,8);guidedOrder.printAddonModel.setValueAt(values.size()+" entered",addon,9);
             }
         }
@@ -439,9 +460,10 @@ public class CustomOrders extends JFrame {
         try{
             var slots=shirtSlots();var entries=shirtTextEntries();CustomOrderShirtText.validate(slots,entries);
             CustomItemOption item=(CustomItemOption)guidedOrder.orderItemBox.getSelectedItem();
-            var allowed=CustomOrderSizeSetEditor.eligible(item,variantsByItem.getOrDefault(item.customItemId(),List.of()),sizes.get(0).variant());
+            var allowed=customerItem!=null?sizes.stream().map(CustomOrderSizeSetEditor.SizeQuantity::variant).toList():CustomOrderSizeSetEditor.eligible(item,variantsByItem.getOrDefault(item.customItemId(),List.of()),sizes.get(0).variant());
             if(sizes.stream().anyMatch(size->!allowed.contains(size.variant())))throw new IllegalArgumentException("A selected size is no longer available. Choose sizes again.");
-            var first=sizes.get(0).variant();guidedOrder.variantBox.setSelectedItem(first);
+            if(customerItem!=null)item=new CustomItemOption(null,customerItem.name(),customerItem.size(),customerItem.color(),null,"SERVICE","FIXED",BigDecimal.ZERO,false,null,null,null,null,null);
+            var first=sizes.get(0).variant();guidedOrder.variantBox.setSelectedItem(customerItem==null?first:null);
             BigDecimal base=first.fixedPrice()==null?item.fixedPrice():first.fixedPrice();
             guidedOrder.linePriceField.setText(base==null?"":decimalText(base));guidedOrder.lineQuantityField.setText("1");
             if(!addSingleLine())return;
@@ -619,11 +641,15 @@ editingSetId=null;guidedOrder.sizeSetEditor.reset();editingLine=-1;guidedOrder.s
         try{
             if(lines.isEmpty())throw new IllegalArgumentException("Add at least one order line.");
             String customer=guidedOrder.customerInfoPanel.getCustomerName().trim();if(customer.isBlank())throw new IllegalArgumentException("Enter a customer name.");
-            String phone=guidedOrder.customerInfoPanel.getCustomerPhone().trim();if(phone.isBlank())throw new IllegalArgumentException("Enter a customer phone number.");
+            boolean oneTimeCustomer=guidedOrder.customerInfoPanel.isOneTimeCustomer();
+            if(oneTimeCustomer && websiteShirtRequestId!=null)throw new IllegalArgumentException("Select the customer account for this website shirt request.");
+            if(oneTimeCustomer && customer.length()>200)throw new IllegalArgumentException("Enter a one-time customer name of up to 200 characters.");
+            String phone=guidedOrder.customerInfoPanel.getCustomerPhone().trim();if(!oneTimeCustomer&&phone.isBlank())throw new IllegalArgumentException("Enter a customer phone number.");
             LocalDate due=guidedOrder.dueDateEnabledBox.isSelected()?guidedOrder.dueDateField.getSelectedDate():null;
             BigDecimal total=total(),paid=wholeDollar(guidedOrder.upfrontPaymentField,"upfront payment",true);
             if(paid.signum()<0||(!pricePending()&&paid.compareTo(total)>0))throw new IllegalArgumentException("Upfront payment must be between zero and the total.");
             String method=paid.signum()==0?selectedPaymentMethod:selectedPaymentMethod;if(paid.signum()>0&&(method==null||method.isBlank()))throw new IllegalArgumentException("Select a payment method.");
+            if("ACCOUNT".equals(method)&&pricePending())throw new IllegalArgumentException("Finalize the price before charging to account.");
             if("ACCOUNT".equals(method)&&paid.signum()>0)throw new IllegalArgumentException("Account charges use the unpaid balance. Leave upfront payment at 0.");
             if(paid.signum()>0&&requiresPaymentReference(method)&&guidedOrder.paymentReferenceField.getText().isBlank())throw new IllegalArgumentException("Enter a payment reference.");
             BigDecimal required=minimumDeposit();
@@ -677,8 +703,11 @@ editingSetId=null;guidedOrder.sizeSetEditor.reset();editingLine=-1;guidedOrder.s
             String sourceWebsiteShirtRequestId=websiteShirtRequestId;
             OrderSaveRequest request=new OrderSaveRequest(selected,customer,phone,due,total,paid,total.subtract(paid),method,guidedOrder.paymentReferenceField.getText(),paid.signum()==0?"UNPAID":paid.compareTo(total)==0?"PAID":"PARTIAL",SessionManager.getCurrentUserId(),SessionManager.getCurrentUserDisplayName(),SessionManager.getCurrentLocationId(),SessionManager.getCurrentLocationName(),SessionManager.getCurrentDeviceId(),"",required,depositReason,null,null,guidedOrder.orderNotesArea.getText(),requests,depositToken,authorization,guidedOrder.customerInfoPanel.applyCustomerDiscount(),pricePending()?"PENDING":"FINAL",deferReason,deferToken);
             String submissionKey=orderSubmission.key();
+            orderCreditApproval=null;
             orderSubmission.prepare(()->{
-                String number=CustomOrderDataService.saveCustomOrder(request,submissionKey);
+                var approval=orderCreditApproval;
+                String number=LanApiClient.saveCustomOrder(request,submissionKey,oneTimeCustomer,
+                        approval==null?null:approval.lanApprovalToken(),approval==null?null:approval.reason());
                 try{EmailOutboxService.queueCustomOrderConfirmation(number,true);}catch(Exception ignored){}
                 List<String> fileErrors=new ArrayList<>();
                 if(pendingLines.stream().anyMatch(line->!line.pendingFiles().isEmpty()))try{
@@ -706,7 +735,18 @@ editingSetId=null;guidedOrder.sizeSetEditor.reset();editingLine=-1;guidedOrder.s
                 orderSubmission.completed();
                 SessionDataCache.invalidate("custom-orders:");clearOrder();loadOrders();
                 if(printOrderSlip || alwaysPrintOrderSlip)promptAndPrintSlip(outcome.orderNumber());
-            },failure->{if(failure instanceof LanApiClient.LanApiException api && java.util.Set.of("VALIDATION_ERROR","CUSTOM_ORDER_CASH_DRAWER_REQUIRED","CUSTOM_ORDER_DEVICE_NOT_ALLOWED","APPROVAL_REQUIRED","APPROVAL_INVALID","PERMISSION_DENIED").contains(api.code())){orderSubmission.completed();loadingState.failed(failure.getMessage(),false,()->saveOrder(printOrderSlip));return;}orderSubmission.failed();loadingState.failed("Order save could not be confirmed. Retry checks the original order: "+failure.getMessage(),false,()->saveOrder(printOrderSlip));});
+            },failure->{
+                if (creditApprovalRequired(failure)) {
+                    loadingState.ready(java.time.Instant.now());
+                    orderCreditApproval=requestCreditApproval(failure);
+                    if (orderCreditApproval==null) orderSubmission.completed();
+                    else {
+                        orderSubmission.failed();
+                        saveOrder(printOrderSlip);
+                    }
+                    return;
+                }
+                if(orderSubmission.failed(failure)){loadingState.failed(failure.getMessage(),false,()->saveOrder(printOrderSlip));return;}loadingState.failed("Order save could not be confirmed. Retry checks the original order: "+failure.getMessage(),false,()->saveOrder(printOrderSlip));});
     }
     private CustomOrderHoldTransfer.Prepared pendingHold;
     private String pendingHoldId,pendingResumeId,pendingResumeKey;
@@ -799,12 +839,12 @@ editingSetId=null;guidedOrder.sizeSetEditor.reset();editingLine=-1;guidedOrder.s
         if(editingLine>=0){JOptionPane.showMessageDialog(this,"Update the edited line or cancel editing before continuing.");return false;}
         if(step==0&&lines.isEmpty()){JOptionPane.showMessageDialog(this,"Add at least one custom order line before review.");return false;}
         if(step==1&&guidedOrder.dueDateEnabledBox.isSelected())try{guidedOrder.dueDateField.getSelectedDate();}catch(Exception e){JOptionPane.showMessageDialog(this,"Due date must use YYYY-MM-DD.");return false;}
-        if(step==2){if(guidedOrder.customerInfoPanel.getCustomerName().isBlank()){JOptionPane.showMessageDialog(this,"Customer name is required before payment.");return false;}if(guidedOrder.customerInfoPanel.getCustomerPhone().isBlank()){JOptionPane.showMessageDialog(this,"Customer phone number is required before payment.");return false;}}
+        if(step==2){if(guidedOrder.customerInfoPanel.getCustomerName().isBlank()){JOptionPane.showMessageDialog(this,"Customer name is required before payment.");return false;}if(!guidedOrder.customerInfoPanel.isOneTimeCustomer()&&guidedOrder.customerInfoPanel.getCustomerPhone().isBlank()){JOptionPane.showMessageDialog(this,"Customer phone number is required before payment.");return false;}}
         return true;
     }
-    private void refreshStep(int step){updateTotal();if(step==1){guidedOrder.reviewLineCountLabel.setText("Items: "+lines.size());guidedOrder.reviewOrderTotalLabel.setText(pricePending()?"Order Total: Price pending":"Order Total: $"+money(total()));guidedOrder.reviewMinimumDepositLabel.setText(pricePending()?"Optional deposit":"Minimum Deposit Required: $"+money(minimumDeposit()));guidedOrder.reviewLineModel.clear();for(var group:cartQuantityGroups().entrySet()){CartLine line=group.getKey();int quantity=group.getValue();OrderLineRequest r=line.request();String addOns=printSummary(r.printAddons());guidedOrder.reviewLineModel.addElement(quantity+" × "+r.itemName()+(r.variantName()==null||r.variantName().isBlank()?"":" / "+r.variantName())+(r.customizationDetails()==null||r.customizationDetails().isBlank()?"":" | "+r.customizationDetails())+(pricePending()?" - Price pending":" - $"+money(r.unitPrice().multiply(BigDecimal.valueOf(quantity))))+(addOns.isBlank()?"":" | Add-ons: "+addOns)+(r.orderInstructions()==null||r.orderInstructions().isBlank()?"":" | "+r.orderInstructions().replace("\n"," / ")));}}if(step==3){String account=guidedOrder.customerInfoPanel.getCustomerAccountNumber(),email=guidedOrder.customerInfoPanel.getCustomerEmail();guidedOrder.customerSummaryLabel.setText("Customer: "+guidedOrder.customerInfoPanel.getCustomerName()+" / "+guidedOrder.customerInfoPanel.getCustomerPhone()+(account.isBlank()?"":" / Account # "+account)+(email.isBlank()?"":" / "+email));updatePaymentPreview();}}
+    private void refreshStep(int step){updateTotal();if(step==1){guidedOrder.reviewLineCountLabel.setText("Items: "+lines.size());guidedOrder.reviewOrderTotalLabel.setText(pricePending()?"Order Total: Price pending":"Order Total: $"+money(total()));guidedOrder.reviewMinimumDepositLabel.setText(pricePending()?"Optional deposit":"Minimum Deposit Required: $"+money(minimumDeposit()));guidedOrder.reviewLineModel.clear();for(var group:cartQuantityGroups().entrySet()){CartLine line=group.getKey();int quantity=group.getValue();OrderLineRequest r=line.request();String addOns=printSummary(r.printAddons());guidedOrder.reviewLineModel.addElement(quantity+" × "+r.itemName()+(r.variantName()==null||r.variantName().isBlank()?"":" / "+r.variantName())+(r.customizationDetails()==null||r.customizationDetails().isBlank()?"":" | "+r.customizationDetails())+(pricePending()?" - Price pending":" - $"+money(r.unitPrice().multiply(BigDecimal.valueOf(quantity))))+(addOns.isBlank()?"":" | Add-ons: "+addOns)+(r.orderInstructions()==null||r.orderInstructions().isBlank()?"":" | "+r.orderInstructions().replace("\n"," / ")));}}if(step==3){boolean oneTime=guidedOrder.customerInfoPanel.isOneTimeCustomer();guidedOrder.accountPaymentButton.setEnabled(!oneTime);if(oneTime&&"ACCOUNT".equals(selectedPaymentMethod)){guidedOrder.paymentMethodGroup.clearSelection();selectedPaymentMethod=null;}String account=guidedOrder.customerInfoPanel.getCustomerAccountNumber(),email=guidedOrder.customerInfoPanel.getCustomerEmail();guidedOrder.customerSummaryLabel.setText("Customer: "+guidedOrder.customerInfoPanel.getCustomerName()+(guidedOrder.customerInfoPanel.isOneTimeCustomer()?" / One-time customer":" / "+guidedOrder.customerInfoPanel.getCustomerPhone())+(account.isBlank()?"":" / Account # "+account)+(email.isBlank()?"":" / "+email));updatePaymentPreview();}}
     private boolean customerDepositExempt(){var customer=guidedOrder.customerInfoPanel.getSelectedCustomer();return customer!=null&&customer.customerId()!=null&&customer.customOrderDepositExempt();}
-    private BigDecimal minimumDeposit(){if(pricePending()||customerDepositExempt())return BigDecimal.ZERO;return CurrencyFormatter.normalize(total().multiply(minimumDepositPercent).divide(BigDecimal.valueOf(100),2,RoundingMode.HALF_UP));}
+    private BigDecimal minimumDeposit(){if(pricePending()||"ACCOUNT".equals(selectedPaymentMethod)||customerDepositExempt())return BigDecimal.ZERO;return CurrencyFormatter.normalize(total().multiply(minimumDepositPercent).divide(BigDecimal.valueOf(100),2,RoundingMode.HALF_UP));}
     private void updatePaymentPreview(){if(guidedOrder==null)return;BigDecimal paid;try{paid=new BigDecimal(guidedOrder.upfrontPaymentField.getText().trim().isBlank()?"0":guidedOrder.upfrontPaymentField.getText().trim());}catch(Exception e){paid=BigDecimal.ZERO;}BigDecimal required=minimumDeposit();guidedOrder.paymentMinimumDepositLabel.setText(pricePending()?"Optional deposit — final price is pending":customerDepositExempt()?"No deposit required — customer account setting":"Minimum Deposit Required: $"+money(required));guidedOrder.balanceDueLabel.setText(pricePending()?"Balance Due: Price pending":"Balance Due: $"+money(total().subtract(paid).max(BigDecimal.ZERO)));guidedOrder.depositOverrideNoticeLabel.setText(paid.compareTo(required)<0?"A deposit override and reason are required.":" ");boolean ref=requiresPaymentReference(selectedPaymentMethod);guidedOrder.paymentReferenceField.setEnabled(ref);if(!ref)guidedOrder.paymentReferenceField.setText("");}
     static boolean requiresPaymentReference(String paymentMethod){return "CARD".equals(paymentMethod)||"CHEQUE".equals(paymentMethod)||"MMG".equals(paymentMethod);}
     private void updateAreaPreview(){if(guidedOrder==null)return;CustomItemOption item=(CustomItemOption)guidedOrder.orderItemBox.getSelectedItem();if(item==null||!"AREA".equals(item.pricingType())){guidedOrder.areaCalculationLabel.setText(" ");return;}try{BigDecimal w=nullable(guidedOrder.widthField),l=nullable(guidedOrder.lengthField),rate=decimal(guidedOrder.linePriceField,"line price",false);if(w==null||l==null||rate==null){guidedOrder.areaCalculationLabel.setText("Enter width and length to calculate area.");return;}BigDecimal area=billableArea(w,l,item.maxWidth(),item.dimensionUnit(),item.areaPriceUnit());guidedOrder.areaCalculationLabel.setText("Charged: "+decimalText(billingWidth(w,item.maxWidth()))+" x "+decimalText(l)+" "+item.dimensionUnit()+" = "+area.stripTrailingZeros().toPlainString()+" "+item.areaPriceUnit()+" = $"+money(area.multiply(rate)));}catch(Exception e){guidedOrder.areaCalculationLabel.setText("Enter valid dimensions.");}}
@@ -841,24 +881,27 @@ var snapshot=UiTaskRunner.supplyAsync(CustomOrderDataService::loadCatalogSnapsho
     }
     private void loadOrders(){CachedUiLoader.load(this,"custom-orders:orders",OrderSnapshot.class,SessionDataCache.SCREEN_TTL,loadingState,()->new OrderSnapshot(workflow("CURRENT_MINE","")),snapshot->{renderOrders(myModel,snapshot.mine(),false);if(lookup!=null)lookup.load(handler());if(allOrders!=null&&tabsShowingAllOrders())allOrders.load(handler());});}
     private List<LanCustomOrderWorkflowService.OrderRow>workflow(String action,String search)throws Exception{return GSON.fromJson(LanApiClient.customOrderWorkflowRead(action,null,search).get("orders"),new TypeToken<List<LanCustomOrderWorkflowService.OrderRow>>(){}.getType());}
-    private void renderOrders(DefaultTableModel m,List<LanCustomOrderWorkflowService.OrderRow>rows,boolean all){m.setRowCount(0);for(var x:rows)m.addRow(CustomOrderListColumns.values(x,all));}
+    private void renderOrders(DefaultTableModel m,List<LanCustomOrderWorkflowService.OrderRow>rows,boolean all){m.setRowCount(0);for(var x:rows)m.addRow(m.findColumn("Production")>=0?CustomOrderListColumns.workspaceValues(x):CustomOrderListColumns.values(x,all));}
     private void loadLookupOrdersAsync(DefaultTableModel model,String search) {
         String query=search==null?"":search.trim();
         CustomOrdersLookupTabPanel target=allOrders!=null&&model==allOrders.model?allOrders:lookup;
         boolean all=target==allOrders;
-        String action=all?"ALL":"LOOKUP";
+        String action="ALL";
         CachedUiLoader.load(this,"custom-orders."+action,"custom-orders:"+action+":"+query,
                 LookupSnapshot.class,SessionDataCache.SCREEN_TTL,loadingState,
                 ()->new LookupSnapshot(workflow(action,query)),snapshot->{
             if(!query.equals(target.searchField.getText().trim()))return;
-            Long selectedId=selected(target.table,model);
+            Long selectedId=target==lookup&&requestedLookupOrder!=null?requestedLookupOrder:selected(target.table,model);
             renderOrders(model,snapshot.rows(),false);
+            target.orderList.refreshModel();
             if(selectedId!=null)for(int row=0;row<model.getRowCount();row++)
                 if(selectedId.toString().equals(String.valueOf(model.getValueAt(row,0)))){
                     int view=target.table.convertRowIndexToView(row);
                     if(view>=0)target.table.setRowSelectionInterval(view,view);
+                    if(target==lookup)requestedLookupOrder=null;
                     break;
                 }
+            if(selectedId==null&&target.table.getRowCount()>0)target.table.setRowSelectionInterval(0,0);
         });
     }
     private void loadDetails(Long id, JTextArea area) {
@@ -948,6 +991,59 @@ var snapshot=UiTaskRunner.supplyAsync(CustomOrderDataService::loadCatalogSnapsho
     }
     private CustomOrdersLookupTabPanel.Handler handler() {
         return new CustomOrdersLookupTabPanel.Handler() {
+            public boolean canCreateOrders(){return can("CREATE_CUSTOM_ORDER");}
+            public void newOrder(){CustomOrders form=new CustomOrders();form.addWindowListener(new java.awt.event.WindowAdapter(){@Override public void windowClosed(java.awt.event.WindowEvent e){loadOrders();}});form.setVisible(true);}
+            public boolean canAssignOrders(){return can("MANAGE_CUSTOM_ORDERS")||can("CUSTOM_ORDER_OVERRIDES");}
+            public void setMissingDueDate(long orderId,LocalDate date,Consumer<Boolean> completion){
+                JsonObject body=mutation("SET_DUE_DATE",orderId);body.addProperty("dueDate",date.toString());
+                executeAsync(body,"Due date saved.",completion);
+            }
+            public void loadAssignmentEmployees(Consumer<List<services.CustomOrderDataService.EmployeeOption>> completion){
+                UiTaskRunner.submit(CustomOrders.this,"custom-orders.assignment-options",LanApiClient::loadCustomOrderEmployees,completion,failure->{completion.accept(null);error(new Exception(failure));});
+            }
+            public void assignOrder(long id,Integer employeeId,String state,Consumer<Boolean> completion){
+                UiTaskRunner.submit(CustomOrders.this,"custom-orders.assign",()->{LanApiClient.assignCustomOrder(id,employeeId,state,UUID.randomUUID().toString());return true;},completion,failure->{completion.accept(false);error(new Exception(failure));});
+            }
+            public void changeAssignment(Long id){
+                if(id==null)return;
+                JsonObject details=lookup==null?null:lookup.workspace.selected();
+                if(details==null)return;
+                final String state=CustomOrderDetailsPanel.text(details.getAsJsonObject("summary"),"status");
+                final String assigned=CustomOrderDetailsPanel.text(details.getAsJsonObject("summary"),"assigned_to_name");
+                UiTaskRunner.submit(CustomOrders.this,"custom-orders.assignment-options",LanApiClient::loadCustomOrderEmployees,employees->{
+                    if(!id.equals(selected(lookup.table,lookup.model)))return;
+                    JComboBox<services.CustomOrderDataService.EmployeeOption> employee=new JComboBox<>();employee.addItem(new services.CustomOrderDataService.EmployeeOption(null,"Unassigned"));for(var option:employees)employee.addItem(option);
+                    for(int i=0;i<employee.getItemCount();i++)if(employee.getItemAt(i).name().equals(assigned)){employee.setSelectedIndex(i);break;}
+                    if(JOptionPane.showConfirmDialog(CustomOrders.this,employee,"Assign order",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
+                    var chosen=(services.CustomOrderDataService.EmployeeOption)employee.getSelectedItem();
+                    UiTaskRunner.submit(CustomOrders.this,"custom-orders.assign",()->{LanApiClient.assignCustomOrder(id,chosen.userId(),state,UUID.randomUUID().toString());return true;},saved->loadOrders(),failure->error(new Exception(failure)));
+                },failure->error(new Exception(failure)));
+            }
+            public void addMoreActions(JPopupMenu menu,java.util.function.Supplier<Long> selected){
+                if (can("MANAGE_CUSTOM_ORDERS") || can("CUSTOM_ORDER_OVERRIDES")) {
+                    JMenuItem charge=new JMenuItem("Charge Balance to Credit");
+                    charge.addActionListener(e->{
+                        Long id=selected.get();
+                        if (id==null) {
+                            JOptionPane.showMessageDialog(CustomOrders.this,"Select an order first.");
+                            return;
+                        }
+                        if (JOptionPane.showConfirmDialog(CustomOrders.this,
+                                "Charge the selected order's unpaid balance to the linked business account?",
+                                "Charge Balance to Credit",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION) return;
+                        executeAsync(mutation("CHARGE_BALANCE",id),"Order balance charged to business credit.",
+                                saved->{if(saved){loadOrders();lookup.load(handler());}});
+                    });
+                    menu.add(charge);
+                }
+                if(can("RECORD_CUSTOM_ORDER_SPOILS")||can("REVERSE_CUSTOM_ORDER_SPOILS")||can("MANAGE_CUSTOM_ORDERS")){
+                    JMenuItem phone=new JMenuItem("Custom Order Spoils / Phone QR");phone.addActionListener(e->new ui.screens.MobileItemWebDialog(CustomOrders.this,"spoils=1").setVisible(true));menu.add(phone);
+                    JMenuItem history=new JMenuItem("Internal Spoil History");history.addActionListener(e->{Long id=selected.get();if(id!=null)CustomOrderSpoilDialog.show(CustomOrders.this,id);else JOptionPane.showMessageDialog(CustomOrders.this,"Select an order first.");});menu.add(history);
+                }
+                if(can("COMPANY_PREFERENCES")){
+                    JMenuItem portfolio=new JMenuItem("Add to Made at Deckers");portfolio.addActionListener(e->{Long id=selected.get();if(id==null)return;JsonObject details=lookup.workspace.selected();if(details==null)return;String status=CustomOrderDetailsPanel.text(details.getAsJsonObject("summary"),"status");if(!List.of("COMPLETED","DELIVERED").contains(status)){JOptionPane.showMessageDialog(CustomOrders.this,"Complete the custom order before creating a project draft.");return;}JsonObject request=new JsonObject();request.addProperty("action","PROJECT_DRAFT");request.addProperty("sourceOrderId",id);UiTaskRunner.submit(CustomOrders.this,"custom-orders.project-draft",()->LanApiClient.storefrontAdmin(request,UUID.randomUUID().toString()),result->JOptionPane.showMessageDialog(CustomOrders.this,"Private project draft created. Add approved details and photos in Company Preferences → Made at Deckers."),failure->error(new Exception(failure)));});menu.add(portfolio);
+                }
+            }
             public void loadLookupOrders(DefaultTableModel model, String search) { loadLookupOrdersAsync(model, search); }
             public Long selectedLookupOrderId(JTable table, DefaultTableModel model) { return selected(table, model); }
             public void loadOrderDetails(Long id, JTextArea area) { loadDetails(id, area); }
@@ -1008,6 +1104,11 @@ var snapshot=UiTaskRunner.supplyAsync(CustomOrderDataService::loadCatalogSnapsho
                 executeAsync(body, "Production updated.", completion);
             }
             public boolean canFinalizePrice(){return can("MANAGE_CUSTOM_ORDERS");}
+            public boolean canExchangeItems(){return "ADMIN".equalsIgnoreCase(SessionManager.getCurrentRole()) && !services.RemoteAdminPolicy.isRemoteAdminClient();}
+            public void exchangeItem(Long id,Consumer<Boolean> completion) {
+                UiTaskRunner.submit(CustomOrders.this,"custom-orders.exchange",()->LanApiClient.customOrderWorkflowRead("DETAILS_V2",id,null).getAsJsonObject("orderDetails"),
+                        details->CustomOrderExchangeDialog.show(CustomOrders.this,id,details,completion),failure->{error(new Exception(message(failure)));completion.accept(false);});
+            }
             public void finalizePrice(Long id,Consumer<Boolean> completion) {
                 UiTaskRunner.submit(CustomOrders.this,"custom-orders.pricing",()->GSON.fromJson(LanApiClient.customOrderWorkflowRead("PRICING",id,null).get("pricing"),services.CustomOrderPricingService.PricingDetails.class),details->{
                     JsonObject body=CustomOrderPricingDialog.prompt(CustomOrders.this,id,details);if(body==null){completion.accept(false);return;}executeAsync(body,"Final price saved.",completion);
@@ -1031,6 +1132,20 @@ var snapshot=UiTaskRunner.supplyAsync(CustomOrderDataService::loadCatalogSnapsho
                 body.addProperty("method",request.method());body.addProperty("reference",request.reference());
                 body.add("returns",GSON.toJsonTree(request.lines().stream().map(r->new LanCustomOrderWorkflowService.ReturnRequest(r.lineId(),r.refundAmount(),false,r.restockAction())).toList()));
                 executeAsync(body,"Order cancelled. Returns, refunds and stock handling recorded.",completion);
+            }
+            public boolean canReversePayments(){return can("REVERSE_CUSTOM_ORDER_PAYMENTS");}
+            public void reversePayment(Long id,JsonObject payment,Consumer<Boolean> completion){
+                String method=payment.get("payment_method").getAsString();
+                String reason=JOptionPane.showInputDialog(CustomOrders.this,"Reason for reversing this payment:");
+                if(reason==null||reason.isBlank()){completion.accept(false);return;}
+                String reference="";
+                if(!"CASH".equals(method)){
+                    reference=JOptionPane.showInputDialog(CustomOrders.this,"Refund transaction reference (refund through "+method+" first):");
+                    if(reference==null){completion.accept(false);return;}
+                }
+                if(JOptionPane.showConfirmDialog(CustomOrders.this,"Refund G$"+payment.get("payment_amount").getAsBigDecimal().toPlainString()+" through "+method+" and reverse this payment?\nThe order balance will increase. Items and the order total stay unchanged.","Reverse payment",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE)!=JOptionPane.OK_OPTION){completion.accept(false);return;}
+                JsonObject body=mutation("REVERSE_PAYMENT",id);body.addProperty("paymentId",payment.get("custom_order_payment_id").getAsLong());body.addProperty("reference",reference);body.addProperty("reason",reason);
+                executeAsync(body,"Payment reversed and refund recorded.",completion);
             }
             public boolean canRefundPayments() { return can("CUSTOM_ORDER_LINE_RETURNS") || can("CUSTOM_ORDER_REFUNDS") || can("CUSTOM_ORDER_OVERRIDES"); }
             public boolean canDeliverOrderLines() { return can("CUSTOM_ORDER_LINE_DELIVERY") || can("CUSTOM_ORDER_OVERRIDES"); }
@@ -1080,6 +1195,22 @@ var snapshot=UiTaskRunner.supplyAsync(CustomOrderDataService::loadCatalogSnapsho
         if(amount.signum()<=0)throw new IllegalArgumentException("Payment amount must be greater than zero.");
         return amount;
     }
+    private boolean creditApprovalRequired(Throwable failure) {
+        while (failure.getCause()!=null) failure=failure.getCause();
+        return failure instanceof LanApiClient.LanApiException api
+                && "CUSTOM_ORDER_CREDIT_APPROVAL_REQUIRED".equals(api.code());
+    }
+
+    private ManagerApprovalService.ApprovalResult requestCreditApproval(Throwable failure) {
+        try {
+            return ManagerApprovalService.requestApproval(this,"SET_CREDIT_LIMIT","Custom Order Credit Limit Override",
+                    message(failure)+"  Enter the reason for approving this charge:");
+        } catch (RuntimeException ex) {
+            error(ex);
+            return null;
+        }
+    }
+
     private void executeAsync(JsonObject body, String message, Consumer<Boolean> completion) {
         String action = body.get("action").getAsString().toLowerCase();
         String requestKey=mutationKeys.computeIfAbsent(body,ignored->UUID.randomUUID().toString());
@@ -1095,6 +1226,19 @@ var snapshot=UiTaskRunner.supplyAsync(CustomOrderDataService::loadCatalogSnapsho
             JOptionPane.showMessageDialog(this, message);
             completion.accept(true);
         }, failure -> {
+            if (creditApprovalRequired(failure)) {
+                loadingState.ready(java.time.Instant.now());
+                var approval=requestCreditApproval(failure);
+                if (approval==null) {
+                    completion.accept(false);
+                } else {
+                    JsonObject approved=body.deepCopy();
+                    approved.addProperty("creditApprovalToken",approval.lanApprovalToken());
+                    approved.addProperty("creditApprovalReason",approval.reason());
+                    executeAsync(approved,message,completion);
+                }
+                return;
+            }
             loadingState.failed(failure.getMessage(), false, () -> executeAsync(body, message, completion));
             JOptionPane.showMessageDialog(this, "The order change could not be saved: " + message(failure), "Custom Order", JOptionPane.ERROR_MESSAGE);
             completion.accept(false);
@@ -1165,7 +1309,7 @@ var snapshot=UiTaskRunner.supplyAsync(CustomOrderDataService::loadCatalogSnapsho
         BigDecimal squareUnit=switch(a){case"SQ_IN","SQUARE_INCH","SQUARE_INCHES"->new BigDecimal("0.00064516");case"SQ_FT","SQUARE_FOOT","SQUARE_FEET"->new BigDecimal("0.09290304");case"SQ_CM","SQUARE_CENTIMETRE","SQUARE_CENTIMETERS"->new BigDecimal("0.0001");case"SQ_MM"->new BigDecimal("0.000001");default->BigDecimal.ONE;};
         return squareMetres.divide(squareUnit,6,RoundingMode.HALF_UP);
     }
-    private static boolean can(String permission){return PermissionManager.hasPermission(permission);}private static DefaultTableModel model(String...c){return new DefaultTableModel(c,0){public boolean isCellEditable(int r,int c){return false;}};}private static JTextArea details(){JTextArea a=new JTextArea();a.setEditable(false);a.setLineWrap(true);a.setWrapStyleWord(true);return a;}private static JPanel form(){JPanel p=new JPanel(new GridBagLayout());p.setBorder(new EmptyBorder(8,8,8,8));return p;}private static void row(JPanel p,int y,String label,Component c){GridBagConstraints g=new GridBagConstraints();g.insets=new Insets(4,4,4,4);g.gridy=y;g.gridx=0;g.anchor=GridBagConstraints.WEST;p.add(new JLabel(label),g);g.gridx=1;g.weightx=1;g.fill=GridBagConstraints.HORIZONTAL;p.add(c,g);}static String money(BigDecimal v){return CurrencyFormatter.normalize(v).toPlainString();}private static String decimalText(BigDecimal v){return v==null?"":v.stripTrailingZeros().toPlainString();}private static BigDecimal decimal(JTextField f,String label,boolean required){String v=f.getText().trim();if(v.isBlank()){if(required)throw new IllegalArgumentException("Enter "+label+".");return null;}try{return new BigDecimal(v);}catch(Exception e){throw new IllegalArgumentException("Enter a valid "+label+".");}}static BigDecimal wholeDollar(JTextField f,String label,boolean required){BigDecimal v=decimal(f,label,required);if(v==null)return null;BigDecimal whole=CurrencyFormatter.normalize(v);if(v.compareTo(whole)!=0)throw new IllegalArgumentException("Enter "+label+" in whole dollars; cents are not used.");return whole;}private static BigDecimal nullable(JTextField f){return decimal(f,"value",false);}private static int integer(JTextField f,String label,int min){try{int v=Integer.parseInt(f.getText().trim());if(v<min)throw new Exception();return v;}catch(Exception e){throw new IllegalArgumentException("Enter a valid "+label+" of at least "+min+".");}}private static Long selected(JTable t,DefaultTableModel m){int r=t.getSelectedRow();return r<0?null:Long.valueOf(m.getValueAt(t.convertRowIndexToModel(r),0).toString());}private static String selectedNumber(JTable t,DefaultTableModel m){int r=t.getSelectedRow();return r<0?null:String.valueOf(m.getValueAt(t.convertRowIndexToModel(r),1));}private static String payment(LanCustomOrderWorkflowService.OrderRow x){return x.paymentMethod()+(x.paymentStatus().isBlank()?"":" / "+x.paymentStatus());}private static String productionLabel(String v){return switch(v){case"STARTED"->"Started";case"WAITING_FOR_APPROVAL"->"Waiting for approval";case"DESIGN_APPROVED"->"Design Approved";case"PRINTED"->"Printed";case"FINISHED"->"Finished";case"QUALITY_CHECKED"->"Quality Checked";case"READY"->"Ready";default->"Not Started";};}private static void filter(TableRowSorter<DefaultTableModel>s,JTextField q,JComboBox<String>status){List<RowFilter<Object,Object>>filters=new ArrayList<>();if(!q.getText().isBlank())filters.add(RowFilter.regexFilter("(?i)"+Pattern.quote(q.getText().trim())));if(!"All".equals(status.getSelectedItem()))filters.add(RowFilter.regexFilter("^"+Pattern.quote(String.valueOf(status.getSelectedItem()))+"$",2));s.setRowFilter(filters.isEmpty()?null:RowFilter.andFilter(filters));}private static javax.swing.event.DocumentListener listener(Runnable r){return new javax.swing.event.DocumentListener(){public void insertUpdate(javax.swing.event.DocumentEvent e){r.run();}public void removeUpdate(javax.swing.event.DocumentEvent e){r.run();}public void changedUpdate(javax.swing.event.DocumentEvent e){r.run();}};}private static String message(Throwable e){return e==null?"Unknown error":e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}private void error(Exception e){JOptionPane.showMessageDialog(this,e.getMessage()==null?e.getClass().getSimpleName():e.getMessage(),getTitle(),JOptionPane.ERROR_MESSAGE);}
+    private static boolean can(String permission){return PermissionManager.hasPermission(permission);}private static DefaultTableModel model(String...c){return new DefaultTableModel(c,0){public boolean isCellEditable(int r,int c){return false;}};}private static JTextArea details(){JTextArea a=new JTextArea();a.setEditable(false);a.setLineWrap(true);a.setWrapStyleWord(true);return a;}private static JPanel form(){JPanel p=new JPanel(new GridBagLayout());p.setBorder(new EmptyBorder(8,8,8,8));return p;}private static void row(JPanel p,int y,String label,Component c){GridBagConstraints g=new GridBagConstraints();g.insets=new Insets(4,4,4,4);g.gridy=y;g.gridx=0;g.anchor=GridBagConstraints.WEST;p.add(new JLabel(label),g);g.gridx=1;g.weightx=1;g.fill=GridBagConstraints.HORIZONTAL;p.add(c,g);}static String money(BigDecimal v){return CurrencyFormatter.normalize(v).toPlainString();}private static String decimalText(BigDecimal v){return v==null?"":v.stripTrailingZeros().toPlainString();}private static BigDecimal decimal(JTextField f,String label,boolean required){String v=f.getText().trim();if(v.isBlank()){if(required)throw new IllegalArgumentException("Enter "+label+".");return null;}try{return new BigDecimal(v);}catch(Exception e){throw new IllegalArgumentException("Enter a valid "+label+".");}}static BigDecimal wholeDollar(JTextField f,String label,boolean required){BigDecimal v=decimal(f,label,required);if(v==null)return null;BigDecimal whole=CurrencyFormatter.normalize(v);if(v.compareTo(whole)!=0)throw new IllegalArgumentException("Enter "+label+" in whole dollars; cents are not used.");return whole;}private static BigDecimal nullable(JTextField f){return decimal(f,"value",false);}private static int integer(JTextField f,String label,int min){try{int v=Integer.parseInt(f.getText().trim());if(v<min)throw new Exception();return v;}catch(Exception e){throw new IllegalArgumentException("Enter a valid "+label+" of at least "+min+".");}}private static Long selected(JTable t,DefaultTableModel m){int r=t.getSelectedRow();return r<0?null:Long.valueOf(m.getValueAt(t.convertRowIndexToModel(r),0).toString());}private static String selectedNumber(JTable t,DefaultTableModel m){int r=t.getSelectedRow();return r<0?null:String.valueOf(m.getValueAt(t.convertRowIndexToModel(r),1));}private static String payment(LanCustomOrderWorkflowService.OrderRow x){return x.paymentMethod()+(x.paymentStatus().isBlank()?"":" / "+x.paymentStatus());}private static String productionLabel(String v){return switch(v){case"STARTED"->"In progress";case"WAITING_FOR_APPROVAL"->"Waiting for approval";case"DESIGN_APPROVED"->"Design Approved";case"PRINTED"->"Printed";case"FINISHED"->"Finished";case"QUALITY_CHECKED"->"Quality Checked";case"READY"->"Ready";default->"Not Started";};}private static void filter(TableRowSorter<DefaultTableModel>s,JTextField q,JComboBox<String>status){List<RowFilter<Object,Object>>filters=new ArrayList<>();if(!q.getText().isBlank())filters.add(RowFilter.regexFilter("(?i)"+Pattern.quote(q.getText().trim())));if(!"All".equals(status.getSelectedItem()))filters.add(RowFilter.regexFilter("^"+Pattern.quote(String.valueOf(status.getSelectedItem()))+"$",2));s.setRowFilter(filters.isEmpty()?null:RowFilter.andFilter(filters));}private static javax.swing.event.DocumentListener listener(Runnable r){return new javax.swing.event.DocumentListener(){public void insertUpdate(javax.swing.event.DocumentEvent e){r.run();}public void removeUpdate(javax.swing.event.DocumentEvent e){r.run();}public void changedUpdate(javax.swing.event.DocumentEvent e){r.run();}};}private static String message(Throwable e){return e==null?"Unknown error":e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}private void error(Exception e){JOptionPane.showMessageDialog(this,e.getMessage()==null?e.getClass().getSimpleName():e.getMessage(),getTitle(),JOptionPane.ERROR_MESSAGE);}
     private record CartLine(OrderLineRequest request,List<Path> pendingFiles,CustomItemOption item,VariantOption variant,String setId,CustomOrderShirtText.Saved personalization){
         CartLine(OrderLineRequest request,List<Path> files,CustomItemOption item,VariantOption variant,String setId){this(request,files,item,variant,setId,null);}
         CartLine(OrderLineRequest request,List<Path> files,CustomItemOption item,VariantOption variant){this(request,files,item,variant,null);}

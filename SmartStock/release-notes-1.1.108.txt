@@ -1,0 +1,5 @@
+SmartStock 1.1.108
+
+Includes completed workspace changes across chats through 5 November 2026. Phone Minutes now has a searchable name/account/phone customer picker, a native split workspace and an approved-browser Customer First screen. Unlimited credit minutes can be recorded and reversed while another store is offline or stale; merchandise credit freshness rules remain enforced. Cash/credit history, partial and mixed payments, account statements, receipt reprints, drawer accounting and audited reversals are preserved. Web writes use the authenticated store service, assigned cashier drawers, CSRF checks and durable retry protection.
+
+Includes the Work Queue Display manual updater and current-version display, Windows updater SID permission-check repair, existing account statement corrections and passport photo camera improvements. Update the store server before registers. The mobile minutes gateway requires the new server version. A full installer run as administrator is needed to repair older protected Windows updater scripts. AI model weights remain separate and existing profile models are preserved.

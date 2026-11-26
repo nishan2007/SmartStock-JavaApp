@@ -4,6 +4,22 @@ import java.math.BigDecimal;
 import java.util.*;
 
 final class BusinessCardSeries {
+    static int savedWidth(String start) {
+        String number=start.trim().replaceFirst("^[+-]", "");
+        int point=number.indexOf('.');
+        String whole=point<0?number:number.substring(0,point);
+        return whole.matches("0[0-9]+")?Math.min(40,whole.length()):0;
+    }
+    static List<String> paddedValues(String start,String step,int count,int digits) {
+        if(digits!=0)return values(start,step,count,digits);
+        List<String> plain=values(start,step,count,0);
+        int width=savedWidth(start);
+        for(String value:plain){
+            String whole=value.replaceFirst("^-", "").split("\\.",2)[0];
+            width=Math.max(width,whole.length());
+        }
+        return values(start,step,count,Math.min(40,width));
+    }
     static List<String> values(String start, String step, int count, int digits) {
         if (count < 1 || count > 10000 || digits < 0 || digits > 40)
             throw new IllegalArgumentException("Use 1–10000 rows and 0–40 minimum digits.");

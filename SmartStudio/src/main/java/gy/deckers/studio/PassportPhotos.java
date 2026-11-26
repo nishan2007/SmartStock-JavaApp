@@ -12,7 +12,7 @@ final class PassportPhotos {
     static final double BLEED = 2 * 72 / 25.4;
     private static final double MARK = 4;
     enum Template {
-        GUYANA("Guyana — 35 × 45 mm · 4 photos", 35 * 72 / 25.4, 45 * 72 / 25.4, 2, 2),
+        GUYANA("Guyana — 1.378 × 1.772 in (35 × 45 mm) · 4 photos", 35 * 72 / 25.4, 45 * 72 / 25.4, 2, 2),
         US("US — 2 × 2 inches · 2 photos", 144, 144, 1, 2);
         final String label;
         final double width, height;

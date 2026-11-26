@@ -19,6 +19,8 @@ class OrdersDashboardQueuesTest {
         var actions=LanOrdersDashboardService.class.getDeclaredMethod("actions",Connection.class,int.class);
         actions.setAccessible(true);actions.invoke(null,c,7);
         assertTrue(sql.get().contains("status NOT IN ('DELIVERED','CANCELLED')"));
+        assertTrue(sql.get().contains("production_states"));
+        assertTrue(sql.get().contains("COALESCE(l.return_status,'NONE')<>'FULL'"));
         assertFalse(sql.get().contains("balance_due,0)>0"));
         assertFalse(sql.get().contains("LIMIT 100"));
         assertEquals(7,location.get());

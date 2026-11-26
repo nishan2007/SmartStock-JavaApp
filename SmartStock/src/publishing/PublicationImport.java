@@ -47,7 +47,7 @@ public final class PublicationImport {
 
   /** Preserve compressed artwork exactly; a preview must never replace the source asset. */
   public static void addEncodedImage(Publication p,Publication.Page page,byte[] bytes,double x,double y,double w,double h)throws IOException {
-    if(bytes.length==0||bytes.length>PublicationLargeFiles.MAX_IMAGE_BYTES)throw new IOException("Artwork exceeds 100 MiB.");
+    if(bytes.length==0||bytes.length>PublicationLargeFiles.MAX_IMAGE_BYTES)throw new IOException("Artwork exceeds the template budget.");
     try(var input=ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))){
       var readers=ImageIO.getImageReaders(input);if(!readers.hasNext())throw new IOException("Unsupported image.");
       var reader=readers.next();try{reader.setInput(input);String format=reader.getFormatName();if(!format.equalsIgnoreCase("png")&&!format.equalsIgnoreCase("jpeg"))throw new IOException("Choose PNG or JPEG artwork.");int width=reader.getWidth(0),height=reader.getHeight(0);if(width<=0||height<=0||(long)width*height>100000000)throw new IOException("Artwork exceeds 100 megapixels.");}finally{reader.dispose();}

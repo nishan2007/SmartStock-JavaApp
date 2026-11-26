@@ -24,7 +24,9 @@ final class OverseasCashChecker extends JPanel {
         JPanel bottom=new JPanel(new GridLayout(0,1,0,3));bottom.setOpaque(false);bottom.add(totals);bottom.add(new JLabel("Shortage / overage reason"));bottom.add(reason);add(bottom,BorderLayout.SOUTH);
         model.addTableModelListener(e->{if(!updating)recalculate();});
     }
-    void display(OverseasCashService.FundReport fund,boolean saved){
+    void display(OverseasCashService.FundReport fund,boolean saved){display(fund,saved,false);}
+    void display(OverseasCashService.FundReport fund,boolean saved,boolean preserve){
+        if(preserve&&!saved&&!this.saved&&model.getRowCount()>0){expected=fund==null?BigDecimal.ZERO:fund.carriedForward();recalculate();return;}
         this.saved=saved;expected=fund==null?BigDecimal.ZERO:fund.carriedForward();updating=true;model.setRowCount(0);
         var check=fund==null?null:fund.verification();
         for(int d:OverseasCashService.COUNT_DENOMINATIONS)model.addRow(new Object[]{d,check==null?0:check.denominations().getOrDefault(Integer.toString(d),0),""});

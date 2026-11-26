@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">SmartStudio Creative Brush</title>
+  <desc id="description">A purple and gold artist's brush crossing a warm white folded page on a rounded plum tile. Refined scalable vector interpretation of the selected SmartStudio icon concept.</desc>
+  <defs>
+    <linearGradient id="tile" x1="120" y1="72" x2="880" y2="958" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9034C6"/><stop offset=".24" stop-color="#702B95"/><stop offset=".60" stop-color="#4F1E66"/><stop offset="1" stop-color="#2D0B37"/>
+    </linearGradient>
+    <radialGradient id="tileGlow" cx=".23" cy=".06" r=".9"><stop stop-color="#C174FA" stop-opacity=".22"/><stop offset="1" stop-color="#C174FA" stop-opacity="0"/></radialGradient>
+    <linearGradient id="paper" x1="250" y1="240" x2="780" y2="820" gradientUnits="userSpaceOnUse"><stop stop-color="#FFFEFC"/><stop offset=".55" stop-color="#FCF8EF"/><stop offset="1" stop-color="#EFE5D4"/></linearGradient>
+    <linearGradient id="fold" x1="684" y1="224" x2="746" y2="326" gradientUnits="userSpaceOnUse"><stop stop-color="#F8F0E2"/><stop offset=".45" stop-color="#FFFDF8"/><stop offset="1" stop-color="#D5BD97"/></linearGradient>
+    <linearGradient id="gold" x1="464" y1="0" x2="560" y2="0" gradientUnits="userSpaceOnUse"><stop stop-color="#8B4D0C"/><stop offset=".14" stop-color="#CD8C2C"/><stop offset=".33" stop-color="#FFE5A0"/><stop offset=".48" stop-color="#F5CE78"/><stop offset=".73" stop-color="#D49A38"/><stop offset=".91" stop-color="#A36216"/><stop offset="1" stop-color="#E8B956"/></linearGradient>
+    <linearGradient id="handle" x1="476" y1="0" x2="548" y2="0" gradientUnits="userSpaceOnUse"><stop stop-color="#2A083D"/><stop offset=".2" stop-color="#521077"/><stop offset=".43" stop-color="#9646D1"/><stop offset=".56" stop-color="#7625AC"/><stop offset=".82" stop-color="#3F0B5D"/><stop offset="1" stop-color="#290638"/></linearGradient>
+    <linearGradient id="bristles" x1="469" y1="160" x2="557" y2="340" gradientUnits="userSpaceOnUse"><stop stop-color="#FFE9AC"/><stop offset=".26" stop-color="#EDBB58"/><stop offset=".62" stop-color="#C38524"/><stop offset="1" stop-color="#71400E"/></linearGradient>
+    <filter id="paperShadow" x="-25%" y="-20%" width="155%" height="155%" color-interpolation-filters="sRGB"><feDropShadow dx="0" dy="15" stdDeviation="15" flood-color="#210925" flood-opacity=".28"/></filter>
+    <filter id="foldShadow" x="-40%" y="-40%" width="190%" height="190%" color-interpolation-filters="sRGB"><feDropShadow dx="-5" dy="8" stdDeviation="7" flood-color="#806039" flood-opacity=".25"/></filter>
+    <filter id="brushShadow" x="-60%" y="-15%" width="240%" height="145%" color-interpolation-filters="sRGB"><feDropShadow dx="10" dy="12" stdDeviation="9" flood-color="#220A22" flood-opacity=".35"/></filter>
+    <clipPath id="tileClip"><rect x="64" y="64" width="896" height="896" rx="155"/></clipPath>
+    <clipPath id="bristleClip"><path d="M516 109C521 165 571 194 577 238C584 281 555 315 543 343C526 351 501 351 481 343C466 321 446 302 446 272C445 208 506 171 516 109Z"/></clipPath>
+    <clipPath id="brushContour"><path d="M516 109C521 165 571 194 577 238C584 281 555 315 546 338L554 430C555 438 555 446 554 455C563 548 551 680 540 798L534 867L531 884Q528 908 512 916Q496 908 493 884L490 867L484 798C473 680 461 548 470 455C469 447 469 438 470 430L478 338C466 321 446 302 446 272C445 208 506 171 516 109Z"/></clipPath>
+    <clipPath id="paperContour"><path d="M276 212H630C660 212 685 230 713 260L770 319C786 338 790 351 790 378V786Q790 832 744 832H276Q230 832 230 786V258Q230 212 276 212Z"/></clipPath>
+  </defs>
+  <!-- Transparent outside the rounded tile; all visible artwork is vector. -->
+  <rect x="64" y="64" width="896" height="896" rx="155" fill="url(#tile)"/>
+  <rect x="64" y="64" width="896" height="896" rx="155" fill="url(#tileGlow)"/>
+  <rect x="66" y="66" width="892" height="892" rx="153" fill="none" stroke="#D899FF" stroke-opacity=".22" stroke-width="3"/>
+  <g clip-path="url(#tileClip)">
+    <path d="M276 212H630C660 212 685 230 713 260L770 319C786 338 790 351 790 378V786Q790 832 744 832H276Q230 832 230 786V258Q230 212 276 212Z" fill="url(#paper)" filter="url(#paperShadow)"/>
+    <g clip-path="url(#paperContour)"><path d="M630 212C675 216 642 285 677 315C704 338 758 307 790 378C790 351 786 338 770 319L713 260C685 230 660 212 630 212Z" fill="url(#fold)" filter="url(#foldShadow)"/></g>
+    <path d="M276 214H621" fill="none" stroke="#FFFFFF" stroke-opacity=".8" stroke-width="2"/>
+    <g transform="rotate(43 512 512)" filter="url(#brushShadow)">
+      <!-- A continuous silhouette and shared clip eliminate gaps and protruding joins. -->
+      <path d="M516 109C521 165 571 194 577 238C584 281 555 315 546 338L554 430C555 438 555 446 554 455C563 548 551 680 540 798L534 867L531 884Q528 908 512 916Q496 908 493 884L490 867L484 798C473 680 461 548 470 455C469 447 469 438 470 430L478 338C466 321 446 302 446 272C445 208 506 171 516 109Z" fill="url(#gold)"/>
+      <g clip-path="url(#brushContour)">
+      <!-- Sculpted bristles, with restrained vector hair highlights. -->
+      <path d="M516 109C521 165 571 194 577 238C584 281 555 315 543 343C526 351 501 351 481 343C466 321 446 302 446 272C445 208 506 171 516 109Z" fill="url(#bristles)"/>
+      <g clip-path="url(#bristleClip)" fill="none" stroke-linecap="round">
+        <path d="M480.00 350C425.00 274 446.00 231 511.00 112" stroke="#754310" stroke-opacity="0.120" stroke-width="0.8"/>
+        <path d="M481.73 350C429.59 274 449.35 231 511.24 115" stroke="#FFF0BB" stroke-opacity="0.145" stroke-width="1.0"/>
+        <path d="M483.46 350C434.19 274 452.70 231 511.49 118" stroke="#FFF0BB" stroke-opacity="0.170" stroke-width="1.2"/>
+        <path d="M485.19 350C438.78 274 456.05 231 511.73 121" stroke="#754310" stroke-opacity="0.195" stroke-width="0.8"/>
+        <path d="M486.92 350C443.38 274 459.41 231 511.97 124" stroke="#FFF0BB" stroke-opacity="0.220" stroke-width="1.0"/>
+        <path d="M488.65 350C447.97 274 462.76 231 512.22 127" stroke="#FFF0BB" stroke-opacity="0.120" stroke-width="1.2"/>
+        <path d="M490.38 350C452.57 274 466.11 231 512.46 130" stroke="#754310" stroke-opacity="0.145" stroke-width="0.8"/>
+        <path d="M492.11 350C457.16 274 469.46 231 512.70 112" stroke="#FFF0BB" stroke-opacity="0.170" stroke-width="1.0"/>
+        <path d="M493.84 350C461.76 274 472.81 231 512.95 115" stroke="#FFF0BB" stroke-opacity="0.195" stroke-width="1.2"/>
+        <path d="M495.57 350C466.35 274 476.16 231 513.19 118" stroke="#754310" stroke-opacity="0.220" stroke-width="0.8"/>
+        <path d="M497.30 350C470.95 274 479.51 231 513.43 121" stroke="#FFF0BB" stroke-opacity="0.120" stroke-width="1.0"/>
+        <path d="M499.03 350C475.54 274 482.86 231 513.68 124" stroke="#FFF0BB" stroke-opacity="0.145" stroke-width="1.2"/>
+        <path d="M500.76 350C480.14 274 486.22 231 513.92 127" stroke="#754310" stroke-opacity="0.170" stroke-width="0.8"/>
+        <path d="M502.49 350C484.73 274 489.57 231 514.16 130" stroke="#FFF0BB" stroke-opacity="0.195" stroke-width="1.0"/>
+        <path d="M504.22 350C489.32 274 492.92 231 514.41 112" stroke="#FFF0BB" stroke-opacity="0.220" stroke-width="1.2"/>
+        <path d="M505.95 350C493.92 274 496.27 231 514.65 115" stroke="#754310" stroke-opacity="0.120" stroke-width="0.8"/>
+        <path d="M507.68 350C498.51 274 499.62 231 514.89 118" stroke="#FFF0BB" stroke-opacity="0.145" stroke-width="1.0"/>
+        <path d="M509.41 350C503.11 274 502.97 231 515.14 121" stroke="#FFF0BB" stroke-opacity="0.170" stroke-width="1.2"/>
+        <path d="M511.14 350C507.70 274 506.32 231 515.38 124" stroke="#754310" stroke-opacity="0.195" stroke-width="0.8"/>
+        <path d="M512.86 350C512.30 274 509.68 231 515.62 127" stroke="#FFF0BB" stroke-opacity="0.220" stroke-width="1.0"/>
+        <path d="M514.59 350C516.89 274 513.03 231 515.86 130" stroke="#FFF0BB" stroke-opacity="0.120" stroke-width="1.2"/>
+        <path d="M516.32 350C521.49 274 516.38 231 516.11 112" stroke="#754310" stroke-opacity="0.145" stroke-width="0.8"/>
+        <path d="M518.05 350C526.08 274 519.73 231 516.35 115" stroke="#FFF0BB" stroke-opacity="0.170" stroke-width="1.0"/>
+        <path d="M519.78 350C530.68 274 523.08 231 516.59 118" stroke="#FFF0BB" stroke-opacity="0.195" stroke-width="1.2"/>
+        <path d="M521.51 350C535.27 274 526.43 231 516.84 121" stroke="#754310" stroke-opacity="0.220" stroke-width="0.8"/>
+        <path d="M523.24 350C539.86 274 529.78 231 517.08 124" stroke="#FFF0BB" stroke-opacity="0.120" stroke-width="1.0"/>
+        <path d="M524.97 350C544.46 274 533.14 231 517.32 127" stroke="#FFF0BB" stroke-opacity="0.145" stroke-width="1.2"/>
+        <path d="M526.70 350C549.05 274 536.49 231 517.57 130" stroke="#754310" stroke-opacity="0.170" stroke-width="0.8"/>
+        <path d="M528.43 350C553.65 274 539.84 231 517.81 112" stroke="#FFF0BB" stroke-opacity="0.195" stroke-width="1.0"/>
+        <path d="M530.16 350C558.24 274 543.19 231 518.05 115" stroke="#FFF0BB" stroke-opacity="0.220" stroke-width="1.2"/>
+        <path d="M531.89 350C562.84 274 546.54 231 518.30 118" stroke="#754310" stroke-opacity="0.120" stroke-width="0.8"/>
+        <path d="M533.62 350C567.43 274 549.89 231 518.54 121" stroke="#FFF0BB" stroke-opacity="0.145" stroke-width="1.0"/>
+        <path d="M535.35 350C572.03 274 553.24 231 518.78 124" stroke="#FFF0BB" stroke-opacity="0.170" stroke-width="1.2"/>
+        <path d="M537.08 350C576.62 274 556.59 231 519.03 127" stroke="#754310" stroke-opacity="0.195" stroke-width="0.8"/>
+        <path d="M538.81 350C581.22 274 559.95 231 519.27 130" stroke="#FFF0BB" stroke-opacity="0.220" stroke-width="1.0"/>
+        <path d="M540.54 350C585.81 274 563.30 231 519.51 112" stroke="#FFF0BB" stroke-opacity="0.120" stroke-width="1.2"/>
+        <path d="M542.27 350C590.41 274 566.65 231 519.76 115" stroke="#754310" stroke-opacity="0.145" stroke-width="0.8"/>
+        <path d="M544.00 350C595.00 274 570.00 231 520.00 118" stroke="#FFF0BB" stroke-opacity="0.170" stroke-width="1.0"/>
+      </g>
+
+        <!-- Ferrule shading is painted inside the same uninterrupted contour. -->
+        <path d="M450 334Q512 358 577 334V461H450Z" fill="url(#gold)"/>
+        <path d="M450 335Q512 361 577 335" fill="none" stroke="#FFE6A6" stroke-opacity=".8" stroke-width="3"/>
+        <path d="M449 421Q512 447 577 421" fill="none" stroke="#9D6220" stroke-opacity=".5" stroke-width="2"/>
+        <path d="M449 425Q512 451 577 425" fill="none" stroke="#FFE9B1" stroke-opacity=".65" stroke-width="2.5"/>
+        <path d="M449 444Q512 470 577 444" fill="none" stroke="#925414" stroke-opacity=".3" stroke-width="1.5"/>
+        <!-- Full-width paint layers are clipped to the continuous silhouette. -->
+        <path d="M440 449Q512 480 584 449V905H440Z" fill="url(#handle)"/>
+        <path d="M485 482C486 573 493 698 501 813" fill="none" stroke="#C87AFF" stroke-opacity=".23" stroke-width="9" stroke-linecap="round"/>
+        <path d="M460 854Q512 884 564 854V940H460Z" fill="url(#gold)"/>
+        <path d="M460 858Q512 888 564 858" fill="none" stroke="#F9D88B" stroke-opacity=".8" stroke-width="2"/>
+      </g>
+    </g>
+  </g>
+</svg>

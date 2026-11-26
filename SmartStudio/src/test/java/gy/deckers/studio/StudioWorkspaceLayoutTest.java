@@ -10,6 +10,26 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class StudioWorkspaceLayoutTest {
     @TempDir Path library;
+    @Test void outputActionsShareTabStripAndLeaveFullWidthTools()throws Exception{
+        SwingUtilities.invokeAndWait(()->{
+            var shell=new StudioWorkspaceShell(new JPanel());shell.title("Bill Books");
+            for(String tab:new String[]{"Home","Insert","Layout","Print Setup","Data","View","Riso","Numbering"})shell.ribbon().add(tab,"Tools",new JButton("Example"));
+            for(String action:new String[]{"Save","Print","Export PDF"})shell.addTools(new JButton(action));
+            for(int width:new int[]{910,1366,1920}){
+                shell.setSize(width,768);layout(shell);
+                JButton save=findButton(shell,"Save"),print=findButton(shell,"Print"),pdf=findButton(shell,"Export PDF");
+                JTabbedPane tabs=find(shell.ribbon(),JTabbedPane.class);
+                Rectangle bounds=tabs.getBoundsAt(0);
+                Point first=SwingUtilities.convertPoint(tabs,bounds.x,bounds.y,shell);
+                Point actions=SwingUtilities.convertPoint(save,0,0,shell);
+                if(width>=1366)assertTrue(Math.abs(actions.y-first.y)<8,"width="+width+" actions="+actions+" tab="+first);
+                assertNotNull(pdf.getIcon());assertEquals(save.getIcon().getIconHeight(),print.getIcon().getIconHeight());
+                assertEquals(Color.WHITE,print.getForeground());assertEquals(save.getForeground(),pdf.getForeground());
+                assertTrue(SwingUtilities.convertPoint(pdf,pdf.getWidth(),0,shell).x<=width);
+                try{render(shell,"ribbon-header-"+width);}catch(Exception ex){throw new RuntimeException(ex);}
+            }
+        });
+    }
     @Test void inspectorCanResizeAndKeepsWidthAfterHiding()throws Exception{
         SwingUtilities.invokeAndWait(()->{
             var shell=new StudioWorkspaceShell(new JPanel());shell.addSection("Layers",new JLabel("Layers"));shell.setSize(1100,600);layout(shell);click(shell,"Layers");layout(shell);
@@ -19,9 +39,10 @@ class StudioWorkspaceLayoutTest {
     }
     @Test void labelToolbarKeepsZoomVisibleAtMinimumWidth()throws Exception{
         SwingUtilities.invokeAndWait(()->{
-            BusinessCardsPanel panel=new BusinessCardsPanel(true);panel.setSize(780,580);layout(panel);
-            JButton zoom=findButton(panel,"+");assertNotNull(zoom);Container toolbar=zoom.getParent();
-            assertTrue(zoom.getX()+zoom.getWidth()<=toolbar.getWidth());assertTrue(zoom.getY()+zoom.getHeight()<=toolbar.getHeight());
+            BusinessCardsPanel panel=new BusinessCardsPanel(true);panel.setSize(780,580);
+            StudioRibbon ribbon=find(panel,StudioRibbon.class);ribbon.select("View");ribbon.setCollapsed(false);layout(panel);
+            JButton zoom=findButton(panel,"Zoom in");assertNotNull(zoom);Container toolbar=zoom.getParent();
+            assertTrue(zoom.getX()+zoom.getWidth()<=toolbar.getWidth());assertTrue(zoom.getY()+zoom.getHeight()<=toolbar.getHeight(),"zoom="+zoom.getBounds()+" toolbar="+toolbar.getBounds()+" ribbon="+ribbon.getBounds());
             try{var field=BusinessCardsPanel.class.getDeclaredField("refresh");field.setAccessible(true);((Timer)field.get(panel)).stop();}catch(Exception ex){throw new RuntimeException(ex);}
         });
     }
@@ -71,6 +92,29 @@ class StudioWorkspaceLayoutTest {
             finally{try{var field=BadgeCardsPanel.class.getDeclaredField("refresh");field.setAccessible(true);((Timer)field.get(panel)).stop();}catch(Exception ex){throw new RuntimeException(ex);}}
         });}finally{if(previous==null)System.clearProperty("smartstudio.badge.folder");else System.setProperty("smartstudio.badge.folder",previous);}
     }
+    @Test void insertKeepsBarcodeAndQrCommandsVisibleInPublicationWorkspaces()throws Exception{
+        SwingUtilities.invokeAndWait(()->{
+            for(boolean labels:new boolean[]{false,true}){
+                BusinessCardsPanel panel=new BusinessCardsPanel(labels);
+                StudioRibbon ribbon=find(panel,StudioRibbon.class);
+                ribbon.select("Insert");ribbon.setCollapsed(false);
+                for(int width:new int[]{780,1100,1366}){
+                    panel.setSize(width,760);layout(panel);
+                    JTabbedPane tabs=find(ribbon,JTabbedPane.class);
+                    Container insert=(Container)tabs.getSelectedComponent();
+                    JButton barcode=findButton(insert,"Add barcode…"),qr=findButton(insert,"Add QR code…");
+                    assertNotNull(barcode,"Barcode missing at "+width+" tab="+tabs.getTitleAt(tabs.getSelectedIndex())+" groups="+java.util.Arrays.toString(insert.getComponents()));assertNotNull(qr,"QR missing at "+width);
+                    for(JButton command:new JButton[]{barcode,qr}){
+                        assertTrue(command.isEnabled());assertTrue(command.getWidth()>0);
+                        Rectangle bounds=SwingUtilities.convertRectangle(command.getParent(),command.getBounds(),insert);
+                        assertTrue(new Rectangle(0,0,insert.getWidth(),insert.getHeight()).contains(bounds),"Code command clipped at "+width+": "+bounds);
+                    }
+                    if(!labels&&width==1100)try{render(panel,"insert-code-ribbon");}catch(Exception ex){throw new RuntimeException(ex);}
+                }
+            }
+        });
+    }
+
     private static void render(JComponent panel,String name)throws Exception{
         BufferedImage image=new BufferedImage(panel.getWidth(),panel.getHeight(),BufferedImage.TYPE_INT_RGB);
         Graphics2D g=image.createGraphics();panel.printAll(g);g.dispose();javax.imageio.ImageIO.write(image,"png",Path.of("target",name+".png").toFile());

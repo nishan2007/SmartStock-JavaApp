@@ -7,8 +7,41 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 class StudioTemplateStoreTest {
  @TempDir Path folder;
+ @Test void backPageUsesTheSameServerValidationAndRoundTrips()throws Exception{
+  var store=new StudioTemplateStore(folder);var request=save(UUID.randomUUID().toString(),"Two sides","");
+  var content=JsonParser.parseString(request.get("content").getAsString()).getAsJsonObject();
+  var back=new JsonArray();back.add(JsonParser.parseString("{\"type\":\"RECT\",\"x\":0,\"y\":0,\"width\":20,\"height\":10}"));
+  content.add("backElements",back);request.addProperty("content",content.toString());
+  var saved=store.execute(1,request);request.add("expected",saved.get("sha256"));
+  var get=action("GET");get.add("id",request.get("id"));assertEquals(content.toString(),store.execute(1,get).get("content").getAsString());
+  back.get(0).getAsJsonObject().addProperty("personalPhoto","private");request.addProperty("content",content.toString());
+  assertThrows(IllegalArgumentException.class,()->store.execute(1,request));
+ }
+ @Test void layerSettingsAreReusableButPersonalDataAndInvalidSettingsAreRejected()throws Exception{
+  var store=new StudioTemplateStore(folder);var request=save(UUID.randomUUID().toString(),"Rotated","");
+  var content=JsonParser.parseString(request.get("content").getAsString()).getAsJsonObject();
+  var element=JsonParser.parseString("{\"type\":\"RECT\",\"x\":1,\"y\":1,\"width\":20,\"height\":80,\"rotation\":90,\"hidden\":true,\"transparency\":25}").getAsJsonObject();
+  content.getAsJsonArray("elements").add(element);request.addProperty("content",content.toString());
+  var saved=store.execute(1,request);request.add("expected",saved.get("sha256"));
+  var get=action("GET");get.add("id",request.get("id"));assertEquals(content.toString(),store.execute(1,get).get("content").getAsString());
+  for(String field:new String[]{"rotation","transparency","hidden","personalPhoto"}){
+   var invalid=content.deepCopy();invalid.getAsJsonArray("elements").get(0).getAsJsonObject().addProperty(field,999);
+   request.addProperty("content",invalid.toString());assertThrows(IllegalArgumentException.class,()->store.execute(1,request),field);
+  }
+ }
  @Test void textFormattingFieldsCanBeSharedAndInvalidOutlineIsRejected()throws Exception{
   var store=new StudioTemplateStore(folder);var request=save(UUID.randomUUID().toString(),"Styled","");var content=JsonParser.parseString(request.get("content").getAsString()).getAsJsonObject();var element=JsonParser.parseString("{\"label\":\"Name\",\"type\":\"TEXT\",\"text\":\"Hello\",\"x\":1,\"y\":1,\"width\":20,\"height\":10,\"italic\":true,\"underline\":true,\"strike\":true,\"textOutline\":true,\"textOutlineColor\":\"#0000ff\",\"textOutlineWidth\":0.3}").getAsJsonObject();content.getAsJsonArray("elements").add(element);request.addProperty("content",content.toString());assertNotNull(store.execute(1,request).get("sha256"));element.addProperty("textOutlineWidth",-1);request.addProperty("content",content.toString());assertThrows(IllegalArgumentException.class,()->store.execute(1,request));
+ }
+ @Test void badgeTextAlignmentRoundTripsAndRejectsInvalidValues()throws Exception{
+  var store=new StudioTemplateStore(folder);var request=save(UUID.randomUUID().toString(),"Aligned","");
+  var design=JsonParser.parseString(request.get("content").getAsString()).getAsJsonObject();
+  var layer=JsonParser.parseString("{\"type\":\"TEXT\",\"text\":\"Hello\",\"x\":1,\"y\":1,\"width\":20,\"height\":10,\"textAlignment\":\"RIGHT\"}").getAsJsonObject();
+  design.getAsJsonArray("elements").add(layer);request.addProperty("content",design.toString());
+  var saved=store.execute(1,request);
+  var get=action("GET");get.add("id",request.get("id"));
+  assertEquals(design.toString(),store.execute(1,get).get("content").getAsString());
+  request.add("expected",saved.get("sha256"));layer.addProperty("textAlignment","BOTTOM");request.addProperty("content",design.toString());
+  assertThrows(IllegalArgumentException.class,()->store.execute(1,request));
  }
  JsonObject save(String id,String name,String expected){JsonObject r=new JsonObject();r.addProperty("action","SAVE");r.addProperty("id",id);r.addProperty("name",name);r.addProperty("expected",expected);r.addProperty("content","{\"formatVersion\":1,\"name\":\""+name+"\",\"widthMm\":85.6,\"heightMm\":54,\"elements\":[]}");return r;}
  JsonObject action(String action){JsonObject r=new JsonObject();r.addProperty("action",action);return r;}

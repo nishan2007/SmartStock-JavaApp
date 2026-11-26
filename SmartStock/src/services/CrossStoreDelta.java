@@ -9,7 +9,9 @@ final class CrossStoreDelta {
     static final int PAGE_SIZE = 1_000;
     static final List<String> TABLES = List.of("products", "product_barcodes", "inventory", "sales",
             "sale_items", "sale_returns", "sale_return_items", "customer_account_transactions",
-            "custom_orders", "quotations", "invoices");
+            "custom_orders", "quotations", "invoices", "phone_minutes_sales");
+    static final List<String> ORDER_DETAIL_TABLES = List.of(
+            "custom_order_lines", "custom_order_payments", "custom_order_audit_log", "custom_order_line_deliveries", "custom_order_line_production_history", "custom_order_line_returns", "custom_order_line_print_addons");
     @FunctionalInterface interface Rpc { JsonObject call(String operation, JsonObject body) throws SQLException; }
     record Row(JsonElement key, String hash, JsonObject data) { }
     record Baseline(String fingerprint, Map<JsonElement,Row> rows) { }
@@ -28,8 +30,12 @@ final class CrossStoreDelta {
         }
         Map<String,Map<JsonElement,Row>> staged = new LinkedHashMap<>();
         Set<String> changed = new LinkedHashSet<>();
-        for (String table : TABLES) {
+        List<String> requested = new ArrayList<>(TABLES);
+        requested.addAll(ORDER_DETAIL_TABLES);
+        tables: for (String table : requested) {
             CloudSyncManifest.TableInfo info = manifest.tables().get(table);
+            boolean optionalDetail = ORDER_DETAIL_TABLES.contains(table);
+            if (optionalDetail && info == null) continue;
             if (info==null || info.rowCount()<0 || info.fingerprint()==null
                     || !info.fingerprint().matches("[0-9a-f]{64}")) {
                 throw new SQLException("Cloud snapshot lacks changed-row metadata for " + table + ".");
@@ -40,14 +46,20 @@ final class CrossStoreDelta {
                 staged.put(table,existing);
                 continue;
             }
-            changed.add(table);
             Map<JsonElement,String> hashes = new LinkedHashMap<>();
             long cursor = 0;
             while (true) {
                 JsonObject request = request(location,manifest.snapshotGenerationId(),table);
                 request.addProperty("p_after_sequence",cursor);
                 request.addProperty("p_limit",PAGE_SIZE);
-                JsonObject page = rpc.call("smartstock_cross_store_row_hashes",request);
+                JsonObject page;
+                try {
+                    page=rpc.call("smartstock_cross_store_row_hashes",request);
+                } catch (SQLException ex) {
+                    // Keep core refresh working against cloud versions published before order details.
+                    if (optionalDetail && cursor==0 && "0A000".equals(ex.getSQLState())) continue tables;
+                    throw ex;
+                }
                 JsonArray rows = rows(page,manifest.snapshotGenerationId());
                 long next = cursor;
                 for (JsonElement element : rows) {
@@ -90,6 +102,7 @@ final class CrossStoreDelta {
                 if (!pending.isEmpty()) throw new SQLException("Cloud changed-row response is incomplete.");
             }
             // Keys absent from the complete listing are deletions, including an empty table.
+            changed.add(table);
             staged.put(table,Map.copyOf(nextRows));
         }
         return new Download(Map.copyOf(staged),Set.copyOf(changed));

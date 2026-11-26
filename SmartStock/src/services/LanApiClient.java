@@ -553,9 +553,27 @@ public final class LanApiClient {
     }
 
     public static List<CustomerAccount> loadCustomerAccounts() throws Exception {
+        return loadSaleAccounts().customers();
+    }
+
+    public static SaleAccounts loadSaleAccounts() throws Exception {
         JsonObject data = post("/v1/customers/accounts", new JsonObject(), true, true);
         CustomerAccount[] accounts = GSON.fromJson(data.getAsJsonArray("accounts"), CustomerAccount[].class);
-        return accounts == null ? List.of() : List.of(accounts);
+        return new SaleAccounts(accounts == null ? List.of() : List.of(accounts),
+                GSON.fromJson(data.get("expenseAccount"), StoreExpenseAccount.class));
+    }
+
+    public record SaleAccounts(List<CustomerAccount> customers, StoreExpenseAccount expenseAccount) {}
+    public record StoreExpenseAccount(int storeId, String name) {}
+    public record ExpenseCheckoutLine(int productId, int quantity) {}
+    public record ExpenseCheckoutRequest(int storeId, String representativeName, String signaturePngBase64,
+                                         List<ExpenseCheckoutLine> lines) {}
+    public record ExpenseCheckoutResult(String checkoutId, String accountName, BigDecimal total) {}
+
+    public static ExpenseCheckoutResult checkoutExpense(ExpenseCheckoutRequest request, String key) throws Exception {
+        requireIdempotencyKey(key, "An expense checkout idempotency key is required.");
+        return GSON.fromJson(stockLedger("checkout", GSON.toJsonTree(request).getAsJsonObject(), key),
+                ExpenseCheckoutResult.class);
     }
 
     public static CashDrawerStatus currentCashDrawer() throws Exception {
@@ -634,9 +652,19 @@ public final class LanApiClient {
                 Map.of("Idempotency-Key",idempotencyKey)),ReceivingBarcodeResult.class);
     }
 
+    public static JsonObject productTagsState() throws Exception {
+        return post("/v1/products/tags/state",new JsonObject(),true,true);
+    }
+    public static JsonObject updateProductTags(JsonObject request,String key) throws Exception {
+        return post("/v1/products/tags/update",request,true,true,Map.of("Idempotency-Key",key));
+    }
+
     public static InventoryResult loadInventory(InventoryRequest request)throws Exception{
-        loadProductGroups();
-        return GSON.fromJson(post("/v1/inventory/list",GSON.toJsonTree(request).getAsJsonObject(),true,true),InventoryResult.class);
+        return loadInventory(request,List.of());
+    }
+    public static InventoryResult loadInventory(InventoryRequest request,List<String> tagIds)throws Exception{
+        loadProductGroups();JsonObject body=GSON.toJsonTree(request).getAsJsonObject();body.add("tagIds",GSON.toJsonTree(tagIds));
+        return GSON.fromJson(post("/v1/inventory/list",body,true,true),InventoryResult.class);
     }
 
     public static void updateInventoryCell(InventoryCellUpdate request,String idempotencyKey)throws Exception{
@@ -711,9 +739,26 @@ public final class LanApiClient {
                 Map.of("Idempotency-Key",idempotencyKey)),CreateTransferResult.class);
     }
 
+    public static CreateTransferResult changeTransfer(long transferId,String action,CreateTransferRequest change,String key)throws Exception {
+        return changeTransfer(transferId,action,change,null,key);
+    }
+
+    public static CreateTransferResult changeTransfer(long transferId,String action,CreateTransferRequest change,CreateTransferRequest expected,String key)throws Exception {
+        requireIdempotencyKey(key,"Transfer change idempotency key is required.");
+        JsonObject body=change==null?new JsonObject():GSON.toJsonTree(change).getAsJsonObject();
+        body.addProperty("transferId",transferId);body.addProperty("action",action);
+        if(expected!=null){body.add("expectedLines",GSON.toJsonTree(expected.lines()));body.addProperty("expectedNote",expected.note());}
+        return GSON.fromJson(post("/v1/transfers/change",body,true,true,Map.of("Idempotency-Key",key)),CreateTransferResult.class);
+    }
+
     public static ReceiveTransferResult receiveTransfer(long transferId,String idempotencyKey)throws Exception{
+        return receiveTransfer(transferId,null,idempotencyKey);
+    }
+
+    public static ReceiveTransferResult receiveTransfer(long transferId,List<TransferLine> expected,String idempotencyKey)throws Exception {
         requireIdempotencyKey(idempotencyKey,"Transfer receiving idempotency key is required.");
         JsonObject request=new JsonObject();request.addProperty("transferId",transferId);
+        if(expected!=null)request.add("expectedLines",GSON.toJsonTree(expected));
         return GSON.fromJson(post("/v1/transfers/receive",request,true,true,
                 Map.of("Idempotency-Key",idempotencyKey)),ReceiveTransferResult.class);
     }
@@ -791,6 +836,64 @@ public final class LanApiClient {
         return rows==null?List.of():List.of(rows);
     }
 
+    public static ImageCoverageSnapshot imageCoverage() throws Exception {
+        JsonObject response=post("/v1/products/image-coverage",new JsonObject(),true,true);
+        ImageCoverage[] images=GSON.fromJson(response.getAsJsonArray("images"),ImageCoverage[].class);
+        StudioProduct[] products=GSON.fromJson(response.getAsJsonArray("products"),StudioProduct[].class);
+        AdDraftSummary[] drafts=GSON.fromJson(response.getAsJsonArray("drafts"),AdDraftSummary[].class);
+        return new ImageCoverageSnapshot(products==null?List.of():List.of(products),
+                images==null?List.of():List.of(images),drafts==null?List.of():List.of(drafts));
+    }
+
+    public static void assignApprovedAdImage(long productId,String kind,String reference) throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("productId",productId);
+        request.addProperty("kind",kind);request.addProperty("reference",reference);
+        post("/v1/products/image-coverage-assign",request,true,true);
+    }
+
+    public static void approveAdDraft(long productId, String kind, byte[] png) throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("productId",productId);
+        request.addProperty("kind",kind);
+        request.addProperty("bytesBase64",java.util.Base64.getEncoder().encodeToString(png));
+        post("/v1/products/image-coverage-assign",request,true,true);
+    }
+
+    public record AdDraft(String decision,long revision,String bytesBase64,String rejectionReason) {
+        public AdDraft(String decision,long revision,String bytesBase64){this(decision,revision,bytesBase64,null);}
+    }
+    public record AdReviewItem(long productId,String name,String kind,String decision,long revision) {
+        public String formatLabel() {
+            return switch(kind) {
+                case "ad_square" -> "Square (1:1)";
+                case "ad_portrait" -> "Portrait (4:5)";
+                case "ad_story" -> "Story (9:16)";
+                case "ad_landscape" -> "Landscape (16:9)";
+                default -> kind;
+            };
+        }
+        @Override public String toString(){return productId+" · "+name+" · "+formatLabel();}
+    }
+    public static List<AdReviewItem> adReviewQueue(String decision) throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("action","list");request.addProperty("decision",decision);
+        AdReviewItem[] rows=GSON.fromJson(post("/v1/products/ad-draft",request,true,true).getAsJsonArray("drafts"),AdReviewItem[].class);
+        return rows==null?List.of():List.of(rows);
+    }
+    public static AdDraft adDraft(long productId,String kind,String action,long revision,byte[] png) throws Exception {
+        return adDraft(productId,kind,action,revision,png,null);
+    }
+    public static AdDraft adDraft(long productId,String kind,String action,long revision,byte[] png,String rejectionReason) throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("productId",productId);
+        request.addProperty("kind",kind);request.addProperty("action",action);request.addProperty("revision",revision);
+        if(png!=null)request.addProperty("bytesBase64",java.util.Base64.getEncoder().encodeToString(png));
+        if(rejectionReason!=null)request.addProperty("rejectionReason",rejectionReason);
+        return GSON.fromJson(post("/v1/products/ad-draft",request,true,true),AdDraft.class);
+    }
+    public static void approveSharedAdDraft(long productId,String kind,long revision) throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("productId",productId);
+        request.addProperty("kind",kind);request.addProperty("draftRevision",revision);
+        post("/v1/products/image-coverage-assign",request,true,true);
+    }
+
     public static byte[] studioReviewPhoto(long productId,String kind) throws Exception {
         JsonObject request=new JsonObject();request.addProperty("productId",productId);request.addProperty("kind",kind);
         return java.util.Base64.getDecoder().decode(post("/v1/products/studio-review-photo",request,true,true)
@@ -811,7 +914,17 @@ public final class LanApiClient {
         return post("/v1/products/studio-review-decision",request,true,true).get("revision").getAsLong();
     }
 
+    public static long replaceRejectedStudioReview(long productId,long revision,String sourceSha256,byte[] jpeg) throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("productId",productId);
+        request.addProperty("revision",revision);request.addProperty("sourceSha256",sourceSha256);
+        request.addProperty("previewBase64",java.util.Base64.getEncoder().encodeToString(jpeg));
+        return post("/v1/products/studio-review-replace",request,true,true).get("revision").getAsLong();
+    }
+
     public record StudioProduct(long productId,String name,String imageUrl,List<String> additionalImageUrls) { }
+    public record ImageCoverage(long productId,String kind,String reference,int width,int height) { }
+    public record AdDraftSummary(long productId,String kind,String decision) { }
+    public record ImageCoverageSnapshot(List<StudioProduct> products,List<ImageCoverage> images,List<AdDraftSummary> drafts) { }
     public record StudioSource(String imageUrl,String sha256,byte[] bytes) { }
     public record StudioImportResult(String status,String reference) { }
     public record StudioReview(long productId,String name,String imageUrl,String sha256,String decision,
@@ -921,6 +1034,19 @@ public final class LanApiClient {
         return post("/v1/workstation/timezone",request,true,true).get("timezone").getAsString();
     }
 
+    public static List<PhoneMinutesRecord> loadPhoneMinutes(Integer customerId,String search,int offset,String from,String to,String filterMethod)throws Exception {
+        JsonObject b=new JsonObject();b.addProperty("customerId",customerId);b.addProperty("search",search);b.addProperty("offset",offset);b.addProperty("from",from);b.addProperty("to",to);b.addProperty("filterMethod",filterMethod);
+        PhoneMinutesRecord[] rows=GSON.fromJson(post("/v1/phone-minutes/history",b,true,true).getAsJsonArray("sales"),PhoneMinutesRecord[].class);return rows==null?List.of():List.of(rows);
+    }
+    public static void savePhoneMinutes(Integer customerId,String phone,BigDecimal amount,String method,String key)throws Exception {
+        requireIdempotencyKey(key,"Minutes idempotency key is required.");JsonObject b=new JsonObject();b.addProperty("customerId",customerId);b.addProperty("phone",phone);b.addProperty("amount",amount);b.addProperty("method",method);
+        post("/v1/phone-minutes/create",b,true,true,Map.of("Idempotency-Key",key));
+    }
+    public static void reversePhoneMinutes(long id,String reason,String key)throws Exception {
+        requireIdempotencyKey(key,"Minutes idempotency key is required.");JsonObject b=new JsonObject();b.addProperty("minutesId",id);b.addProperty("reason",reason);
+        post("/v1/phone-minutes/reverse",b,true,true,Map.of("Idempotency-Key",key));
+    }
+    public record PhoneMinutesRecord(long minutesId,String reference,String customerName,String phone,BigDecimal amount,BigDecimal paid,BigDecimal balanceDue,String method,long createdAtEpochMillis,String userName,String storeName,boolean reversed,String reversalReason,BigDecimal creditRemaining) { }
     public static List<CustomerAccountRecord> loadCustomerAccountRecords()throws Exception{
         JsonObject data=post("/v1/customer-accounts/list",new JsonObject(),true,true);
         CustomerAccountRecord[] rows=GSON.fromJson(data.getAsJsonArray("accounts"),CustomerAccountRecord[].class);
@@ -991,8 +1117,13 @@ public final class LanApiClient {
         return handoverCashDrawer(sessionId,count,notes,denominations,floats,floatTotal,cashInHand,key,false);
     }
     public static CashDrawerHandover handoverCashDrawer(long sessionId,BigDecimal count,String notes,Map<String,Integer>denominations,Map<String,Integer>floats,BigDecimal floatTotal,BigDecimal cashInHand,String key,boolean acceptTakeover)throws Exception{
+        return handoverCashDrawer(sessionId,count,notes,denominations,floats,floatTotal,cashInHand,key,acceptTakeover,false,null);
+    }
+    public static CashDrawerHandover handoverCashDrawer(long sessionId,BigDecimal count,String notes,Map<String,Integer>denominations,Map<String,Integer>floats,BigDecimal floatTotal,BigDecimal cashInHand,String key,boolean acceptTakeover,boolean takeoverWithoutHandover,Integer previousCashierUserId)throws Exception{
         JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);r.add("denominationCounts",GSON.toJsonTree(denominations));r.add("floatCounts",GSON.toJsonTree(floats));r.addProperty("floatTotal",floatTotal);r.addProperty("cashInHand",cashInHand);r.addProperty("complete",true);
         r.addProperty("acceptTakeover",acceptTakeover);
+        r.addProperty("takeoverWithoutHandover",takeoverWithoutHandover);
+        r.addProperty("previousCashierUserId",previousCashierUserId);
         return GSON.fromJson(post("/v1/cash/drawer/handover",r,true,true,Map.of("Idempotency-Key",key)).get("handover"),CashDrawerHandover.class);}
     public static CashDrawerCloseResult closeCashDrawer(long sessionId,BigDecimal count,String notes,String key)throws Exception{
         JsonObject r=new JsonObject();r.addProperty("sessionId",sessionId);r.addProperty("countedCash",count);r.addProperty("notes",notes);
@@ -1017,6 +1148,36 @@ public final class LanApiClient {
     public static void unassignCashDrawer(long assignmentId,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("assignmentId",assignmentId);post("/v1/cash/drawer/unassign",r,true,true,Map.of("Idempotency-Key",key));}
     public static BigDecimal saveCashDrawerChangeTarget(int locationId,BigDecimal target,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("locationId",locationId);r.addProperty("targetAmount",target);return post("/v1/cash/drawer/change-target",r,true,true,Map.of("Idempotency-Key",key)).get("targetAmount").getAsBigDecimal();}
     private static CashDrawerSession cashDrawerSessionMutation(String path,JsonObject request,String key)throws Exception{return GSON.fromJson(post(path,request,true,true,Map.of("Idempotency-Key",key)).get("session"),CashDrawerSession.class);}
+    public record MobileWebApp(String key,String name,String group,String gateway,String path) { }
+    public record MobileManagedDevice(String deviceId,String name,String createdAt,String lastSeenAt,boolean revoked,long revision,List<String> apps,boolean rememberLogin,Map<String,Object> deviceInfo,String deviceInfoUpdatedAt) {
+        public MobileManagedDevice(String deviceId,String name,String createdAt,String lastSeenAt,boolean revoked,long revision,List<String> apps,boolean rememberLogin){this(deviceId,name,createdAt,lastSeenAt,revoked,revision,apps,rememberLogin,Map.of(),"");}
+        public MobileManagedDevice(String deviceId,String name,String createdAt,String lastSeenAt,boolean revoked,long revision,List<String> apps){this(deviceId,name,createdAt,lastSeenAt,revoked,revision,apps,false,Map.of(),"");}
+    }
+    public record MobileManagementState(List<MobileManagedDevice> devices,List<MobileWebApp> apps,String pairingUrl) { }
+    public record MobilePairing(String url,String expiresAt) { }
+    public static MobileManagementState loadMobileManagement()throws Exception {
+        return GSON.fromJson(post("/v1/security/mobile-devices/state",new JsonObject(),true,true),MobileManagementState.class);
+    }
+    public static MobilePairing issueMobilePairing(String name,java.util.Set<String> apps,String key)throws Exception {
+        JsonObject b=new JsonObject();b.addProperty("name",name);b.add("apps",GSON.toJsonTree(apps));
+        return GSON.fromJson(post("/v1/security/mobile-devices/issue",b,true,true,Map.of("Idempotency-Key",key)),MobilePairing.class);
+    }
+    public static void restoreMobileDevice(String deviceId,long revision,String key)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("deviceId",deviceId);body.addProperty("revision",revision);
+        post("/v1/security/mobile-devices/restore",body,true,true,Map.of("Idempotency-Key",key));
+    }
+    public static MobilePairing issueMobileRepair(String deviceId,String key)throws Exception {
+        JsonObject b=new JsonObject();b.addProperty("deviceId",deviceId);
+        return GSON.fromJson(post("/v1/security/mobile-devices/repair",b,true,true,Map.of("Idempotency-Key",key)),MobilePairing.class);
+    }
+    public static void saveMobileDevice(String id,long revision,String name,java.util.Set<String> apps,boolean revoke,String key)throws Exception {
+        JsonObject b=new JsonObject();b.addProperty("deviceId",id);b.addProperty("revision",revision);b.addProperty("name",name);b.addProperty("revoke",revoke);b.add("apps",GSON.toJsonTree(apps));
+        post("/v1/security/mobile-devices/update",b,true,true,Map.of("Idempotency-Key",key));
+    }
+    public static void saveMobileDevice(String id,long revision,String name,java.util.Set<String> apps,boolean revoke,boolean rememberLogin,String key)throws Exception {
+        JsonObject b=new JsonObject();b.addProperty("deviceId",id);b.addProperty("revision",revision);b.addProperty("name",name);b.addProperty("revoke",revoke);b.addProperty("rememberLogin",rememberLogin);b.add("apps",GSON.toJsonTree(apps));
+        post("/v1/security/mobile-devices/update",b,true,true,Map.of("Idempotency-Key",key));
+    }
     public static List<ManagedDevice> loadManagedDevices()throws Exception{JsonObject d=post("/v1/security/devices/list",new JsonObject(),true,true);ManagedDevice[]a=GSON.fromJson(d.getAsJsonArray("devices"),ManagedDevice[].class);return a==null?List.of():List.of(a);}
     public static RegisterTransfer prepareRegisterTransfer(int destinationLocationId,String reason,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("destinationLocationId",destinationLocationId);r.addProperty("reason",reason);JsonObject d=post("/v1/devices/transfers/prepare",r,true,true,Map.of("Idempotency-Key",key));RegisterTransfer transfer=GSON.fromJson(d,RegisterTransfer.class);enterTransferPending(transfer);return transfer;}
     public static RegisterTransfer inspectRegisterTransfer()throws Exception{return GSON.fromJson(post("/v1/devices/transfers/inspect",new JsonObject(),true,true),RegisterTransfer.class);}
@@ -1050,6 +1211,20 @@ public final class LanApiClient {
     private static JsonObject serverLifecycle(String path,String serverId,String targetId,boolean warning,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("serverInstanceId",serverId);if(targetId!=null)r.addProperty("targetServerInstanceId",targetId);r.addProperty("idempotencyKey",key);r.addProperty("warningAcknowledged",warning);return post(path,r,true,true,Map.of("Idempotency-Key",key));}
     public static DeviceSecurityStatus loadDeviceSecurityStatus()throws Exception{return GSON.fromJson(post("/v1/security/status",new JsonObject(),true,true),DeviceSecurityStatus.class);}
     public static List<LocationRecord> loadLocationRecords(String search)throws Exception{JsonObject r=new JsonObject();r.addProperty("search",search);JsonObject d=post("/v1/locations/list",r,true,true);LocationRecord[]a=GSON.fromJson(d.getAsJsonArray("locations"),LocationRecord[].class);return a==null?List.of():List.of(a);}
+    public static StoreKeys.Dashboard loadStoreKeys(int locationId)throws Exception {
+        JsonObject b=new JsonObject();b.addProperty("locationId",locationId);
+        return GSON.fromJson(post("/v1/store-keys/list",b,true,true),StoreKeys.Dashboard.class);
+    }
+    public static java.util.UUID resolveStoreKey(int locationId,String token)throws Exception {
+        JsonObject b=new JsonObject();b.addProperty("locationId",locationId);b.addProperty("cardToken",token);
+        return java.util.UUID.fromString(post("/v1/store-keys/resolve",b,true,true).get("keyId").getAsString());
+    }
+    public static void changeStoreKey(String action,JsonObject request,String requestId)throws Exception {
+        post("/v1/store-keys/"+action,request,true,true,Map.of("Idempotency-Key",requestId));
+    }
+    public static StoreKeys.History loadStoreKeyHistory(JsonObject request)throws Exception {
+        return GSON.fromJson(post("/v1/store-keys/history",request,true,true),StoreKeys.History.class);
+    }
     public static int saveLocationRecord(LocationRecord r,String key)throws Exception{return post("/v1/locations/save",GSON.toJsonTree(r).getAsJsonObject(),true,true,Map.of("Idempotency-Key",key)).get("locationId").getAsInt();}
     public static EmailProcessingResult processLocationEmailOutbox()throws Exception{return GSON.fromJson(post("/v1/locations/process-email",new JsonObject(),true,true),EmailProcessingResult.class);}
     public static GmailClientStatus loadGmailClientStatus()throws Exception{return GSON.fromJson(post("/v1/locations/gmail/client-status",new JsonObject(),true,true),GmailClientStatus.class);}
@@ -1090,13 +1265,28 @@ public final class LanApiClient {
         return java.util.Arrays.asList(GSON.fromJson(d.get("items"),CustomOrderDataService.ItemSearchOption[].class));
     }
     private static JsonObject customOrderQuery(String action,JsonObject request)throws Exception{request.addProperty("action",action);return post("/v1/custom-orders/catalog",request,true,true);}
-    public static String saveCustomOrder(CustomOrderDataService.OrderSaveRequest request,String key)throws Exception{JsonObject body=GSON.toJsonTree(request).getAsJsonObject();return post("/v1/custom-orders/create",body,true,true,Map.of("Idempotency-Key",key)).get("orderNumber").getAsString();}
+    public static String saveCustomOrder(CustomOrderDataService.OrderSaveRequest request,String key)throws Exception{
+        return saveCustomOrder(request,key,false);
+    }
+    static String saveCustomOrder(CustomOrderDataService.OrderSaveRequest request,String key,boolean oneTimeCustomer)throws Exception {
+        return saveCustomOrder(request,key,oneTimeCustomer,null,null);
+    }
+    public static String saveCustomOrder(CustomOrderDataService.OrderSaveRequest request,String key,boolean oneTimeCustomer,
+                                         String creditApprovalToken,String creditApprovalReason)throws Exception {
+        JsonObject body=GSON.toJsonTree(request).getAsJsonObject();
+        if (oneTimeCustomer) body.addProperty("oneTimeCustomer",true);
+        if (creditApprovalToken != null) {
+            body.addProperty("creditApprovalToken",creditApprovalToken);
+            body.addProperty("creditApprovalReason",creditApprovalReason);
+        }
+        return post("/v1/custom-orders/create",body,true,true,Map.of("Idempotency-Key",key)).get("orderNumber").getAsString();}
     public static List<LanOrdersDashboardService.DeliveredRow> loadDeliveredCustomOrders(boolean all)throws Exception {
         JsonObject body=new JsonObject();body.addProperty("view","DELIVERED");body.addProperty("range",all?"ALL":"7_DAYS");
         var rows=GSON.fromJson(post("/v1/custom-orders/dashboard",body,true,true).get("delivered"),LanOrdersDashboardService.DeliveredRow[].class);
         return rows==null?List.of():List.of(rows);
     }
     public static LanOrdersDashboardService.Dashboard loadCustomOrderDashboard()throws Exception{return GSON.fromJson(post("/v1/custom-orders/dashboard",new JsonObject(),true,true).get("dashboard"),LanOrdersDashboardService.Dashboard.class);}
+    public static void assignCustomOrderProduction(long orderId,Integer employeeId,String status,String productionStatus,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("orderId",orderId);if(employeeId!=null)r.addProperty("employeeId",employeeId);r.addProperty("status",status);if(productionStatus!=null)r.addProperty("productionStatus",productionStatus);post("/v1/custom-orders/assign",r,true,true,Map.of("Idempotency-Key",key));}
     public static void assignCustomOrder(long orderId,Integer employeeId,String status,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("orderId",orderId);if(employeeId!=null)r.addProperty("employeeId",employeeId);r.addProperty("status",status);post("/v1/custom-orders/assign",r,true,true,Map.of("Idempotency-Key",key));}
     public static CustomOrderSlipData loadCustomOrderSlip(String number)throws Exception{JsonObject r=new JsonObject();r.addProperty("orderNumber",number);return GSON.fromJson(post("/v1/documents/custom-order-slip",r,true,true).get("slip"),CustomOrderSlipData.class);}
     public static TimeClockAutoCloseService.AutoCloseSettings loadTimeClockAutoCloseSettings()throws Exception{return GSON.fromJson(post("/v1/time-clock/auto-close/settings",new JsonObject(),true,true).get("settings"),TimeClockAutoCloseService.AutoCloseSettings.class);}
@@ -1167,6 +1357,8 @@ public final class LanApiClient {
     }
     public static JsonObject customOrderWorkflowRead(String action,Long orderId,String search)throws Exception{JsonObject r=new JsonObject();r.addProperty("action",action);if(orderId!=null)r.addProperty("orderId",orderId);if(search!=null)r.addProperty("search",search);return post("/v1/custom-orders/workflow/read",r,true,true);}
     public static JsonObject customOrderWorkflowMutation(JsonObject request,String key)throws Exception{return post("/v1/custom-orders/workflow/update",request,true,true,Map.of("Idempotency-Key",key));}
+    public static JsonObject previewCustomOrderExchange(JsonObject request)throws Exception{return post("/v1/custom-orders/exchange/preview",request,true,true);}
+    public static JsonObject saveCustomOrderExchange(JsonObject request,String key)throws Exception{return post("/v1/custom-orders/exchange/update",request,true,true,Map.of("Idempotency-Key",key));}
     public static JsonObject customOrderMediaRead(JsonObject request)throws Exception{return post("/v1/custom-orders/media/read",request,true,true);}
     public static JsonObject customOrderMediaMutation(JsonObject request)throws Exception{return post("/v1/custom-orders/media/update",request,true,true,Map.of("Idempotency-Key",UUID.randomUUID().toString()));}
     public static JsonObject customOrderMediaMutation(JsonObject request,String key)throws Exception{return post("/v1/custom-orders/media/update",request,true,true,Map.of("Idempotency-Key",key));}
@@ -1174,8 +1366,8 @@ public final class LanApiClient {
         JsonObject r=new JsonObject();r.addProperty("action",action);if(locationId!=null)r.addProperty("locationId",locationId);
         return post("/v1/configuration/read",r,true,true);
     }
-    public static AppUpdateService.AppRelease loadLatestAppRelease(String platform)throws Exception{JsonObject r=new JsonObject();r.addProperty("platform",platform);JsonObject d=post("/v1/cloud/update/latest",r,true,true);return !d.has("release")||d.get("release").isJsonNull()?null:GSON.fromJson(d.get("release"),AppUpdateService.AppRelease.class);}
-    public static String createUpdateDownloadUrl(String bucket,String path)throws Exception{JsonObject r=new JsonObject();r.addProperty("bucket",bucket);r.addProperty("path",path);return post("/v1/cloud/update/sign",r,true,true).get("url").getAsString();}
+    public static AppUpdateService.AppRelease loadLatestAppRelease(String platform)throws Exception{JsonObject r=new JsonObject();r.addProperty("platform",platform);JsonObject d=post(DatabaseConfig.load().mode()==data.DatabaseMode.DISPLAY?"/v1/display/update/latest":"/v1/cloud/update/latest",r,true,DatabaseConfig.load().mode()!=data.DatabaseMode.DISPLAY);return !d.has("release")||d.get("release").isJsonNull()?null:GSON.fromJson(d.get("release"),AppUpdateService.AppRelease.class);}
+    public static String createUpdateDownloadUrl(String bucket,String path)throws Exception{JsonObject r=new JsonObject();r.addProperty("bucket",bucket);r.addProperty("path",path);return post(DatabaseConfig.load().mode()==data.DatabaseMode.DISPLAY?"/v1/display/update/sign":"/v1/cloud/update/sign",r,true,DatabaseConfig.load().mode()!=data.DatabaseMode.DISPLAY).get("url").getAsString();}
     public static AppUpdateService.AppRelease loadLatestStudioRelease() throws Exception {
         JsonObject request=new JsonObject();request.addProperty("platform","windows");request.addProperty("application","smartstudio");
         JsonObject reply=post("/v1/cloud/update/latest",request,true,true);
@@ -1184,6 +1376,10 @@ public final class LanApiClient {
     public static String uploadCloudFile(String bucket,String path,String contentType,byte[]bytes)throws Exception{JsonObject r=new JsonObject();r.addProperty("bucket",bucket);r.addProperty("path",path);r.addProperty("contentType",contentType);r.addProperty("bytesBase64",java.util.Base64.getEncoder().encodeToString(bytes));return post("/v1/cloud/storage/upload",r,true,true).get("url").getAsString();}
     public static String uploadManagedImage(String category,String bucket,String path,String contentType,byte[]bytes)throws Exception{JsonObject r=new JsonObject();r.addProperty("category",category);r.addProperty("bucket",bucket);r.addProperty("path",path);r.addProperty("contentType",contentType);r.addProperty("bytesBase64",java.util.Base64.getEncoder().encodeToString(bytes));return post("/v1/cloud/storage/upload",r,true,true).get("url").getAsString();}
     public static byte[] downloadEmployeeCloudFile(String url)throws Exception{JsonObject r=new JsonObject();r.addProperty("url",url);return java.util.Base64.getDecoder().decode(post("/v1/cloud/storage/download",r,true,true).get("bytesBase64").getAsString());}
+    public static byte[] downloadDisplayImage(String reference)throws Exception {
+        JsonObject request=new JsonObject();request.addProperty("reference",reference);
+        return java.util.Base64.getDecoder().decode(post("/v1/display/image",request,true,false).get("bytesBase64").getAsString());
+    }
     public static byte[] downloadImageAsset(String reference)throws Exception{JsonObject r=new JsonObject();r.addProperty("reference",reference);return java.util.Base64.getDecoder().decode(post("/v1/images/fetch",r,true,true).get("bytesBase64").getAsString());}
     public static ImageAssetState imageAssets()throws Exception{
         JsonObject data=post("/v1/images/list",new JsonObject(),true,true);
@@ -1205,6 +1401,7 @@ public final class LanApiClient {
         if(settings!=null)r.add("settings",settings);if(locationId!=null)r.addProperty("locationId",locationId);
         return post("/v1/configuration/update",r,true,true,Map.of("Idempotency-Key",key));
     }
+    public static JsonObject balanceSheetWorkspace(JsonObject body)throws Exception{return post("/v1/accounting/balance-sheet/workspace",copy(body),true,true);}
     public static JsonObject balanceSheetRead(String action,JsonObject body)throws Exception{JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/accounting/balance-sheet/read",r,true,true);}
     public static JsonObject balanceSheetMutation(String action,JsonObject body,String key)throws Exception{requireIdempotencyKey(key,"Balance-sheet idempotency key is required.");JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/accounting/balance-sheet/update",r,true,true,Map.of("Idempotency-Key",key));}
     public static JsonObject queueEmail(String action,JsonObject body,String key)throws Exception{requireIdempotencyKey(key,"Email queue idempotency key is required.");JsonObject r=copy(body);r.addProperty("action",action);return post("/v1/email/queue",r,true,true,Map.of("Idempotency-Key",key));}
@@ -1249,6 +1446,8 @@ public final class LanApiClient {
     public static RoleAdminState loadRoleAdminState()throws Exception{return GSON.fromJson(post("/v1/security/roles/state",new JsonObject(),true,true),RoleAdminState.class);}
     public static RolePermissionSelection loadRolePermissionSelection(int roleId)throws Exception{JsonObject r=new JsonObject();r.addProperty("roleId",roleId);return GSON.fromJson(post("/v1/security/roles/selected",r,true,true),RolePermissionSelection.class);}
     public static void saveRolePermissions(int roleId,java.util.Set<String>desktop,java.util.Set<String>mobile,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("roleId",roleId);r.add("permissionKeys",GSON.toJsonTree(desktop));r.add("mobilePermissionKeys",GSON.toJsonTree(mobile));post("/v1/security/roles/save",r,true,true,Map.of("Idempotency-Key",key));}
+    public static void saveRolePermissions(int roleId,java.util.Set<String>desktop,java.util.Set<String>mobile,String description,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("roleId",roleId);r.add("permissionKeys",GSON.toJsonTree(desktop));r.add("mobilePermissionKeys",GSON.toJsonTree(mobile));r.addProperty("description",description);post("/v1/security/roles/save",r,true,true,Map.of("Idempotency-Key",key));}
+    public static RoleRecord addRole(String name,Integer sourceRoleId,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("name",name);if(sourceRoleId!=null)r.addProperty("sourceRoleId",sourceRoleId);return GSON.fromJson(post("/v1/security/roles/add",r,true,true,Map.of("Idempotency-Key",key)),RoleRecord.class);}
     public static RoleRecord addRole(String name,String key)throws Exception{JsonObject r=new JsonObject();r.addProperty("name",name);return GSON.fromJson(post("/v1/security/roles/add",r,true,true,Map.of("Idempotency-Key",key)),RoleRecord.class);}
     private static JsonObject location(int id){JsonObject r=new JsonObject();r.addProperty("locationId",id);return r;}
     private static JsonObject range(int id,java.time.LocalDate start,java.time.LocalDate end){JsonObject r=location(id);r.addProperty("start",start.toString());r.addProperty("end",end.toString());return r;}
@@ -1260,6 +1459,19 @@ public final class LanApiClient {
                 Map.of("Idempotency-Key", idempotencyKey)), SavedProduct.class);
     }
 
+    public static JsonObject salesTasksRead(JsonObject request)throws Exception {
+        return post("/v1/sales-tasks/read",request,true,true);
+    }
+    public static OrdersWorkQueueService.Snapshot loadDisplayWorkQueue()throws Exception {
+        return GSON.fromJson(post("/v1/display/work-queue",new JsonObject(),true,false).get("queue"),OrdersWorkQueueService.Snapshot.class);
+    }
+    public static OrdersWorkQueueService.Snapshot loadOrdersWorkQueue()throws Exception {
+        return GSON.fromJson(post("/v1/orders/work-queue",new JsonObject(),true,true).get("queue"),OrdersWorkQueueService.Snapshot.class);
+    }
+    public static JsonObject salesTasksUpdate(JsonObject request,String key)throws Exception {
+        requireIdempotencyKey(key,"A sales task idempotency key is required.");
+        return post("/v1/sales-tasks/update",request,true,true,Map.of("Idempotency-Key",key));
+    }
     public static CheckoutResult checkout(CheckoutRequest checkout, String idempotencyKey) throws Exception {
         requireIdempotencyKey(idempotencyKey, "Checkout idempotency key is required.");
         JsonObject data = post("/v1/sales/checkout", GSON.toJsonTree(checkout).getAsJsonObject(),
@@ -1337,7 +1549,7 @@ public final class LanApiClient {
                 payload.customerName(), payload.accountNumber(), payload.paymentMethod(), payload.paymentStatus(),
                 payload.deviceId(), payload.subtotalAmount(), payload.discountPercent(), payload.discountAmount(),
                 payload.vatAmount(), payload.vatRatePercent(), payload.vatMode(), payload.totalAmount(),
-                payload.amountPaid(), payload.returnedAmount(), cashCollected, changeDue, items,payload.representativeName(),payload.accountBalance()).withLoyaltySummary(payload.loyaltySummary());
+                payload.amountPaid(), payload.returnedAmount(), cashCollected, changeDue, items,payload.representativeName(),payload.accountBalance()).withLoyaltySummary(payload.loyaltySummary()).withTaskPaymentSummary(payload.taskPaymentSummary());
     }
 
     public static void logout() {
@@ -1490,8 +1702,23 @@ public final class LanApiClient {
     }
 
     public static JsonObject studioTemplates(JsonObject request)throws Exception{return post("/v1/studio/templates",request,true,true);}
+    public static JsonObject studioDriveCatalog(String kind)throws Exception{
+        JsonObject request=new JsonObject();request.addProperty("kind",kind);
+        try{return post("/v1/studio/drive-catalog",request,true,true);}
+        catch(LanApiException failure){
+            if(!missingStudioDriveEndpoint(failure))throw failure;
+            JsonObject disabled=new JsonObject();disabled.addProperty("enabled",false);return disabled;
+        }
+    }
+    static boolean missingStudioDriveEndpoint(LanApiException failure){
+        return failure.statusCode()==404&&java.util.Set.of("NOT_FOUND","INVALID_SERVER_RESPONSE").contains(failure.code());
+    }
     public static JsonObject studioFonts(JsonObject request)throws Exception{return post("/v1/studio/fonts",request,true,true);}
     public static JsonObject studioPhoneCapture(JsonObject request)throws Exception{return post("/v1/studio/phone-capture",request,true,true);}
+    public static JsonObject sharedLabelPrinter(JsonObject request, boolean employee) throws Exception {
+        return post("/v1/printers/labels", request, true, employee);
+    }
+
     public static JsonObject studioPhotoQueue(JsonObject request)throws Exception{return post("/v1/studio/photo-queue",request,true,true);}
 
     public static JsonObject studioBranding() throws Exception {
@@ -1500,6 +1727,12 @@ public final class LanApiClient {
 
     private static boolean studioClient() {return "smartstudio".equals(System.getProperty("smartstock.client.application"));}
     public static void verifyStudioPairing() throws Exception {post("/v1/studio/device-status",new JsonObject(),true,false);}
+
+    public static void installStudioPdfOcr() throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("family", "pdf-ocr");
+        post("/v1/studio/models/install", body, true, true);
+    }
 
     public static JsonObject studioModels(boolean refresh) throws Exception {
         return post(refresh ? "/v1/studio/models/refresh" : "/v1/studio/models/status", new JsonObject(), true, true);
@@ -1566,7 +1799,33 @@ public final class LanApiClient {
         return java.util.Base64.getDecoder().decode(post("/v1/studio/remove-background", body, true, true).get("bytesBase64").getAsString());
     }
 
+    public static String checkStudioPdfOcr() throws Exception {
+        return postStudioPdfOcr(StudioPdfOcrService.STATUS_PATH, new JsonObject())
+                .get("language").getAsString();
+    }
+
+    public static String recognizeStudioPdfPage(byte[] png) throws Exception {
+        if (png.length > StudioPdfOcrService.MAX_PNG_BYTES)
+            throw new IllegalArgumentException("This page is too large for OCR. Crop it or use a smaller scan.");
+        JsonObject body = new JsonObject();
+        body.addProperty("pngBase64", java.util.Base64.getEncoder().encodeToString(png));
+        return postStudioPdfOcr(StudioPdfOcrService.PATH, body).get("tsv").getAsString();
+    }
+
+    private static JsonObject postStudioPdfOcr(String path, JsonObject body) throws Exception {
+        try {
+            return post(path, body, true, true);
+        } catch (LanApiException ex) {
+            if (ex.statusCode() == 404 && ("INVALID_SERVER_RESPONSE".equals(ex.code()) || "NOT_FOUND".equals(ex.code())))
+                throw new LanApiException("OCR_SERVER_UPDATE_REQUIRED",
+                        "Update the SmartStock store server to use SmartStudio PDF OCR.", false, 404);
+            throw ex;
+        }
+    }
+
     static Duration postTimeout(String path, boolean imageUpload) {
+        if (StudioPdfOcrService.PATH.equals(path)) return Duration.ofMinutes(4);
+        if (StudioPdfOcrService.STATUS_PATH.equals(path)) return Duration.ofSeconds(25);
         if ("/v1/studio/remove-background".equals(path)) return Duration.ofMinutes(30);
         if ("/v1/studio/models/refresh".equals(path)) return Duration.ofSeconds(75);
         // Reconciliation includes reference discovery plus a 30-second transfer batch.
@@ -1584,7 +1843,7 @@ public final class LanApiClient {
         RemoteAdminPolicy.requireClientOperationAllowed(path);
         BlockingCallGuard.check("LAN " + path);
         long started = System.nanoTime();
-        boolean imageUpload = "/v1/cloud/storage/upload".equals(path) || "/v1/products/studio-import".equals(path)
+        boolean imageUpload = "/v1/products/ad-draft".equals(path) || "/v1/products/image-coverage-assign".equals(path) || "/v1/cloud/storage/upload".equals(path) || "/v1/products/studio-import".equals(path)
                 || "/v1/products/studio-source".equals(path) || "/v1/studio/remove-background".equals(path);
         HttpRequest.Builder builder = HttpRequest.newBuilder(baseUri().resolve(path))
                 .timeout(postTimeout(path, imageUpload))
@@ -1607,7 +1866,8 @@ public final class LanApiClient {
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             CONNECTION_LOSS_REPORTED.set(false);
             JsonObject data = responseData(response);
-            invalidateCachesAfterMutation(path);
+            if(!path.equals("/v1/products/merge") || (body.has("action") && List.of("MERGE","SET_STOCK").contains(body.get("action").getAsString())))
+                invalidateCachesAfterMutation(path);
             PerformanceDiagnostics.record("lan", path, started, true,
                     PerformanceDiagnostics.resultCount(data));
             return data;
@@ -1699,9 +1959,43 @@ public final class LanApiClient {
         }
     }
 
+    public static ProductMergeService.Candidates productMergeCandidates(String search)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("action","CANDIDATES");body.addProperty("search",search);
+        return GSON.fromJson(post("/v1/products/merge",body,true,true),ProductMergeService.Candidates.class);
+    }
+    public static List<ProductMergeService.StoreStock> productStoreStock(int product)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("action","STORE_STOCK");body.addProperty("productId",product);
+        var data=post("/v1/products/merge",body,true,true);
+        return List.of(GSON.fromJson(data.get("stores"),ProductMergeService.StoreStock[].class));
+    }
+    public static JsonObject setProductStoreStock(int product,int location,int expected,int quantity,String key)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("action","SET_STOCK");body.addProperty("productId",product);body.addProperty("locationId",location);
+        body.addProperty("expectedQuantity",expected);body.addProperty("quantity",quantity);
+        return post("/v1/products/merge",body,true,true,Map.of("Idempotency-Key",key));
+    }
+    public static JsonObject productMergeStatus()throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("action","STATUS");return post("/v1/products/merge",body,true,true);
+    }
+    public static ProductMergeService.Review reviewProductMerge(int keep,int source)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("action","REVIEW");body.addProperty("keepId",keep);body.addProperty("sourceId",source);
+        return GSON.fromJson(post("/v1/products/merge",body,true,true),ProductMergeService.Review.class);
+    }
+    public static JsonObject mergeProducts(ProductMergeService.Review review,String key)throws Exception {
+        JsonObject body=new JsonObject();body.addProperty("action","MERGE");body.addProperty("keepId",review.keep().id());
+        body.addProperty("sourceId",review.source().id());body.addProperty("fingerprint",review.fingerprint());
+        return post("/v1/products/merge",body,true,true,Map.of("Idempotency-Key",key));
+    }
+
     static void invalidateCachesAfterMutation(String path) {
         if (path == null) return;
-        boolean mutation = path.endsWith("/update") || path.endsWith("/save")
+        if (path.equals("/v1/products/tags/update") || path.equals("/v1/products/archive") || path.equals("/v1/products/restore")
+                || path.equals("/v1/products/bulk-archive") || path.equals("/v1/products/merge")) {
+            SessionDataCache.clear();
+            InventoryCatalogCache.invalidate();
+            InventoryCatalogCache.refreshAfterMutation().exceptionally(failure -> null);
+            return;
+        }
+        boolean mutation = (path.startsWith("/v1/store-keys/") && !path.endsWith("/list") && !path.endsWith("/history") && !path.endsWith("/resolve")) || path.endsWith("/update") || path.endsWith("/save")
                 || path.endsWith("/create") || path.endsWith("/receive")
                 || path.endsWith("/assign") || path.endsWith("/unassign")
                 || path.endsWith("/open") || path.endsWith("/close")
@@ -1736,11 +2030,11 @@ public final class LanApiClient {
             }
             JsonObject error = envelope.getAsJsonObject("error");
             throw new LanApiException(error.get("code").getAsString(), error.get("message").getAsString(),
-                    error.has("retryable") && error.get("retryable").getAsBoolean());
+                    error.has("retryable") && error.get("retryable").getAsBoolean(),response.statusCode());
         } catch (LanApiException ex) {
             throw ex;
         } catch (Exception ex) {
-            throw new LanApiException("INVALID_SERVER_RESPONSE", "The SmartStock server returned an invalid response.", true);
+            throw new LanApiException("INVALID_SERVER_RESPONSE", "The SmartStock server returned an invalid response.", true,response.statusCode());
         }
     }
 
@@ -2074,12 +2368,26 @@ public final class LanApiClient {
     }
     public record ReceiveInventoryResult(String receiveId,int lineCount) { }
     public record TransferLocation(int locationId,String name) { }
-    public record TransferProduct(int productId,String sku,String name,int availableQuantity) { }
+    public record TransferProduct(int productId,String sku,String name,int availableQuantity,String color,String flavor,String size,String description) {
+        public TransferProduct(int productId,String sku,String name,int availableQuantity){this(productId,sku,name,availableQuantity,"","","","");}
+        public String details(){
+            java.util.List<String> parts=new java.util.ArrayList<>();
+            if(color!=null&&!color.isBlank())parts.add("Color: "+color);
+            if(flavor!=null&&!flavor.isBlank())parts.add("Flavor: "+flavor);
+            if(size!=null&&!size.isBlank())parts.add("Size: "+size);
+            if(description!=null&&!description.isBlank())parts.add(description);
+            return String.join(" · ",parts);
+        }
+    }
     public record IncomingTransfer(long transferId,String fromStore,long createdAtEpochMillis,String sentBy,String note,
                                    int itemCount,int unitCount) { }
     public record OutgoingTransfer(long transferId,String toStore,long createdAtEpochMillis,String sentBy,String note,
-                                   int itemCount,int unitCount) { }
-    public record TransferDetailItem(int productId,String sku,String name,int quantity) { }
+                                   int itemCount,int unitCount,String status,int destinationLocationId) {
+        public OutgoingTransfer(long id,String store,long created,String sender,String note,int items,int units,String status){this(id,store,created,sender,note,items,units,status,0);}
+    }
+    public record TransferDetailItem(int productId,String sku,String name,int quantity,Integer availableQuantity) {
+        public TransferDetailItem(int id,String sku,String name,int quantity){this(id,sku,name,quantity,null);}
+    }
     public record CreateTransferRequest(int destinationLocationId,String note,List<TransferLine>lines) { }
     public record TransferLine(int productId,int quantity) { }
     public record CreateTransferResult(long transferId,int lineCount) { }
@@ -2149,26 +2457,31 @@ public final class LanApiClient {
                                         boolean whatsappOptIn,String whatsappConsentPhone,boolean requireChargeAuthorization,
                                         boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,
                                         boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,
-                                        boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent,boolean customOrderDepositExempt) { }
+                                        boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent,boolean customOrderDepositExempt,BigDecimal minutesDue,BigDecimal accountCreditAvailable,String additionalPhone1,String additionalPhone2,String phoneLabel,String additionalPhone1Label,String additionalPhone2Label) { }
     public record CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,
-                                             String phone,String email,BigDecimal creditLimit,boolean business,
+                                             String phone,String email,BigDecimal creditLimit,
                                              boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,
                                              boolean requireChargeAuthorization,boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,
                                              boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,
-                                             boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent,Boolean customOrderDepositExempt) {
-        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,boolean requireChargeAuthorization,boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,requireChargeAuthorization,salesDiscountEnabled,salesDiscountPercent,invoiceDiscountEnabled,invoiceDiscountPercent,customOrderDiscountEnabled,customOrderDiscountPercent,null);}
-        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,boolean requireChargeAuthorization){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,requireChargeAuthorization,false,BigDecimal.ZERO,false,BigDecimal.ZERO,false,BigDecimal.ZERO);}
-        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,false);}
-        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,customerPhotoUrl,false,false);}
+                                             boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent,Boolean customOrderDepositExempt,String additionalPhone1,String additionalPhone2,String phoneLabel,String additionalPhone1Label,String additionalPhone2Label) {
+ public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,boolean requireChargeAuthorization,boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent,Boolean customOrderDepositExempt){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,requireChargeAuthorization,salesDiscountEnabled,salesDiscountPercent,invoiceDiscountEnabled,invoiceDiscountPercent,customOrderDiscountEnabled,customOrderDiscountPercent,customOrderDepositExempt,null,null,null,null,null);}
+ public CustomerAccountSaveRequest withAdditionalPhones(String first,String second){return new CustomerAccountSaveRequest(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,requireChargeAuthorization,salesDiscountEnabled,salesDiscountPercent,invoiceDiscountEnabled,invoiceDiscountPercent,customOrderDiscountEnabled,customOrderDiscountPercent,customOrderDepositExempt,first,second,phoneLabel,additionalPhone1Label,additionalPhone2Label);}
+ public CustomerAccountSaveRequest withPhoneLabels(String main,String first,String second){return new CustomerAccountSaveRequest(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,requireChargeAuthorization,salesDiscountEnabled,salesDiscountPercent,invoiceDiscountEnabled,invoiceDiscountPercent,customOrderDiscountEnabled,customOrderDiscountPercent,customOrderDepositExempt,additionalPhone1,additionalPhone2,main,first,second);}
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,boolean requireChargeAuthorization,boolean salesDiscountEnabled,BigDecimal salesDiscountPercent,boolean invoiceDiscountEnabled,BigDecimal invoiceDiscountPercent,boolean customOrderDiscountEnabled,BigDecimal customOrderDiscountPercent){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,requireChargeAuthorization,salesDiscountEnabled,salesDiscountPercent,invoiceDiscountEnabled,invoiceDiscountPercent,customOrderDiscountEnabled,customOrderDiscountPercent,null);}
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn,boolean requireChargeAuthorization){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,requireChargeAuthorization,false,BigDecimal.ZERO,false,BigDecimal.ZERO,false,BigDecimal.ZERO);}
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl,boolean whatsappOptIn){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,active,accountNotes,customerSince,customerPhotoUrl,whatsappOptIn,false);}
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean active,String accountNotes,Integer customerSince,String customerPhotoUrl){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,active,accountNotes,customerSince,customerPhotoUrl,false,false);}
         public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,
-                                          String phone,String email,BigDecimal creditLimit,boolean business,
-                                          boolean active,String accountNotes){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,null,null,false,false);}
-        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean business,boolean active,String accountNotes,Integer customerSince){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,business,active,accountNotes,customerSince,null,false,false);}
+                                          String phone,String email,BigDecimal creditLimit,
+                                          boolean active,String accountNotes){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,active,accountNotes,null,null,false,false);}
+        public CustomerAccountSaveRequest(Integer customerId,String accountNumber,String name,Integer customerTypeId,String phone,String email,BigDecimal creditLimit,boolean active,String accountNotes,Integer customerSince){this(customerId,accountNumber,name,customerTypeId,phone,email,creditLimit,active,accountNotes,customerSince,null,false,false);}
     }
     public record CustomerCardDates(java.time.LocalDate issuedOn,java.time.LocalDate expiresOn) { }
     public record SavedCustomerAccount(int customerId,String accountNumber) { }
     public record CustomerAccountAdjustmentRequest(int customerId,BigDecimal amount,String action,String paymentMethod,String paymentReference,
-                                                   List<CustomerPaymentAllocationRequest> allocations) { }
+                                                   List<CustomerPaymentAllocationRequest> allocations,String description) {
+        public CustomerAccountAdjustmentRequest(int customerId,BigDecimal amount,String action,String paymentMethod,String paymentReference,List<CustomerPaymentAllocationRequest> allocations){this(customerId,amount,action,paymentMethod,paymentReference,allocations,null);}
+    }
     public record CustomerPaymentAllocationRequest(String documentType,Long documentId,BigDecimal amount) { }
     public record CustomerOpenBalance(String documentType,Long documentId,String documentNumber,long createdAtEpochMillis,
                                       BigDecimal total,BigDecimal paid,BigDecimal balanceDue) { }
@@ -2266,7 +2579,7 @@ public final class LanApiClient {
     public record ScheduleMutation(Integer locationId,java.time.LocalDate date,Integer userId,UUID shiftId,java.time.LocalTime lunchStart,java.time.LocalDate endDate,String name,List<UUID>shiftIds,Boolean active) { }
     private record ScheduleDay(java.time.LocalDate date,List<EmployeeScheduleService.Assignment>assignments) { }
     public record PermissionRecord(String key,String label,String group,String subgroup,String description) { }
-    public record RoleRecord(int roleId,String name) { }
+    public record RoleRecord(int roleId,String name,String description) { public RoleRecord(int roleId,String name){this(roleId,name,"");} }
     public record RoleAdminState(List<RoleRecord>roles,List<PermissionRecord>permissions,List<PermissionRecord>mobilePermissions,boolean mobileAvailable) { }
     public record RolePermissionSelection(List<String>permissionKeys,List<String>mobilePermissionKeys) { }
     public record MaintenancePart(Integer partId,String name,String partNumber,String category,BigDecimal quantity,BigDecimal reorderPoint,
@@ -2326,7 +2639,7 @@ public final class LanApiClient {
                                   String paymentStatus,String deviceId,BigDecimal subtotalAmount,BigDecimal discountPercent,
                                   BigDecimal discountAmount,BigDecimal vatAmount,BigDecimal vatRatePercent,String vatMode,
                                   BigDecimal totalAmount,BigDecimal amountPaid,BigDecimal returnedAmount,
-                                  List<ReceiptItemPayload> items,String representativeName,BigDecimal accountBalance,String loyaltySummary) { }
+                                  List<ReceiptItemPayload> items,String representativeName,BigDecimal accountBalance,String loyaltySummary,String taskPaymentSummary) { }
     private record ReceiptItemPayload(String name,String sku,int quantity,BigDecimal originalUnitPrice,
                                       BigDecimal finalUnitPrice,BigDecimal discountPercent,BigDecimal lineTotal) { }
 
@@ -2340,11 +2653,16 @@ public final class LanApiClient {
     public static final class LanApiException extends Exception {
         private final String code;
         private final boolean retryable;
+        private final int statusCode;
         public LanApiException(String code, String message, boolean retryable) {
-            super(message); this.code = code; this.retryable = retryable;
+            this(code,message,retryable,0);
+        }
+        public LanApiException(String code,String message,boolean retryable,int statusCode){
+            super(message);this.code=code;this.retryable=retryable;this.statusCode=statusCode;
         }
         public String code() { return code; }
         public boolean retryable() { return retryable; }
+        public int statusCode() { return statusCode; }
     }
     public record ImageAssetState(List<ImageAssetRecord>assets,ImageAssetCounts counts,OneDriveSetup oneDriveSetup) { }
     public record ImageAssetRecord(String assetId,String category,String filename,long byteSize,String lifecycleStatus,

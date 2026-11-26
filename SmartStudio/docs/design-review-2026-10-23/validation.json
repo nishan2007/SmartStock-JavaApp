@@ -1,0 +1,187 @@
+{
+  "scope": "Specification arithmetic and report assets only; not native UI verification",
+  "layout_cases": [
+    {
+      "display": "1366x768",
+      "scale": 1,
+      "usable": [
+        1366,
+        704
+      ],
+      "compact": false,
+      "canvas": [
+        870,
+        512
+      ],
+      "dialog": [
+        840,
+        600
+      ],
+      "selected_ribbon_canvas_height": 444
+    },
+    {
+      "display": "1366x768",
+      "scale": 1.25,
+      "usable": [
+        1092,
+        563
+      ],
+      "compact": true,
+      "canvas": [
+        1060,
+        371
+      ],
+      "dialog": [
+        840,
+        510
+      ],
+      "selected_ribbon_canvas_height": 327
+    },
+    {
+      "display": "1366x768",
+      "scale": 1.5,
+      "usable": [
+        910,
+        469
+      ],
+      "compact": true,
+      "canvas": [
+        878,
+        277
+      ],
+      "dialog": [
+        828,
+        416
+      ],
+      "selected_ribbon_canvas_height": 233
+    },
+    {
+      "display": "1920x1080",
+      "scale": 1,
+      "usable": [
+        1920,
+        1016
+      ],
+      "compact": false,
+      "canvas": [
+        1424,
+        824
+      ],
+      "dialog": [
+        840,
+        600
+      ],
+      "selected_ribbon_canvas_height": 756
+    },
+    {
+      "display": "1920x1080",
+      "scale": 1.25,
+      "usable": [
+        1536,
+        812
+      ],
+      "compact": false,
+      "canvas": [
+        1040,
+        620
+      ],
+      "dialog": [
+        840,
+        600
+      ],
+      "selected_ribbon_canvas_height": 552
+    },
+    {
+      "display": "1920x1080",
+      "scale": 1.5,
+      "usable": [
+        1280,
+        677
+      ],
+      "compact": false,
+      "canvas": [
+        784,
+        485
+      ],
+      "dialog": [
+        840,
+        600
+      ],
+      "selected_ribbon_canvas_height": 417
+    }
+  ],
+  "contrast": {
+    "primary_white": 8.46,
+    "deckers_body": 14.0,
+    "ribbon_body": 13.25,
+    "focus_body": 12.6,
+    "slate_header": 15.11,
+    "plum_header": 12.3
+  },
+  "images": {
+    "implemented/home.png": [
+      1350,
+      729
+    ],
+    "implemented/insert.png": [
+      1350,
+      729
+    ],
+    "implemented/compact.png": [
+      894,
+      430
+    ],
+    "implemented/workspaces.png": [
+      1350,
+      729
+    ],
+    "ribbon-home-v2.png": [
+      1487,
+      1058
+    ],
+    "ribbon-insert-v2.png": [
+      1487,
+      1058
+    ],
+    "current/badge-current.png": [
+      1366,
+      700
+    ],
+    "current/publication-current.png": [
+      1366,
+      700
+    ],
+    "current/passport-current.png": [
+      1366,
+      700
+    ],
+    "current/pdf-current.png": [
+      1366,
+      700
+    ],
+    "concept-deckers.png": [
+      1487,
+      1058
+    ],
+    "concept-ribbon.png": [
+      1487,
+      1058
+    ],
+    "concept-focus.png": [
+      1487,
+      1058
+    ],
+    "panel-studies.png": [
+      1448,
+      1086
+    ],
+    "dialog-studies.png": [
+      1086,
+      1448
+    ],
+    "responsive-studies.png": [
+      1448,
+      1086
+    ]
+  }
+}

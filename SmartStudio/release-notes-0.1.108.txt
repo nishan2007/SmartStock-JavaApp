@@ -1,0 +1,5 @@
+SmartStudio 0.1.108 - cumulative Windows update
+
+Includes the current shared-workspace SmartStudio changes, shared document and printing improvements, workspace refinements and photo-queue diagnostics.
+Uses the SmartStock 1.1.143 client libraries, including the latest shared search, inventory, network and queue changes.
+Update the SmartStock store server first. AI model weights remain separately installed on the store server.

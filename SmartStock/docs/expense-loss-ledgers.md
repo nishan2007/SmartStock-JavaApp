@@ -125,7 +125,19 @@ Account transfers cannot be reversed using the stock-ledger reversal button,
 because that would incorrectly restock inventory without undoing the account
 correction. Any correction must be reviewed as an accounting transaction.
 
-For new company use and donations, use Reports → Expense Ledger → Record Stock
-Expense directly instead of charging the company customer account. These source
-changes must be deployed to the server and registers before the new transfer
-button can be used; no live account was converted while developing this feature.
+## Charging a cart to the store expense account
+
+In Make a Sale, scan the stock items and select **Deckers Skeldon Expense** or
+the equivalent account for your store. The register selects **Charge to Account**.
+Choose **Post Expense**, enter the representative's name, and have the signed-in
+employee sign. Employees need Make Sale and Record Stock Expenses. The checkout
+uses the Expense Ledger's stock valuation and deducts stock once. Expense details
+show the employee, representative, signature, and reference shared by the cart
+lines.
+
+Use **Record Stock Expense** in Reports for individual items or donations.
+For Skeldon's historical conversion, an administrator can confirm the existing
+Deckers account by entering its account number in the signed transfer review.
+The same review can assign the listed unassigned Company Use expenses to
+Skeldon. Compare the skipped receipts and remaining legacy balance with the
+account statement. Install the server update before updating the registers.

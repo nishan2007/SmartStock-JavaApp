@@ -52,7 +52,19 @@ class ServerSupabaseMigrationRunnerTest {
 
     @Test
     void v1ManifestContainsOnlyTheCanonicalBaselineAndImmutablePostV1Chain() {
-        assertEquals(36, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertEquals(48, ServerSupabaseMigrationRunner.migrationResources().size());
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261125180100_customer_order_history_snapshot_cloud.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261125140000_document_cancellation_permissions.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261123120000_product_tags.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261122120100_store_key_permissions_cloud.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261121120000_employee_photo_framing.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261112120000_order_payment_reversal_permission.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261109120000_custom_order_one_time_customer.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261108120000_smartdrive_permission.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261030120000_display_devices.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261025160100_balance_sheet_history_permission.sql"));
+        assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261025120100_sales_task_permissions.sql"));
+        assertFalse(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261025120000_sales_tasks.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261022180000_custom_order_inventory_products.sql"));
         assertTrue(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261021190100_loyalty_refund_metadata_cloud.sql"));
         assertFalse(ServerSupabaseMigrationRunner.migrationResources().contains("database/migrations/v1_after/20261021190000_customer_loyalty.sql"));

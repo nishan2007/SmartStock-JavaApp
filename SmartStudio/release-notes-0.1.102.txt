@@ -1,0 +1,7 @@
+SmartStudio 0.1.102 - Direct banner printing and Studio improvements
+
+Windows banner printing now uses the active native driver resolution instead of replaying the print dialog resolution snapshot. Adds local print geometry diagnostics for investigating enlargement and clipping. Includes a 44 x 72 inch banded-rendering regression check. Canon GP-4600S preview and physical output remain device acceptance checks.
+
+Includes current SmartStudio workspace, publication and badge editing, photo queue, template picker, preview and printing improvements, using the current SmartStock 1.1.118 client library.
+
+Quick Windows update for existing installations. Preserves the installed runtime and profile models; no AI model weights are included.

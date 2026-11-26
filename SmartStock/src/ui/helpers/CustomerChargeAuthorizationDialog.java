@@ -17,6 +17,14 @@ public final class CustomerChargeAuthorizationDialog {
     private CustomerChargeAuthorizationDialog(){}
 
     public static LanApiClient.ChargeAuthorization capture(Component parent,String accountName){
+        return capture(parent, accountName, null);
+    }
+
+    public static LanApiClient.ChargeAuthorization captureExpense(Component parent, String accountName, String employee) {
+        return capture(parent, accountName, employee);
+    }
+
+    private static LanApiClient.ChargeAuthorization capture(Component parent, String accountName, String employee) {
         JTextField name=new JTextField(32);JCheckBox unsigned=new JCheckBox("Unable to capture signature");
         JTextArea reason=new JTextArea(3,32);reason.setLineWrap(true);reason.setWrapStyleWord(true);reason.setEnabled(false);
         Pad pad=new Pad();JButton clear=new JButton("Clear"),redo=new JButton("Redo");
@@ -26,7 +34,7 @@ public final class CustomerChargeAuthorizationDialog {
         Dimension touch=new Dimension(120,48);clear.setPreferredSize(touch);redo.setPreferredSize(touch);
         clear.addActionListener(e->pad.clear());redo.addActionListener(e->pad.redo());
         unsigned.addActionListener(e->{boolean on=unsigned.isSelected();pad.setEnabled(!on);reason.setEnabled(on);});
-        JPanel buttons=new JPanel(new FlowLayout(FlowLayout.RIGHT));buttons.add(unsigned);buttons.add(clear);buttons.add(redo);
+        JPanel buttons=new JPanel(new FlowLayout(FlowLayout.RIGHT));if(employee==null)buttons.add(unsigned);buttons.add(clear);buttons.add(redo);
         JPanel panel=new JPanel(new BorderLayout(0,8));panel.setBorder(new EmptyBorder(8,8,8,8));
         JPanel heading=new JPanel(new BorderLayout(12,6));
         JLabel account=new JLabel("Account: "+accountName);
@@ -35,7 +43,10 @@ public final class CustomerChargeAuthorizationDialog {
         JPanel representative=new JPanel(new BorderLayout(8,0));
         representative.add(new JLabel("Representative name:"),BorderLayout.WEST);representative.add(name,BorderLayout.CENTER);
         heading.add(representative,BorderLayout.CENTER);
-        heading.add(new JLabel("Sign in the large white area below. Watch the screen while using the pen pad."),BorderLayout.SOUTH);
+        String instruction = employee == null
+                ? "Sign in the large white area below. Watch the screen while using the pen pad."
+                : employee + ", sign below to record this expense at the store's ledger value.";
+        heading.add(new JLabel(instruction),BorderLayout.SOUTH);
         panel.add(heading,BorderLayout.NORTH);panel.add(pad,BorderLayout.CENTER);
         JPanel footer=new JPanel(new BorderLayout(0,4));footer.add(buttons,BorderLayout.NORTH);footer.add(tabletStatus,BorderLayout.CENTER);
         JPanel unsignedReason=new JPanel(new BorderLayout(8,0));

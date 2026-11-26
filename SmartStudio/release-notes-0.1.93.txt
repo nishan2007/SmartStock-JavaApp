@@ -1,0 +1,3 @@
+SmartStudio 0.1.93
+
+Combined current Studio workspace, template, publication, PDF/OCR, barcode, numbering, passport-photo and print/cut changes across chats, using the SmartStock 1.1.101 client dependency. Includes shared printing and server-template compatibility changes. Save open drafts before updating; update the store server first. AI models remain separate and preserved. Real printer/cutter and network-share checks remain separate.

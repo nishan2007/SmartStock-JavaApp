@@ -30,7 +30,8 @@ class LanApiMutationInvalidationTest {
     void businessMutationsInvalidateSessionSnapshots() {
         for (String route : java.util.List.of(
                 "/v1/sales/complete", "/v1/returns/return", "/v1/transfers/receive",
-                "/v1/payroll/bonus", "/v1/custom-orders/workflow/mutation")) {
+                "/v1/payroll/bonus", "/v1/custom-orders/workflow/mutation",
+                "/v1/products/archive", "/v1/products/restore", "/v1/products/bulk-archive")) {
             SessionDataCache.put("screen:snapshot", route);
             LanApiClient.invalidateCachesAfterMutation(route);
             assertTrue(SessionDataCache.get("screen:snapshot", String.class, Duration.ofMinutes(1)).isEmpty(), route);

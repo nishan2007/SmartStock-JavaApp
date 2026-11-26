@@ -72,9 +72,9 @@ class StudioPublicationTemplateStoreTest {
   assignment.addProperty("expectedAssignment",assigned.get("assignmentVersion").getAsString());assignment.add("sharedStoreIds",new JsonArray());store.execute(1,7,assignment);
   JsonObject finish=request("FINISH");finish.addProperty("storageStoreId",1);finish.addProperty("uploadId",upload);assertThrows(SecurityException.class,()->rosehall.execute(finish));
  }
- @Test void personalMergeRecordsAndOrderLinksCannotEnterTheLibrary()throws Exception{
+ @Test void savedMergeRecordsCanEnterTheLibraryButOrderLinksCannot()throws Exception{
   var store=new StudioPublicationTemplateStore(root,new Cloud(),"LABELS");var p=PublicationTemplates.clean(new Publication());p.mergeRows.add(Map.of("name","private record"));
-  assertThrows(IllegalArgumentException.class,()->save(store,1,7,UUID.randomUUID().toString(),"",p));p.mergeRows.clear();p.orderId=1L;
+  assertDoesNotThrow(()->save(store,1,7,UUID.randomUUID().toString(),"",p));p.mergeRows.clear();p.orderId=1L;
   assertThrows(IllegalArgumentException.class,()->save(store,1,7,UUID.randomUUID().toString(),"",p));
  }
  @Test void linkedRisoMembershipsSurviveServerSaveReadAndCloudBackup()throws Exception{

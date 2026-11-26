@@ -1,0 +1,7 @@
+SmartStock 1.1.104
+
+Combined current shared-workspace changes across chats, retaining the transfer search and scanner fixes from 1.1.103, customer management and other store web workflows, work queue display mode, custom-order improvements, shared printing and receipt fixes.
+
+Customer Account Details now offers Print Unpaid Purchases: preview and print open purchases, invoices and custom orders with original totals, amounts paid, remaining balances and total due. Includes partially paid documents and grouped manual/unattributed account charges. The statement covers the connected store; other stores may have additional balances. Receipt and Letter printing are supported.
+
+Update the store server before registers and SmartStudio. Windows update ZIP only; hosted web deployments are separate. AI models remain separate and existing profile models are preserved. Live database, Windows service, printer, drawer, NFC and scanner verification remain separate rollout checks.

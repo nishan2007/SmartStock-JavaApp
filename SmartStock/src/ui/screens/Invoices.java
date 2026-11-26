@@ -29,8 +29,8 @@ public class Invoices extends JFrame {
 
     private final DefaultTableModel quotationModel = Quotations.readOnlyModel("ID", "Quotation #", "Customer", "Status", "Valid Until", "Total");
     private final DefaultTableModel invoiceModel = Quotations.readOnlyModel("ID", "Invoice #", "Customer", "Status", "Payment", "Balance", "Quotation #");
-    private final DefaultTableModel deliveryModel = Quotations.readOnlyModel("ID", "Delivery #", "Invoice #", "Customer", "Method", "Balance", "Created");
-    private final DefaultTableModel paymentModel = Quotations.readOnlyModel("Receipt ID", "Customer ID", "Invoice #", "Customer", "Amount", "Method", "Reference", "Taken By", "Date");
+    private final DefaultTableModel deliveryModel = Quotations.readOnlyModel("ID", "Delivery #", "Invoice #", "Customer", "Method", "Balance", "Created", "Status");
+    private final DefaultTableModel paymentModel = Quotations.readOnlyModel("Receipt ID", "Customer ID", "Invoice #", "Customer", "Amount", "Method", "Reference", "Taken By", "Date", "Status");
     private final DefaultTableModel auditModel = Quotations.readOnlyModel("Time", "Document", "Action", "Field", "Old", "New", "User", "Reason");
     private final JTable quotationTable = new JTable(quotationModel);
     private final JTable invoiceTable = new JTable(invoiceModel);
@@ -45,18 +45,17 @@ public class Invoices extends JFrame {
 
     public Invoices(InitialTab initialTab) {
         setTitle("Quotations & Invoices");
+        getRootPane().putClientProperty("SmartStock.responsiveMinimumSize", new Dimension(800, 560));
         setSize(1280, 760);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setJMenuBar(AppMenuBar.create(this, "Invoices"));
 
         JPanel mainPanel = new JPanel(new BorderLayout(12, 12));
-        mainPanel.setBorder(new EmptyBorder(14, 14, 14, 14));
-        add(mainPanel, BorderLayout.CENTER);
+        mainPanel.setBorder(null);
 
         JLabel title = new JLabel("Quotations & Invoices");
         title.setFont(new Font("SansSerif", Font.BOLD, 26));
-        mainPanel.add(title, BorderLayout.NORTH);
 
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Quotations", tablePanel(quotationTable, quotationButtons()));
@@ -73,6 +72,11 @@ public class Invoices extends JFrame {
         tabs.setSelectedIndex(initialTab == InitialTab.QUOTATIONS ? 0 : 1);
         mainPanel.add(tabs, BorderLayout.CENTER);
         mainPanel.add(loadingState, BorderLayout.SOUTH);
+        JPanel studio = DocumentStudio.shell(mainPanel, initialTab == InitialTab.INVOICES ? 3 : 0,
+                () -> tabs.setSelectedIndex(0), this::openQuotationDialog, null, () -> tabs.setSelectedIndex(1));
+        add(studio, BorderLayout.CENTER);
+        tabs.addChangeListener(e -> DocumentStudio.activate(studio, tabs.getSelectedIndex() == 1 ? 3 : 0));
+        tabs.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 13));
 
         refreshAll();
         WindowHelper.configurePosWindow(this);
@@ -81,8 +85,10 @@ public class Invoices extends JFrame {
     private JPanel quotationButtons() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
         JButton newQuotation = new JButton("New Quotation");
-        JButton editDraft = new JButton("Edit Draft");
+        JButton editDraft = new JButton("Edit Quotation");
         JButton issue = new JButton("Issue");
+        JButton cancelQuotation = new JButton("Cancel Quotation");
+        cancelQuotation.setEnabled(managers.PermissionManager.hasPermission("CANCEL_QUOTATIONS"));
         JButton accept = new JButton("Accept Quotation");
         JButton preview = new JButton("Preview Quotation");
         JButton refresh = new JButton("Refresh");
@@ -90,21 +96,63 @@ public class Invoices extends JFrame {
         panel.add(editDraft);
         panel.add(issue);
         panel.add(accept);
+        panel.add(cancelQuotation);
         panel.add(preview);
         panel.add(refresh);
         Quotations.stylePrimaryButton(newQuotation);
         Quotations.styleSecondaryButton(editDraft);
         Quotations.styleSecondaryButton(issue);
         Quotations.styleSecondaryButton(accept);
+        Quotations.styleSecondaryButton(cancelQuotation);
         Quotations.styleSecondaryButton(preview);
         Quotations.styleSecondaryButton(refresh);
         newQuotation.addActionListener(e -> openQuotationDialog());
         editDraft.addActionListener(e -> editSelectedDraftQuotation());
         issue.addActionListener(e -> issueSelectedQuotation());
         accept.addActionListener(e -> acceptSelectedQuotation());
+        cancelQuotation.addActionListener(e -> cancelSelectedQuotation());
         preview.addActionListener(e -> previewQuotation());
         refresh.addActionListener(e -> refreshAll());
         return panel;
+    }
+
+    private void addCancellationButton(JPanel panel, String label, String permission, JTable table, String type) {
+        JButton button = new JButton(label);
+        Quotations.styleSecondaryButton(button);
+        button.setEnabled(managers.PermissionManager.hasPermission(permission));
+        panel.add(button);
+        button.addActionListener(event -> {
+            if (!managers.PermissionManager.hasPermission(permission)) return;
+            Long id = selectedId(table);
+            if (id == null) return;
+            String explanation = switch (type) {
+                case "PAYMENT" -> "Return/reverse the money using the original payment method. The invoice balance will be restored.";
+                case "DELIVERY" -> "Confirm the goods have been returned. Delivered quantities and inventory will be restored.";
+                default -> "Payments and deliveries must be cancelled first. Any undelivered linked production order will also be cancelled.";
+            };
+            JTextArea reason = new JTextArea(3, 32); reason.setLineWrap(true); reason.setWrapStyleWord(true);
+            JTextField reference = new JTextField(24);
+            JPanel fields = new JPanel(new BorderLayout(8, 8));
+            fields.add(new JLabel("<html>" + explanation + "<br><br>Cancellation reason (required):</html>"), BorderLayout.NORTH);
+            fields.add(new JScrollPane(reason), BorderLayout.CENTER);
+            if ("PAYMENT".equals(type)) {
+                JPanel ref = new JPanel(new BorderLayout(8, 8));
+                ref.add(new JLabel("Reversal reference (required for non-cash):"), BorderLayout.NORTH);
+                ref.add(reference, BorderLayout.CENTER); fields.add(ref, BorderLayout.SOUTH);
+            }
+            if (JOptionPane.showConfirmDialog(this, fields, label, JOptionPane.OK_CANCEL_OPTION,
+                    JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
+            if (reason.getText().isBlank()) { JOptionPane.showMessageDialog(this, "Enter a cancellation reason."); return; }
+            String cancellationReason = reason.getText().trim(), reversalReference = reference.getText().trim();
+            UiTaskRunner.submit(this, "invoices.cancel." + type, () -> {
+                switch (type) {
+                    case "PAYMENT" -> QuotationInvoiceService.cancelInvoicePayment(id, cancellationReason, reversalReference);
+                    case "DELIVERY" -> QuotationInvoiceService.cancelDelivery(id, cancellationReason);
+                    default -> QuotationInvoiceService.cancelInvoice(id, cancellationReason);
+                }
+                return Boolean.TRUE;
+            }, ignored -> refreshAll(), error -> showError("Cancellation failed", error instanceof Exception ex ? ex : new Exception(error)));
+        });
     }
 
     private JPanel invoiceButtons() {
@@ -121,6 +169,7 @@ public class Invoices extends JFrame {
         Quotations.stylePrimaryButton(delivery);
         Quotations.styleSecondaryButton(preview);
         Quotations.styleSecondaryButton(refresh);
+        addCancellationButton(panel, "Cancel Invoice", "CANCEL_INVOICES", invoiceTable, "INVOICE");
         payment.addActionListener(e -> addPayment());
         delivery.addActionListener(e -> postDelivery());
         preview.addActionListener(e -> previewInvoice());
@@ -136,6 +185,7 @@ public class Invoices extends JFrame {
         panel.add(refresh);
         Quotations.stylePrimaryButton(preview);
         Quotations.styleSecondaryButton(refresh);
+        addCancellationButton(panel, "Cancel Delivery", "CANCEL_INVOICE_DELIVERIES", deliveryTable, "DELIVERY");
         preview.addActionListener(e -> previewDelivery());
         refresh.addActionListener(e -> refreshAll());
         return panel;
@@ -158,19 +208,19 @@ public class Invoices extends JFrame {
         panel.add(refresh);
         Quotations.stylePrimaryButton(reprint);
         Quotations.styleSecondaryButton(refresh);
+        addCancellationButton(panel, "Cancel Payment", "CANCEL_INVOICE_PAYMENTS", paymentTable, "PAYMENT");
         reprint.addActionListener(e -> reprintPaymentReceipt());
         refresh.addActionListener(e -> refreshAll());
         return panel;
     }
 
-    private JPanel tablePanel(JTable table, JPanel buttons) {
+    private JComponent tablePanel(JTable table, JPanel buttons) {
         table.setAutoCreateRowSorter(true);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         Quotations.styleTable(table);
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
-        panel.add(buttons, BorderLayout.NORTH);
-        panel.add(new JScrollPane(table), BorderLayout.CENTER);
-        return panel;
+        String type = table == quotationTable ? "QUOTATION" : table == invoiceTable ? "INVOICE"
+                : table == deliveryTable ? "DELIVERY_BILL" : null;
+        return SalesDocumentWorkspace.create(this, table, buttons, type);
     }
 
     private void refreshAll() {
@@ -190,11 +240,12 @@ public class Invoices extends JFrame {
         invoiceModel.setRowCount(0);
         for (var row : snapshot.invoices()) invoiceModel.addRow(new Object[]{row.invoiceId(),row.invoiceNumber(),row.customerName(),row.status(),row.paymentStatus(),row.balanceDue(),row.quotationNumber()});
         deliveryModel.setRowCount(0);
-        for (var row : snapshot.deliveries()) deliveryModel.addRow(new Object[]{row.deliveryEventId(),row.deliveryNumber(),row.invoiceNumber(),row.customerName(),row.deliveryMethod(),row.balanceDue(),row.createdAt()});
+        for (var row : snapshot.deliveries()) deliveryModel.addRow(new Object[]{row.deliveryEventId(),row.deliveryNumber(),row.invoiceNumber(),row.customerName(),row.deliveryMethod(),row.balanceDue(),row.createdAt(),row.status()});
         paymentModel.setRowCount(0);
-        for (var row : snapshot.payments()) paymentModel.addRow(new Object[]{row.transactionId(),row.customerId(),row.invoiceNumber(),row.customerName(),row.amount(),row.paymentMethod(),row.paymentReference(),row.takenBy(),row.createdAt()});
+        for (var row : snapshot.payments()) paymentModel.addRow(new Object[]{row.transactionId(),row.customerId(),row.invoiceNumber(),row.customerName(),row.amount(),row.paymentMethod(),row.paymentReference(),row.takenBy(),row.createdAt(),row.status()});
         auditModel.setRowCount(0);
         for (var row : snapshot.audit()) auditModel.addRow(new Object[]{row.createdAt(),row.document(),row.actionType(),row.fieldName(),row.oldValue(),row.newValue(),row.userName(),row.reason()});
+        if (quotationTable.getRowCount() > 0) quotationTable.setRowSelectionInterval(0, 0);
     }
 
     private record InvoiceSnapshot(List<QuotationInvoiceViewService.QuotationSummary> quotations,
@@ -231,8 +282,10 @@ public class Invoices extends JFrame {
                     + "<br>Paid: " + financials.amountPaid()
                     + "<br>Balance: " + financials.balanceDue()
                     + "<br><br>Payment will be recorded through the customer account ledger.</html>"), BorderLayout.NORTH);
-            panel.add(Quotations.formPanel(new String[]{"Amount", "Method", "Reference"}, new JComponent[]{amount, method, reference}), BorderLayout.CENTER);
-            if (JOptionPane.showConfirmDialog(this, panel, "Process Invoice Payment", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) {
+            panel.add(DocumentStudio.section("Record payment", DocumentStudio.stack(
+                    DocumentStudio.row(DocumentStudio.field("Amount", amount), DocumentStudio.field("Payment method", method)),
+                    DocumentStudio.field("Reference · optional", reference))), BorderLayout.CENTER);
+            if (!confirmPayment(panel, invoiceId)) {
                 return;
             }
             BigDecimal paymentAmount = Quotations.parseMoney(amount.getText());
@@ -250,6 +303,28 @@ public class Invoices extends JFrame {
         } catch (Exception ex) {
             showError("Failed to process payment", ex);
         }
+    }
+
+    private boolean confirmPayment(JPanel fields, long invoiceId) {
+        JDialog dialog = new JDialog(this, "Record invoice payment", true);
+        dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+        final boolean[] confirmed = {false};
+        JPanel buttons = new JPanel(new ui.components.WrappingToolbarLayout());
+        JButton record = new JButton("Continue"), cancel = new JButton("Cancel");
+        DocumentStudio.button(record, true); DocumentStudio.button(cancel, false);
+        buttons.add(record); buttons.add(cancel);
+        record.addActionListener(e -> { confirmed[0] = true; dialog.dispose(); });
+        cancel.addActionListener(e -> dialog.dispose());
+        SalesDocumentPanel preview = new SalesDocumentPanel(dialog);
+        preview.showDocument("INVOICE", invoiceId, "Invoice before this payment");
+        JPanel form = DocumentStudio.surface(new BorderLayout(8, 18));
+        form.setBorder(new EmptyBorder(22, 22, 22, 22));
+        form.add(fields, BorderLayout.NORTH); form.add(buttons, BorderLayout.SOUTH);
+        dialog.add(DocumentStudio.shell(new ui.components.DocumentWorkspace(form, preview), 3, dialog::dispose, null, null, null));
+        ui.components.DocumentWorkspace.fitDialog(dialog, 1360, 800);
+        ThemeManager.applyToWindow(dialog);
+        dialog.setVisible(true);
+        return confirmed[0];
     }
 
     private void postDelivery() {
@@ -309,14 +384,32 @@ public class Invoices extends JFrame {
         }
     }
 
+    private void cancelSelectedQuotation() {
+        if (!managers.PermissionManager.hasPermission("CANCEL_QUOTATIONS")) return;
+        Long quotationId = selectedId(quotationTable);
+        if (quotationId == null) return;
+        String reason = JOptionPane.showInputDialog(this,
+                "Cancel this quotation? Enter an optional reason:", "Cancel Quotation", JOptionPane.WARNING_MESSAGE);
+        if (reason == null) return;
+        try {
+            Boolean cancelled = ResponsiveTask.await(this, "Cancelling quotation...", () -> {
+                QuotationInvoiceService.cancelQuotation(quotationId, reason.trim());
+                return Boolean.TRUE;
+            });
+            if (Boolean.TRUE.equals(cancelled)) refreshAll();
+        } catch (Exception ex) {
+            showError("Failed to cancel quotation", ex);
+        }
+    }
+
     private void editSelectedDraftQuotation() {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
         try {
             QuotationInvoiceViewService.QuotationEditData quotation = ResponsiveTask.await(this,"Loading quotation...",()->QuotationInvoiceViewService.loadQuotationForEdit(quotationId));
             if(quotation==null)return;
-            if (!"DRAFT".equals(quotation.status())) {
-                JOptionPane.showMessageDialog(this, "Only draft quotations can be edited.", "Quotations", JOptionPane.WARNING_MESSAGE);
+            if (!"DRAFT".equals(quotation.status()) && !"ISSUED".equals(quotation.status())) {
+                JOptionPane.showMessageDialog(this, "Only draft or issued quotations can be edited.", "Quotations", JOptionPane.WARNING_MESSAGE);
                 return;
             }
             Quotations.QuotationEditor editor = new Quotations.QuotationEditor(this, quotation);
@@ -325,7 +418,7 @@ public class Invoices extends JFrame {
                 refreshAll();
             }
         } catch (Exception ex) {
-            showError("Failed to load draft quotation", ex);
+            showError("Failed to load quotation", ex);
         }
     }
 
@@ -348,6 +441,10 @@ public class Invoices extends JFrame {
     private void acceptSelectedQuotation() {
         Long quotationId = selectedId(quotationTable);
         if (quotationId == null) return;
+        acceptQuotation(quotationId);
+    }
+
+    void acceptQuotation(long quotationId) {
         try {
             QuotationInvoiceService.InvoiceResult result = ResponsiveTask.await(this,"Accepting quotation...",()->QuotationInvoiceService.acceptQuotation(quotationId));
             if(result==null)return;
@@ -462,11 +559,7 @@ public class Invoices extends JFrame {
             JOptionPane.showMessageDialog(this, "Select a row first.");
             return null;
         }
-        Object value = table.getValueAt(row, 0);
-        if (value instanceof Number number) {
-            return number.longValue();
-        }
-        return Long.parseLong(String.valueOf(value));
+        return SalesDocumentWorkspace.selectedModelId(table);
     }
 
     private void showError(String title, Exception ex) {
@@ -486,35 +579,45 @@ public class Invoices extends JFrame {
         };
         private boolean created;
         private Long deliveryEventId;
+        private JTable deliveryLinesTable;
 
         DeliveryDialog(JFrame owner, long invoiceId) {
             super(owner, "Post Invoice Delivery", true);
             this.invoiceId = invoiceId;
-            setSize(820, 540);
+            ui.components.DocumentWorkspace.fitDialog(this, 1440, 850);
             setLocationRelativeTo(owner);
             setLayout(new BorderLayout(8, 8));
-            JPanel main = new JPanel(new BorderLayout(8, 8));
-            main.setBorder(new EmptyBorder(12, 12, 12, 12));
-            add(main, BorderLayout.CENTER);
-            main.add(Quotations.formPanel(new String[]{"Method", "Receiver", "Notes"}, new JComponent[]{methodBox, receiverField, notesField}), BorderLayout.NORTH);
+            JPanel main = DocumentStudio.surface(new BorderLayout(0, 18));
+            main.setBorder(new EmptyBorder(22, 22, 22, 22));
+            JPanel deliveryFields = DocumentStudio.stack(DocumentStudio.workflow(2),
+                    DocumentStudio.row(DocumentStudio.field("Delivery method", methodBox), DocumentStudio.field("Receiver", receiverField)),
+                    DocumentStudio.field("Delivery notes", notesField));
             JTable table = new JTable(lineModel);
-            Quotations.styleTable(table);
+            deliveryLinesTable = table;
+            DocumentStudio.table(table);
             table.removeColumn(table.getColumnModel().getColumn(0));
             table.getColumnModel().getColumn(0).setPreferredWidth(260);
+            table.putClientProperty("terminateEditOnFocusLost", Boolean.TRUE);
             for (int column = 1; column < table.getColumnCount(); column++) {
                 table.getColumnModel().getColumn(column).setPreferredWidth(column == 5 ? 110 : 85);
             }
-            main.add(new JScrollPane(table), BorderLayout.CENTER);
-            JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-            JButton post = new JButton("Post Delivery");
+            JScrollPane lineRows = DocumentStudio.scroll(table); lineRows.setColumnHeaderView(table.getTableHeader());
+            lineRows.setPreferredSize(new Dimension(500, 230));
+            JPanel content = DocumentStudio.stack(deliveryFields, DocumentStudio.section("Delivery quantities", lineRows));
+            main.add(DocumentStudio.scroll(DocumentStudio.topAligned(content)), BorderLayout.CENTER);
+            JPanel buttons = DocumentStudio.surface(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+            JButton post = new JButton("Record delivery");
             JButton cancel = new JButton("Cancel");
             buttons.add(post);
             buttons.add(cancel);
-            Quotations.stylePrimaryButton(post);
-            Quotations.styleSecondaryButton(cancel);
+            DocumentStudio.button(post, true);
+            DocumentStudio.button(cancel, false);
             main.add(buttons, BorderLayout.SOUTH);
             post.addActionListener(e -> post());
             cancel.addActionListener(e -> dispose());
+            SalesDocumentPanel invoicePreview = new SalesDocumentPanel(this);
+            invoicePreview.showDocument("INVOICE", invoiceId, "Invoice before this delivery");
+            add(DocumentStudio.shell(new ui.components.DocumentWorkspace(main, invoicePreview), 3, this::dispose, null, null, null), BorderLayout.CENTER);
             ThemeManager.applyToWindow(this);
             loadLines();
         }
@@ -536,6 +639,7 @@ public class Invoices extends JFrame {
         }
 
         private void post() {
+            if (deliveryLinesTable.isEditing() && !deliveryLinesTable.getCellEditor().stopCellEditing()) return;
             List<QuotationInvoiceService.DeliveryLineInput> lines = new ArrayList<>();
             List<String> stockWarnings = new ArrayList<>();
             try {

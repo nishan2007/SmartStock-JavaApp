@@ -35,19 +35,27 @@ public final class PublicationRenderer {
   public void page(Graphics2D target, int index, Map<String, String> row) {
     page(target, index, row, 0);
   }
+
+  public void artwork(Graphics2D target, int index) {
+    page(target, index, Map.of(), 0, false);
+  }
   public void page(Graphics2D target,int index,Map<String,String> row,java.util.function.BiFunction<Publication.Element,BufferedImage,BufferedImage> filter){
     if(rasterFilter!=null)throw new IllegalStateException("A raster effect is already active.");
     rasterFilter=Objects.requireNonNull(filter);try{page(target,index,row,0);}finally{rasterFilter=null;}
   }
 
   private void page(Graphics2D target, int index, Map<String, String> row, double bleed) {
+    page(target, index, row, bleed, true);
+  }
+
+  private void page(Graphics2D target, int index, Map<String, String> row, double bleed, boolean whiteBackground) {
     Graphics2D g = (Graphics2D) target.create();
     try {
       g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-      g.setColor(Color.WHITE);
-      g.fill(
-          new Rectangle2D.Double(
-              -bleed, -bleed, publication.width + 2 * bleed, publication.height + 2 * bleed));
+      if (whiteBackground) {
+        g.setColor(Color.WHITE);
+        g.fill(new Rectangle2D.Double(-bleed, -bleed, publication.width + 2 * bleed, publication.height + 2 * bleed));
+      }
       g.clip(
           new Rectangle2D.Double(
               -bleed, -bleed, publication.width + 2 * bleed, publication.height + 2 * bleed));
@@ -86,6 +94,7 @@ public final class PublicationRenderer {
     Graphics2D base = target == null ? scratch.createGraphics() : target;
     try {
       for (Publication.Element e : page.objects) {
+        if(e.hidden)continue;
         // Optional job-only raster effects operate on an isolated object, preserving
         // its alpha and the renderer's normal crop, rotation, flow and stacking.
         Rectangle deviceBounds=null;
@@ -117,7 +126,7 @@ public final class PublicationRenderer {
             case "TEXT" -> {
               if (!e.wordArt.equals("NONE")) { PublicationWordArt.draw(g,e,text); break; }
               if(e.fitText){
-                if(!e.asset.isBlank()&&text.equals(e.originalText)&&e.font.equals(e.originalFont)&&e.fontSize==e.originalFontSize&&e.bold==e.originalBold&&e.color.equals(e.originalColor)&&!e.italic&&!e.underline&&!e.strike&&!e.textOutline)image(g,e);
+                if(e.textAlignment==null&&!e.asset.isBlank()&&text.equals(e.originalText)&&e.font.equals(e.originalFont)&&e.fontSize==e.originalFontSize&&e.bold==e.originalBold&&e.color.equals(e.originalColor)&&!e.italic&&!e.underline&&!e.strike&&!e.textOutline)image(g,e);
                 else {
                   if(!e.sourceTable.isBlank()){
                     if(!e.fill.equals("none")){g.setColor(color(e.fill));g.fill(new Rectangle2D.Double(0,0,e.width,e.height));}
@@ -221,6 +230,7 @@ public final class PublicationRenderer {
           }
           y += line.getAscent();
           float x=(float)(col*(colWidth+gutter));
+          if (e.textAlignment != null) x += (float)e.textAlignment.offset(colWidth, line.getAdvance());
           Shape glyph=line.getOutline(java.awt.geom.AffineTransform.getTranslateInstance(x,y));
           paintText(g,e,glyph,x,y,line.getAdvance(),font.getSize2D());
           y += line.getDescent() + line.getLeading();
@@ -244,7 +254,13 @@ public final class PublicationRenderer {
     g.clip(new Rectangle2D.Double(0,0,e.width,e.height));
     for(int i=0;i<lines.length;i++)if(!lines[i].isBlank()){
       var glyph=font.createGlyphVector(g.getFontRenderContext(),lines[i]);var outline=glyph.getOutline();var bounds=outline.getBounds2D();if(bounds.isEmpty())continue;
-      Graphics2D line=(Graphics2D)g.create();try{line.translate(0,i*lineHeight);var fit=new java.awt.geom.AffineTransform();fit.scale(e.width/bounds.getWidth(),lineHeight/bounds.getHeight());fit.translate(-bounds.getX(),-bounds.getY());paintText(line,e,fit.createTransformedShape(outline),0,lineHeight*.9,e.width,lineHeight);}finally{line.dispose();}
+      double scaleY=lineHeight/bounds.getHeight(), scaleX=e.width/bounds.getWidth();
+      if (e.textAlignment != null) scaleX=Math.min(scaleX,scaleY);
+      double advance=bounds.getWidth()*scaleX;
+      double x=e.textAlignment==null?0:e.textAlignment.offset(e.width,advance);
+      var fit=java.awt.geom.AffineTransform.getTranslateInstance(x,i*lineHeight);
+      fit.scale(scaleX,scaleY);fit.translate(-bounds.getX(),-bounds.getY());
+      paintText(g,e,fit.createTransformedShape(outline),x,(i+.9)*lineHeight,advance,lineHeight);
     }
   }
 
@@ -262,6 +278,7 @@ public final class PublicationRenderer {
         cell.fontSize = e.fontSize;
         cell.color = e.color;
         cell.bold = e.bold;
+        cell.textAlignment = e.textAlignment;
         Graphics2D cg = (Graphics2D) g.create();
         cg.translate(c * cw + 1, r * rh + 1);
         if (c < cells.length && text(cg, cell, cells[c], 0) < cells[c].length())
@@ -272,7 +289,10 @@ public final class PublicationRenderer {
   }
 
   private void image(Graphics2D g, Publication.Element e) {
+    if (e.photoPlaceholder && e.asset.isBlank()) return;
     BufferedImage image = images.get(e.asset);
+    if (image == null && maximumImageSide == 0 && publication.decodedAssets.containsKey(e.asset))
+      image = publication.decodedAssets.get(e.asset).get();
     if (image == null && publication.assetIds().contains(e.asset))
       try (var source=publication.openAsset(e.asset)) {
         image =
@@ -392,7 +412,7 @@ public final class PublicationRenderer {
           child.translate(publication.height, 0);
           child.rotate(Math.PI / 2);
         }
-        page(child, output.get(cardPage), mergeRow(instance), s.bleed);
+        page(child, output.get(cardPage), mergeRow(instance), s.bleed, s.gapX >= 0 && s.gapY >= 0);
         if (s.cropMarks) {
           child.setColor(Color.BLACK);
           child.setStroke(new BasicStroke(.1f));

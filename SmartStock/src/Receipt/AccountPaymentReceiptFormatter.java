@@ -90,7 +90,7 @@ public class AccountPaymentReceiptFormatter {
                 for (AccountPaymentReceiptData.AllocationLine line : receipt.getAllocations()) {
                     builder.append(trimToWidth(line.targetLabel(), width)).append('\n');
                     appendPair(builder, "  Applied", money(line.appliedAmount()), width);
-                    appendPair(builder, "  Charge Total", money(line.chargeTotal()), width);
+                    appendPair(builder, "  Charge Total", "PRICE_PENDING".equals(line.paymentStatus())?"Not finalized":money(line.chargeTotal()), width);
                     appendPair(builder, "  Paid", money(line.chargePaid()), width);
                     if (!line.paymentStatus().isBlank()) {
                         appendPair(builder, "  Status", line.paymentStatus(), width);

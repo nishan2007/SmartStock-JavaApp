@@ -27,6 +27,10 @@ final class CrossStoreReferenceSyncService {
                     "to_jsonb(t) || jsonb_build_object('material_name',(SELECT material_name FROM custom_order_print_materials m WHERE m.print_material_id=t.print_material_id))"),
             new TableSnapshot("locations", "location_id", "location_id::text", "updated_at"),
             new TableSnapshot("customer_account_merges", "source_customer_id", "source_customer_id::text", "updated_at"),
+            new TableSnapshot("product_merges", "source_uid", "source_uid::text", "updated_at"),
+            new TableSnapshot("product_merge_applications", "merge_id,location_id", "merge_id::text||':'||location_id::text", "updated_at", "to_jsonb(t) - 'before_state'"),
+            new TableSnapshot("product_stock_commands", "command_id", "command_id::text", "updated_at"),
+            new TableSnapshot("product_stock_command_results", "command_id", "command_id::text", "updated_at"),
             new TableSnapshot("users", "user_id", "user_id::text", "updated_at", """
                     to_jsonb(t)
                       - ARRAY['password_hash','password_cache_invalidated_at','employee_pin_salt',
@@ -161,7 +165,9 @@ final class CrossStoreReferenceSyncService {
 
     private static String payrollOwnerScope(String table) {
         return switch (table) {
-            case "employee_daily_pay_days", "employee_time_clock", "payroll_payments", "employee_payroll_bonuses" -> "WHERE t.location_id=? ";
+            case "product_stock_commands" -> "WHERE t.origin_location_id=? ";
+            case "product_stock_command_results" -> "WHERE t.location_id=? ";
+            case "employee_daily_pay_days", "employee_time_clock", "payroll_payments", "employee_payroll_bonuses", "product_merge_applications" -> "WHERE t.location_id=? ";
             case "employee_time_clock_adjustments" -> "WHERE EXISTS (SELECT 1 FROM employee_time_clock tc WHERE tc.clock_id=t.clock_id AND tc.location_id=?) ";
             default -> "";
         };
@@ -170,6 +176,18 @@ final class CrossStoreReferenceSyncService {
     static void applyPayload(Connection c, JsonObject payload, int localLocationId,
                              Integer originLocationId) throws SQLException {
         String table = required(payload,"table_name");
+        if("product_stock_commands".equals(table)&&"UPSERT".equals(required(payload,"operation"))) {
+            ProductStockCommandService.apply(c,payload.getAsJsonObject("row_data"),localLocationId,originLocationId);return;
+        }
+        if("product_stock_command_results".equals(table)&&"UPSERT".equals(required(payload,"operation"))) {
+            ProductStockCommandService.result(c,payload.getAsJsonObject("row_data"),originLocationId);return;
+        }
+        if("product_merges".equals(table)&&"UPSERT".equals(required(payload,"operation"))) {
+            if(originLocationId==null)throw new SQLException("Product merge has no authenticated origin.","42501");
+            try { ProductMergeCoordinator.applyMapping(c,payload.getAsJsonObject("row_data"),localLocationId,null); }
+            catch(SQLException ex){throw ex;}catch(Exception ex){throw new SQLException("Product merge could not be applied.",ex);}
+            return;
+        }
         if ("employee_time_clock_adjustments".equals(table)
                 && "CORRECT_OWNER".equals(required(payload,"operation"))) {
             TimeClockCorrectionSyncService.apply(c, payload.getAsJsonObject("row_data"),
@@ -279,6 +297,8 @@ final class CrossStoreReferenceSyncService {
         switch(table){
             case "custom_order_print_materials", "custom_order_print_size_presets", "custom_order_design_placements" -> PrintReferenceSync.apply(c,table,row);
             case "customer_account_merges"->CustomerAccountMergeService.applyMapping(c,row);
+            case "product_merges"->ProductMergeCoordinator.applyMapping(c,row);
+            case "product_merge_applications"->ProductMergeCoordinator.applyReceipt(c,row);
             case "locations"->upsertLocation(c,row);
             case "users"->upsertUser(c,row);
             case "user_locations"->upsertUserLocation(c,row);
@@ -319,16 +339,17 @@ final class CrossStoreReferenceSyncService {
         }
         String sql="""
                 INSERT INTO users(user_id,username,first_name,middle_name,last_name,full_name,nickname,email,phone,
-                  employee_photo_url,employee_id_card_document_url,date_of_birth,hire_date,badge_id,
+                  employee_photo_url,employee_photo_source_url,employee_photo_frame,employee_id_card_document_url,date_of_birth,hire_date,badge_id,
                   badge_generated_at,badge_print_count,badge_rotated_at,badge_rotated_by_user_id,
                   badge_rotated_by_name,compensation_type,salary,role_id,auth_user_id,is_active,deactivated_at,
                   deactivated_by_user_id,deactivated_by_name,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
                   (SELECT role_id FROM roles WHERE UPPER(role_name)=UPPER(?)),?::uuid,?,?,?,?,?,?)
                 ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,first_name=EXCLUDED.first_name,
                   middle_name=EXCLUDED.middle_name,last_name=EXCLUDED.last_name,full_name=EXCLUDED.full_name,
                   nickname=EXCLUDED.nickname,email=EXCLUDED.email,phone=EXCLUDED.phone,
                   employee_photo_url=EXCLUDED.employee_photo_url,
+                  employee_photo_source_url=EXCLUDED.employee_photo_source_url,employee_photo_frame=EXCLUDED.employee_photo_frame,
                   employee_id_card_document_url=EXCLUDED.employee_id_card_document_url,
                   date_of_birth=EXCLUDED.date_of_birth,hire_date=EXCLUDED.hire_date,
                   compensation_type=EXCLUDED.compensation_type,salary=EXCLUDED.salary,role_id=EXCLUDED.role_id,
@@ -344,7 +365,7 @@ final class CrossStoreReferenceSyncService {
             p.setInt(i++,integer(r,"user_id"));p.setString(i++,text(r,"username"));nullableText(p,i++,r,"first_name");
             nullableText(p,i++,r,"middle_name");nullableText(p,i++,r,"last_name");p.setString(i++,text(r,"full_name"));
             nullableText(p,i++,r,"nickname");nullableText(p,i++,r,"email");nullableText(p,i++,r,"phone");
-            nullableText(p,i++,r,"employee_photo_url");nullableText(p,i++,r,"employee_id_card_document_url");
+            nullableText(p,i++,r,"employee_photo_url");nullableText(p,i++,r,"employee_photo_source_url");nullableText(p,i++,r,"employee_photo_frame");nullableText(p,i++,r,"employee_id_card_document_url");
             nullableDate(p,i++,r,"date_of_birth");p.setDate(i++,date(r,"hire_date"));nullableText(p,i++,r,"badge_id");
             nullableTimestamp(p,i++,r,"badge_generated_at");p.setInt(i++,integer(r,"badge_print_count"));
             nullableTimestamp(p,i++,r,"badge_rotated_at");nullableInt(p,i++,r,"badge_rotated_by_user_id");
@@ -579,6 +600,9 @@ final class CrossStoreReferenceSyncService {
             case "custom_order_design_placements" -> key.addProperty("placement_name",required(row,"placement_name"));
             case "custom_order_print_size_presets" -> {key.addProperty("material_name",required(row,"material_name"));key.addProperty("preset_name",required(row,"preset_name"));}
             case "customer_account_merges"->key.addProperty("source_customer_id",integer(row,"source_customer_id"));
+            case "product_merges"->key.addProperty("source_uid",required(row,"source_uid"));
+            case "product_merge_applications"->{key.addProperty("merge_id",required(row,"merge_id"));key.addProperty("location_id",integer(row,"location_id"));}
+            case "product_stock_commands", "product_stock_command_results"->key.addProperty("command_id",required(row,"command_id"));
             case "locations"->key.addProperty("location_id",integer(row,"location_id"));
             case "users"->key.addProperty("user_id",integer(row,"user_id"));
             case "user_locations"->{key.addProperty("user_id",integer(row,"user_id"));key.addProperty("location_id",integer(row,"location_id"));}

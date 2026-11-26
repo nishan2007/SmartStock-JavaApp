@@ -1,0 +1,3 @@
+Custom Order Spoils on phones now shows the recording section and explains missing Record Custom Order Spoils permission or ineligible order lines instead of displaying history alone.
+
+Order line selection includes shirt size and colour. Selected line details show variant, size, colour, dimensions, customization, instructions, print add-ons, and production/delivery/return status.

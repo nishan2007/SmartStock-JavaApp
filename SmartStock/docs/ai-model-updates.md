@@ -7,6 +7,23 @@ repair either model. Each model downloads independently from Deckers hosting.
 No model is downloaded automatically. After installation photo processing works
 offline on the store server. Registers and SmartStudio send photos to that server.
 
+## PDF OCR
+
+On an x64 Windows store server, an administrator can open **Status > AI Models**
+and select **Install PDF OCR**. SmartStock downloads Tesseract 5.5.4 and English
+language data to the server, verifies both sizes and SHA-256 digests, and tests
+recognition before activating them. The download runs in the background, so the
+administrator can close the dialog. Workstations can use **Check server OCR…**
+in SmartStudio after installation finishes.
+
+The runtime lives under `~/.smartstock/profiles/<environment>/ocr-runtime`.
+SmartStock retains the current runtime if an install or repair fails. It needs
+internet access to GitHub for installation and can recognize pages offline
+afterward. The portable [Subtitle Edit build of Tesseract 5.5.4](https://github.com/SubtitleEdit/support-files/releases/tag/tesseract554)
+and the [Tesseract project's English language data](https://github.com/tesseract-ocr/tessdata_fast/tree/65727574dfcd264acbb0c3e07860e4e9e9b22185)
+are pinned in SmartStock. See the [PDF Editor setup guide](../../SmartStudio/docs/pdf-editor.md)
+for other server platforms and custom language configurations.
+
 ## Storage and compatibility
 
 Models live at `~/.smartstock/profiles/<environment>/ai-models`, under the same

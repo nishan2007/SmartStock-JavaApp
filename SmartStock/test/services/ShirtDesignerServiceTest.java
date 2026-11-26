@@ -7,6 +7,24 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ShirtDesignerServiceTest {
+    @Test void fontSizeIsRetainedAndBounded(){
+        JsonObject d=design(),layer=d.getAsJsonObject("areas").getAsJsonObject("FRONT").getAsJsonArray("layers").get(0).getAsJsonObject();
+        layer.addProperty("fontSize",144);
+        assertEquals(144,ShirtDesignerService.design(d).getAsJsonObject("areas").getAsJsonObject("FRONT").getAsJsonArray("layers").get(0).getAsJsonObject().get("fontSize").getAsInt());
+        layer.addProperty("fontSize",721);assertThrows(IllegalArgumentException.class,()->ShirtDesignerService.design(d));
+    }
+    @Test void textArcSurvivesValidationAndRejectsInvalidCurves(){
+        JsonObject d=design(),layer=d.getAsJsonObject("areas").getAsJsonObject("FRONT").getAsJsonArray("layers").get(0).getAsJsonObject();
+        for(double arc:new double[]{0,120,-120,180}){layer.addProperty("arc",arc);assertEquals(arc,ShirtDesignerService.design(d).getAsJsonObject("areas").getAsJsonObject("FRONT").getAsJsonArray("layers").get(0).getAsJsonObject().get("arc").getAsDouble());}
+        for(double arc:new double[]{181,-181,Double.NaN,Double.POSITIVE_INFINITY}){layer.addProperty("arc",arc);assertThrows(IllegalArgumentException.class,()->ShirtDesignerService.design(d));}
+    }
+    @Test void staffPreviewRendersCurvedTextDifferentlyFromStraightText()throws Exception{
+        JsonObject d=design(),layer=d.getAsJsonObject("areas").getAsJsonObject("FRONT").getAsJsonArray("layers").get(0).getAsJsonObject();
+        JsonObject shirt=item();shirt.add("config",ShirtDesignerService.defaults());
+        var straight=ShirtPreviewRenderer.render(shirt,d,"FRONT","#ffffff",Map.of());layer.addProperty("arc",120);
+        var curved=ShirtPreviewRenderer.render(shirt,d,"FRONT","#ffffff",Map.of());
+        assertFalse(Arrays.equals(straight.getRGB(0,0,900,900,null,0,900),curved.getRGB(0,0,900,900,null,0,900)));
+    }
     @Test void searchLabelsFollowSavedChoices(){
         JsonObject c=ShirtDesignerService.defaults();
         assertEquals("",ShirtDesignerService.searchLabels(false,c));

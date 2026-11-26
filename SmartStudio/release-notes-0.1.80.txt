@@ -1,0 +1,5 @@
+SmartStudio 0.1.80 (build 1080) - Windows quick update
+
+Includes the completed Studio editing, PDF, ribbon, numbering, layout, save/read-back, and print/cut work from the combined source snapshot. Refreshes the shared SmartStock client dependency to 1.1.84, including current publication, font, rendering and order-workflow integrations.
+
+Export open drafts before restarting to update. Retains the existing Java runtime and separately installed AI models. Live shared-save and physical printer/cutter acceptance remain separate rollout checks.

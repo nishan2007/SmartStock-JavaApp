@@ -8,7 +8,7 @@ class BarcodeFormattingToolbarTest{
    var toolbar=new BarcodeFormattingToolbar(selected::get,applied::set);assertNull(applied.get());assertEquals(e.text,toolbar.value.getText());
    toolbar.caption.doClick();assertFalse(applied.get().caption());assertEquals("123456789",applied.get().value());assertTrue(e.barcodeText,"Toolbar must send an edit rather than mutating the original selection");
    toolbar.value.setText("987654321");toolbar.value.postActionEvent();assertEquals("987654321",applied.get().value());
-   toolbar.width.setValue(65.);assertEquals(65,applied.get().width());
+   toolbar.width.setValue(65./25.4);assertEquals(65,applied.get().width(),.000001);
    e.type="QR";e.barcodeFormat="QR_CODE";toolbar.refresh();assertFalse(toolbar.caption.isEnabled());assertEquals("QR_CODE",toolbar.format.getSelectedItem());
    selected.set(null);toolbar.refresh();assertFalse(toolbar.value.isEnabled());
   });

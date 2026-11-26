@@ -24,8 +24,15 @@ final class CustomOrderDetailsPanel extends JPanel {
     private final JPanel items=column(),activity=column();
     private final DefaultTableModel payments=new DefaultTableModel(new String[]{"Date","Action","Amount","Method","Reference","Cashier","Reason"},0){public boolean isCellEditable(int r,int c){return false;}};
     private final JLabel paymentNotice=new JLabel();
+    private final JTable paymentTable=new JTable(payments);
+    private final java.util.List<JsonObject> paymentRows=new ArrayList<>();
     private long generation;
+    JsonObject selectedPayment(){int row=paymentTable.getSelectedRow();return row<0?null:paymentRows.get(paymentTable.convertRowIndexToModel(row)).deepCopy();}
+
     private boolean canPay;
+    private java.util.function.Consumer<JsonObject> workspaceDetails=data->{};
+    private java.util.function.Consumer<String> workspaceState=text->{};
+    void observeWorkspace(java.util.function.Consumer<JsonObject> details,java.util.function.Consumer<String> state){workspaceDetails=details;workspaceState=state;}
     boolean canPay(){return canPay;}
     private final java.util.function.Consumer<Boolean> paymentEnabled;
     interface ProductionUpdater {
@@ -37,18 +44,18 @@ final class CustomOrderDetailsPanel extends JPanel {
         super(new BorderLayout(8,12));this.paymentEnabled=paymentEnabled;setBorder(new EmptyBorder(12,12,12,12));
         setBackground(DeckersPalette.background());summary.setLayout(new BoxLayout(summary,BoxLayout.Y_AXIS));summary.setOpaque(false);add(summary,BorderLayout.NORTH);
         JPanel itemTab=new JPanel(new BorderLayout());itemTab.add(new JScrollPane(items),BorderLayout.CENTER);itemTab.add(itemActions,BorderLayout.SOUTH);
-        JTable table=new JTable(payments);table.setRowHeight(30);table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);for(int i=0;i<table.getColumnCount();i++)table.getColumnModel().getColumn(i).setPreferredWidth(i==0?175:125);
+        JTable table=paymentTable;table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);table.setRowHeight(30);table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);for(int i=0;i<table.getColumnCount();i++)table.getColumnModel().getColumn(i).setPreferredWidth(i==0?175:125);
         JPanel paymentTab=new JPanel(new BorderLayout(8,8));paymentTab.add(new JScrollPane(table),BorderLayout.CENTER);JPanel foot=new JPanel(new BorderLayout());foot.add(paymentNotice,BorderLayout.NORTH);foot.add(paymentActions,BorderLayout.CENTER);paymentTab.add(foot,BorderLayout.SOUTH);
         tabs.addTab("Items & Notes",itemTab);tabs.addTab("Payments",paymentTab);tabs.addTab("Activity",new JScrollPane(activity));add(tabs,BorderLayout.CENTER);empty();
     }
-    long loading(){long token=++generation;summary.removeAll();summary.add(label("Loading order details…",16,true));items.removeAll();activity.removeAll();payments.setRowCount(0);canPay=false;paymentEnabled.accept(false);revalidate();repaint();return token;}
-    void empty(){loading();summary.removeAll();summary.add(label("Select an order to view its details",16,false));revalidate();repaint();}
-    void failed(long token,String message){if(token!=generation)return;summary.removeAll();summary.add(label("Unable to load order details",16,true));summary.add(label(message,13,false));revalidate();repaint();}
+    long loading(){long token=++generation;workspaceState.accept("Loading order details…");summary.removeAll();summary.add(label("Loading order details…",16,true));items.removeAll();activity.removeAll();payments.setRowCount(0);paymentRows.clear();canPay=false;paymentEnabled.accept(false);revalidate();repaint();return token;}
+    void empty(){loading();workspaceState.accept("Select an order to view its details");summary.removeAll();summary.add(label("Select an order to view its details",16,false));revalidate();repaint();}
+    void failed(long token,String message){if(token!=generation)return;workspaceState.accept("Unable to load order details: "+message);summary.removeAll();summary.add(label("Unable to load order details",16,true));summary.add(label(message,13,false));revalidate();repaint();}
     void showDetails(long token,JsonObject data){if(token!=generation)return;JsonObject s=data.getAsJsonObject("summary");summary.removeAll();
         boolean pending="PENDING".equals(text(s,"pricing_state"));String number=text(s,"order_number");JPanel heading=new JPanel(new BorderLayout(8,0));heading.setOpaque(false);heading.add(label("Order …"+number.substring(Math.max(0,number.length()-4)),22,true),BorderLayout.CENTER);
         JLabel badge=label(human(text(s,"status")),14,true);badge.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(DeckersPalette.border()),new EmptyBorder(5,10,5,10)));heading.add(badge,BorderLayout.EAST);heading.setAlignmentX(Component.LEFT_ALIGNMENT);summary.add(heading);
         JButton copy=new JButton("Copy full order number");copy.setToolTipText(number);copy.addActionListener(e->Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(number),null));copy.setAlignmentX(Component.LEFT_ALIGNMENT);summary.add(copy);
-        if(!pending && decimal(s,"amount_paid").signum()==0 && decimal(s,"loyalty_discount_amount").signum()==0 && !"CANCELLED".equals(text(s,"status")) && !Boolean.parseBoolean(text(s,"invoice_billed"))) {
+        if(!pending && !text(s,"customer_id").isBlank() && decimal(s,"amount_paid").signum()==0 && decimal(s,"loyalty_discount_amount").signum()==0 && !"CANCELLED".equals(text(s,"status")) && !Boolean.parseBoolean(text(s,"invoice_billed"))) {
             JButton loyalty=new JButton("Redeem loyalty points before first payment");
             loyalty.addActionListener(e->LoyaltyDialog.open(this,Integer.parseInt(text(s,"customer_id")),points->{
                 if(points==0||token!=generation)return;JsonObject request=new JsonObject();request.addProperty("action","PREVIEW_ORDER");request.addProperty("orderId",Long.parseLong(text(s,"custom_order_id")));request.addProperty("customerId",Integer.parseInt(text(s,"customer_id")));request.addProperty("points",points);request.addProperty("eligible",decimal(s,"total_amount"));
@@ -83,12 +90,12 @@ final class CustomOrderDetailsPanel extends JPanel {
             for(JsonElement a:data.getAsJsonArray("addons")){JsonObject addon=a.getAsJsonObject();if(text(addon,"custom_order_line_id").equals(text(line,"custom_order_line_id")))addText(card,"Add-on: "+join(text(addon,"print_material_name"),text(addon,"print_size_name"),text(addon,"print_description"),pending?"Price pending":money(addon,"print_charge")));}destination.add(card);destination.add(Box.createVerticalStrut(10));}}
         if(!text(s,"order_notes").isBlank()){items.add(label("Order Notes",16,true));addText(items,text(s,"order_notes"));}
         for(JsonElement entry:data.getAsJsonArray("authorization")){JsonObject a=entry.getAsJsonObject();items.add(label("Account Authorization",16,true));addText(items,join(text(a,"representative_name"),"true".equals(text(a,"has_signature"))?"Signature captured":!text(a,"signature_purged_at").isBlank()?"Signature image expired":prefix("Unsigned: ",text(a,"unsigned_reason")),date(text(a,"captured_at"))));}
-        payments.setRowCount(0);for(JsonElement entry:data.getAsJsonArray("payments")){JsonObject p=entry.getAsJsonObject();payments.addRow(new Object[]{date(text(p,"created_at")),human(text(p,"payment_action"))+(!text(p,"voided_at").isBlank()?" (voided)":""),money(p,"payment_amount"),human(text(p,"payment_method")),text(p,"payment_reference"),text(p,"taken_by_name"),text(p,"void_reason")});}
+        payments.setRowCount(0);paymentRows.clear();for(JsonElement entry:data.getAsJsonArray("payments")){JsonObject p=entry.getAsJsonObject();paymentRows.add(p);payments.addRow(new Object[]{date(text(p,"created_at")),human(text(p,"payment_action"))+(Boolean.parseBoolean(text(p,"reversed"))?" (reversed)":"")+(!text(p,"voided_at").isBlank()?" (voided)":""),money(p,"payment_amount"),human(text(p,"payment_method")),text(p,"payment_reference"),text(p,"taken_by_name"),text(p,"void_reason")});}
         activity.removeAll();ArrayList<JsonObject> events=new ArrayList<>();for(JsonElement entry:data.getAsJsonArray("activity"))events.add(entry.getAsJsonObject());for(String group:new String[]{"deliveries","production","returns"})for(JsonElement entry:data.getAsJsonArray(group)){JsonObject source=entry.getAsJsonObject();JsonObject event=source.deepCopy();event.addProperty("created_at",text(source,group.equals("deliveries")?"delivered_at":"created_at"));event.addProperty("action_type",group);event.addProperty("user_name",text(source,group.equals("deliveries")?"delivered_by_name":group.equals("production")?"updated_by_name":"created_by_name"));event.addProperty("reason",text(source,group.equals("deliveries")?"delivery_notes":group.equals("production")?"notes":"reason"));events.add(event);}events.sort(Comparator.comparing((JsonObject e)->text(e,"created_at")).reversed());
         for(JsonObject e:events){JPanel card=column();card.setBorder(new EmptyBorder(8,4,8,4));addText(card,date(text(e,"created_at"))+" · "+eventTitle(e));JToggleButton expand=new JToggleButton("Show details");JTextArea raw=readable(join(prefix("Field: ",text(e,"field_name")),prefix("Before: ",text(e,"old_value")),prefix("After: ",text(e,"new_value")),prefix("Reason: ",text(e,"reason")),prefix("Item: ",text(e,"item_name")),prefix("Device: ",text(e,"device_name")),prefix("Return: ",text(e,"return_type")),prefix("Restock: ",text(e,"restock_action"))));raw.setVisible(false);expand.addActionListener(a->{raw.setVisible(expand.isSelected());expand.setText(expand.isSelected()?"Hide details":"Show details");card.revalidate();});card.add(expand);card.add(raw);activity.add(card);}
-        if(events.isEmpty())activity.add(label("No activity recorded.",14,false));revalidate();repaint();
+        if(events.isEmpty())activity.add(label("No activity recorded.",14,false));workspaceDetails.accept(data);revalidate();repaint();
     }
-    static String eventTitle(JsonObject e){String actor=fallback(text(e,"user_name"),"System"),action=text(e,"action_type");return switch(action){case "deliveries"->actor+" delivered "+text(e,"item_name")+prefix(" from ",text(e,"device_name"));case "production"->actor+" updated "+text(e,"item_name")+" to "+human(text(e,"new_status"));case "returns"->actor+" returned "+text(e,"item_name")+" · "+money(e,"refund_amount");case "CREATE"->actor+" created the order";case "STATUS_CHANGE"->actor+" changed order status to "+human(text(e,"new_value"));case "CUSTOMER_CALL"->actor+" recorded "+human(text(e,"new_value"));case "LINE_DELIVERY"->actor+" delivered order lines";case "PAYMENT"->actor+" applied a payment";default->actor+" · "+human(action);};}
+    static String eventTitle(JsonObject e){String actor=fallback(text(e,"user_name"),"System"),action=text(e,"action_type");return switch(action){case "deliveries"->actor+" delivered "+text(e,"item_name")+prefix(" from ",text(e,"device_name"));case "production"->actor+" updated "+text(e,"item_name")+" to "+human(text(e,"new_status"));case "returns"->actor+" returned "+text(e,"item_name")+" · "+money(e,"refund_amount");case "CREATE"->actor+" created the order";case "STATUS_CHANGE"->actor+" changed order status to "+human(text(e,"new_value"));case "CUSTOMER_CALL"->actor+" recorded "+human(text(e,"new_value"));case "LINE_DELIVERY"->actor+" delivered order lines";case "PAYMENT"->actor+" applied a payment";case "PAYMENT_REVERSAL"->actor+" reversed payment #"+text(e,"old_value");default->actor+" · "+human(action);};}
     static String date(String value){try{return DateTimeFormatter.ofPattern("d MMM yyyy, h:mm a",Locale.ENGLISH).withZone(ZoneId.systemDefault()).format(Instant.parse(value));}catch(Exception e){return value;}}
     private static final class ContentColumn extends JPanel implements Scrollable {
         public Dimension getMaximumSize(){return new Dimension(Integer.MAX_VALUE,getPreferredSize().height);}
@@ -107,16 +114,14 @@ final class CustomOrderDetailsPanel extends JPanel {
         }
         JPanel row=new JPanel(new OrderDetailsWrapLayout());row.setOpaque(false);row.setAlignmentX(Component.LEFT_ALIGNMENT);
         row.add(label("Production:",14,false));
-        JComboBox<String> selector=new JComboBox<>(new String[]{"NOT_STARTED","STARTED","WAITING_FOR_APPROVAL","DESIGN_APPROVED","PRINTED","FINISHED","QUALITY_CHECKED","READY"});
-        selector.setRenderer(new DefaultListCellRenderer(){public Component getListCellRendererComponent(JList<?> list,Object value,int index,boolean selected,boolean focus){return super.getListCellRendererComponent(list,human(String.valueOf(value)),index,selected,focus);}});
-        if(!"NOT_STARTED".equals(current))selector.removeItem("NOT_STARTED");
+        JComboBox<String> selector=new JComboBox<>(services.CustomOrderProductionStages.codes());
+        selector.setRenderer(new DefaultListCellRenderer(){public Component getListCellRendererComponent(JList<?> list,Object value,int index,boolean selected,boolean focus){return super.getListCellRendererComponent(list,services.CustomOrderProductionStages.label(String.valueOf(value)),index,selected,focus);}});
         selector.setSelectedItem(current);selector.setPreferredSize(new Dimension(170,32));
         row.add(selector);row.add(label("Delivery: "+fallback(human(text(line,"delivery_status")),"Pending"),14,false));card.add(row);
         long token=generation;
         selector.addActionListener(e->{
             String status=(String)selector.getSelectedItem();
             if(current.equals(status))return;
-            if("NOT_STARTED".equals(status)){selector.setSelectedItem(current);return;}
             selector.setEnabled(false);
             productionUpdater.update(Long.parseLong(text(order,"custom_order_id")),Long.parseLong(text(line,"custom_order_line_id")),status,success->{
                 if(token!=generation)return;
@@ -132,7 +137,7 @@ final class CustomOrderDetailsPanel extends JPanel {
     private static String prefix(String prefix,String value){return value.isBlank()?"":prefix+value;}
     private static String fallback(String value,String fallback){return value.isBlank()?fallback:value;}
     private static String join(String...parts){return String.join(" · ",java.util.Arrays.stream(parts).filter(p->!p.isBlank()).toList());}
-    private static String human(String value){String lower=value.toLowerCase(Locale.ROOT).replace('_',' ');return lower.isBlank()?"":Character.toUpperCase(lower.charAt(0))+lower.substring(1);}
+    private static String human(String value){if(services.CustomOrderProductionStages.CODES.contains(value))return services.CustomOrderProductionStages.label(value);String lower=value.toLowerCase(Locale.ROOT).replace('_',' ');return lower.isBlank()?"":Character.toUpperCase(lower.charAt(0))+lower.substring(1);}
     private static BigDecimal decimal(JsonObject o,String key){try{return new BigDecimal(text(o,key));}catch(Exception e){return BigDecimal.ZERO;}}
     private static String moneyTotal(JsonObject line,int count){return "$"+new java.text.DecimalFormat("#,##0.##").format(decimal(line,"line_total").multiply(BigDecimal.valueOf(count)));}
     private static String money(JsonObject o,String key){return "$"+new java.text.DecimalFormat("#,##0.##").format(decimal(o,key));}

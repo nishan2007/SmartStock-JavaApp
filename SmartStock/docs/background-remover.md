@@ -1,5 +1,47 @@
 # Staff background remover
 
+## Publicly trusted browser certificates
+
+For the shared Deckers home-screen app, prefer a CA-issued certificate for a dedicated
+Deckers hostname over installing the generated self-signed certificate on each phone.
+The public hostname may resolve to the server's reserved private IPv4 address using a
+DNS-only A record. Keep the listener and firewall LAN-only: do not proxy the hostname,
+forward the ports, or expose the network probe through a tunnel. This setup requires
+working DNS; an offline store can instead use an exact-name local DNS override.
+
+`tools/renew-lan-public-certificate.ps1` uses Posh-ACME's Cloudflare DNS-01 plugin.
+Install Posh-ACME from PowerShell Gallery under the same Windows account as the server.
+Store a Cloudflare token scoped to DNS editing for `deckers.gy` as a SecureString CLIXML
+file at `$env:USERPROFILE\.smartstock\acme\cloudflare-token.xml`; enter secrets through
+a hidden prompt, never command arguments or committed files. Restrict that directory
+to the server user and SYSTEM. Compile `tools/java/ImportMobileWebCertificate.java`
+with Java 17 (`javac --release 17`) and place the class in the same `acme` directory.
+Copy the renewal script there as well, outside application update/rollback folders.
+
+For initial issuance, run the copied script with `-Initialize -AcceptAcmeTerms`,
+`-WebHost <dedicated-host.deckers.gy>` and `-ServerAddress <reserved-private-IP>` after
+reviewing the certificate authority terms. It refuses conflicting DNS records and
+imports a full server-authentication chain into the separate browser keystore with
+the existing DPAPI-protected browser password. It does not replace `lan-api.p12`.
+
+Run subsequent renewals without `-Initialize` or `-AcceptAcmeTerms`. Schedule them daily
+and at logon under the server's Windows user, with StartWhenAvailable enabled. The
+optional `-ReloadServerService` checks the certificate currently served on port 8444;
+if it differs, it restarts the existing `SmartStockServerService` task. This briefly
+interrupts LAN service, so choose a suitable maintenance time. That switch validates
+the task's user, runtime and sync-service command before restarting it. The task must
+run while that user is logged on, matching the existing interactive server task.
+
+Verify the actual scheduled task's result, normal DNS resolution, and an HTTPS request
+without disabling certificate verification. Check that the public workspace's CSP
+allows the new local origin, CORS preflight succeeds for the network probe, and a probe
+without a valid challenge is rejected. On an iPhone, fully close and reopen the existing
+home-screen app to reload the origin policy and connection address. A publicly trusted
+certificate needs no downloaded profile or manual Certificate Trust Settings change.
+Phone sign-in, pairing and a real local-only screen still require physical-device QA.
+
+## Background-removal workflow
+
 Open **Status → Mobile Item Web App** on a register, activate the browser using the existing QR code, and sign in. Choose **Photo studio · Remove an image background** on the mobile home page. The direct path is /background-remover.html on the same secure mobile web address.
 
 The page uses Company Preferences identity (name, logo when available, motto, phone and email) and the Deckers palette. Upload a PNG or JPEG, choose Remove background, and download the transparent PNG. Original dimensions are preserved. Inputs must be 6 MB or smaller, at least 32 pixels in each direction, and no larger than 12 megapixels.

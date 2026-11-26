@@ -1,0 +1,5 @@
+SmartStock 1.1.98
+
+Website service cards now show available main-item photos for sublimation, laser, business-card and large-format items. Items are grouped within their service section by the saved main Item Type; unclassified items appear under Other items. Includes the completed combined SmartStock workspace changes.
+
+Sublimation designers without saved printable template dimensions remain on hold. The existing plaque designers remain available. Update POS-SERVER before registers and deploy the matching website assets for the new photo/grouping display. Existing AI models remain separate and preserved. Physical hardware and live service behavior require installed-system verification.

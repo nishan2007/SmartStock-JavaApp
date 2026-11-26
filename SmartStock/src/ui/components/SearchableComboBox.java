@@ -15,6 +15,8 @@ import java.util.Locale;
 public class SearchableComboBox extends JComboBox<String> {
     private final List<String> allOptions = new ArrayList<>();
     private boolean updating;
+    private java.util.function.Function<String,String> searchTerms=java.util.function.Function.identity();
+    public void setSearchTerms(java.util.function.Function<String,String> terms){searchTerms=java.util.Objects.requireNonNull(terms);}
     private int navigationIndex = -1;
     private JTextComponent installedEditor;
     private final KeyAdapter searchKeyListener = new KeyAdapter() {
@@ -88,7 +90,7 @@ public class SearchableComboBox extends JComboBox<String> {
         List<String> startsWith = new ArrayList<>();
         List<String> contains = new ArrayList<>();
         for (String option : allOptions) {
-            String normalized = normalizeForSearch(option);
+            String normalized = normalizeForSearch(searchTerms.apply(option));
             if (query.isEmpty() || normalized.startsWith(query)) {
                 startsWith.add(option);
             } else if (normalized.contains(query)) {

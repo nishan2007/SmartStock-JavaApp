@@ -1,0 +1,6 @@
+SmartStudio 0.1.84
+
+Keep business-card artwork at actual size while shifting layouts that fit into the printer's reported printable area. This prevents avoidable right-edge clipping on portrait sheets without shrinking cards or reducing the number per sheet.
+Retains the multi-page template navigation fix from 0.1.83.
+
+Save drafts before updating. Physical C5240 print alignment still requires verification on the store printer.

@@ -1,0 +1,5 @@
+SmartStock 1.1.102
+
+Fixes Store Transfer inventory search capturing application input while adding items. Search results now appear inline, Escape dismisses them, and changing the query clears stale selections. Repeated additions and continued searching are covered by regression tests.
+
+Update the store server before registers. Application update only; AI models remain separate and existing profile models are preserved. No changes to live stock or transfer records are made by installation.

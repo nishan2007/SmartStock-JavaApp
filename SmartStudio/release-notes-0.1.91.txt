@@ -1,0 +1,1 @@
+Combined quick update from all current shared Studio sources. Includes template rename fixes preserving draft edits, Badge Cards barcode and QR generation, font dropdown browsing and Insert ribbon fixes. Uses the exact SmartStock 1.1.95 shared client. Save drafts before restarting.

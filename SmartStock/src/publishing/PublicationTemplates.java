@@ -4,15 +4,15 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
 
-/** Template-only transport: merge records and order associations never enter the library. */
+/** Portable templates include explicitly saved records, but never order associations. */
 public final class PublicationTemplates {
   private PublicationTemplates() {}
   public static Publication clean(Publication source){
-    Publication p=source.copy();p.title=p.title.strip();p.template=true;p.mergeRows.clear();p.orderId=null;p.lineId=null;p.validate();return p;
+    Publication p=source.copy();p.title=p.title.strip();p.template=true;p.orderId=null;p.lineId=null;p.validate();return p;
   }
   public static void requireTemplate(Publication p){
-    p.validate();if(!p.template||!p.mergeRows.isEmpty()||p.orderId!=null||p.lineId!=null)
-      throw new IllegalArgumentException("Only reusable templates without merge records or order links may be shared.");
+    p.validate();if(!p.template||p.orderId!=null||p.lineId!=null)
+      throw new IllegalArgumentException("Only reusable templates without order links may be shared.");
   }
   public static String fingerprint(Publication p)throws Exception{
     requireTemplate(p);MessageDigest digest=MessageDigest.getInstance("SHA-256");

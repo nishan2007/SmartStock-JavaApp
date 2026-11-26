@@ -211,7 +211,10 @@ public final class ServerBalanceSheetService {
     }
 
     public static List<ExpenseOption> listDeletableExpenses(LocalDate from, LocalDate to, String status) throws SQLException {
-        try (Connection conn = DB.getConnection()) {
+        try (Connection conn = DB.getConnection()) { return listDeletableExpenses(conn, from, to, status); }
+    }
+
+    public static List<ExpenseOption> listDeletableExpenses(Connection conn, LocalDate from, LocalDate to, String status) throws SQLException {
             ensureSchema(conn);
             String sql = """
                     SELECT expense_id,
@@ -250,7 +253,7 @@ public final class ServerBalanceSheetService {
                 }
             }
             return expenses;
-        }
+
     }
 
     public static void deleteManualExpense(long expenseId, LocalDate from, LocalDate to, String status) throws SQLException {
@@ -297,10 +300,13 @@ public final class ServerBalanceSheetService {
     }
 
     public static List<ChequeDepositOption> listPendingChequeDeposits() throws SQLException {
-        try (Connection conn = DB.getConnection()) {
+        try (Connection conn = DB.getConnection()) { return listPendingChequeDeposits(conn); }
+    }
+
+    public static List<ChequeDepositOption> listPendingChequeDeposits(Connection conn) throws SQLException {
             ensureSchema(conn);
             return loadPendingChequeDeposits(conn, ServerRequestIdentity.locationId());
-        }
+
     }
 
     public static void markChequeDeposited(ChequeDepositOption cheque, String notes) throws SQLException {
@@ -387,7 +393,10 @@ public final class ServerBalanceSheetService {
     }
 
     public static List<PayableOption> listUnpaidPayables(LocalDate from, LocalDate to) throws SQLException {
-        try (Connection conn = DB.getConnection()) {
+        try (Connection conn = DB.getConnection()) { return listUnpaidPayables(conn, from, to); }
+    }
+
+    public static List<PayableOption> listUnpaidPayables(Connection conn, LocalDate from, LocalDate to) throws SQLException {
             ensureSchema(conn);
             String sql = """
                     SELECT expense_id, expense_date, category,
@@ -421,7 +430,7 @@ public final class ServerBalanceSheetService {
                 }
             }
             return payables;
-        }
+
     }
 
     public static void recordPayablePayment(long expenseId, LocalDate paymentDate, BigDecimal paymentAmount,
@@ -646,16 +655,17 @@ public final class ServerBalanceSheetService {
 
     /* Connection-bound mutations keep the accounting write, sync event and API
        idempotency row in one transaction. */
-    public static void addManualExpense(Connection conn,ExpenseEntry entry)throws SQLException{
-        if(entry==null || entry.category().isBlank())throw new SQLException("Expense category is required.");
+    public static long addManualExpense(Connection conn,ExpenseEntry entry)throws SQLException{
+        validateManualExpense(entry);
         ensureSchema(conn);try(PreparedStatement ps=conn.prepareStatement("""
                 INSERT INTO expenses (location_id,expense_date,category,payee,description,amount,payment_method,payment_reference,status,created_by_user_id,created_by_name)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING expense_id
                 """)){setNullableInteger(ps,1,ServerRequestIdentity.locationId());ps.setDate(2,Date.valueOf(entry.expenseDate()));ps.setString(3,entry.category());ps.setString(4,entry.payee());ps.setString(5,entry.description());ps.setBigDecimal(6,defaultZero(entry.amount()));ps.setString(7,entry.paymentMethod());ps.setString(8,entry.paymentReference());ps.setString(9,entry.status());setNullableInteger(ps,10,ServerRequestIdentity.userId());ps.setString(11,ServerRequestIdentity.userName());
-            try(ResultSet rs=ps.executeQuery()){if(rs.next())SyncOutboxService.recordEvent(conn,"EXPENSE_CREATED",Map.of("expense_id",rs.getLong(1),"location_id",ServerRequestIdentity.locationId()==null?"":ServerRequestIdentity.locationId(),"expense_date",entry.expenseDate(),"category",entry.category(),"amount",defaultZero(entry.amount()),"status",entry.status()));}}
+            try(ResultSet rs=ps.executeQuery()){if(rs.next()){long id=rs.getLong(1);SyncOutboxService.recordEvent(conn,"EXPENSE_CREATED",Map.of("expense_id",rs.getLong(1),"location_id",ServerRequestIdentity.locationId()==null?"":ServerRequestIdentity.locationId(),"expense_date",entry.expenseDate(),"category",entry.category(),"amount",defaultZero(entry.amount()),"status",entry.status()));return id;}}}
+        throw new SQLException("Expense creation did not return an id.");
     }
 
-    public static void addOtherIncome(Connection conn, OtherIncomeEntry entry) throws SQLException {
+    public static long addOtherIncome(Connection conn, OtherIncomeEntry entry) throws SQLException {
         ensureSchema(conn);
         validateOtherIncome(entry);
         try (PreparedStatement ps = conn.prepareStatement("""
@@ -682,13 +692,18 @@ public final class ServerBalanceSheetService {
                             "source_name", entry.sourceName().trim(),
                             "amount", entry.amount(),
                             "payment_method", "CASH"));
+                    return rs.getLong(1);
                 }
             }
         }
+        throw new SQLException("Income creation did not return an id.");
     }
 
     public static List<OtherIncomeOption> listDeletableOtherIncome(LocalDate from, LocalDate to) throws SQLException {
-        try (Connection conn = DB.getConnection()) {
+        try (Connection conn = DB.getConnection()) { return listDeletableOtherIncome(conn, from, to); }
+    }
+
+    public static List<OtherIncomeOption> listDeletableOtherIncome(Connection conn, LocalDate from, LocalDate to) throws SQLException {
             ensureSchema(conn);
             try (PreparedStatement ps = conn.prepareStatement("""
                     SELECT other_income_id, income_date, source_name, description, amount, payment_reference
@@ -710,7 +725,7 @@ public final class ServerBalanceSheetService {
                 }
                 return rows;
             }
-        }
+
     }
 
     public static void deleteOtherIncome(Connection conn, long otherIncomeId, LocalDate from, LocalDate to) throws SQLException {
@@ -742,6 +757,15 @@ public final class ServerBalanceSheetService {
             }
         }
         throw new SQLException("Only manual Other income from the current balance sheet can be deleted.");
+    }
+
+    private static void validateManualExpense(ExpenseEntry entry)throws SQLException {
+        if(entry==null||entry.expenseDate()==null)throw new SQLException("Expense date is required.");
+        if(entry.category()==null||entry.category().isBlank()||entry.category().length()>200)throw new SQLException("Expense category is required (maximum 200 characters).");
+        if(entry.amount()==null||entry.amount().signum()<=0||entry.amount().remainder(BigDecimal.ONE).signum()!=0||entry.amount().precision()-entry.amount().scale()>10)throw new SQLException("Expense amount must be positive whole GYD, up to 10 digits.");
+        if(!Set.of("PAID","UNPAID").contains(entry.status()))throw new SQLException("Choose Paid or Unpaid.");
+        if(!Set.of("CASH","CARD","CHEQUE","MMG","BANK","OTHER").contains(entry.paymentMethod()))throw new SQLException("Choose a valid payment method.");
+        if(entry.payee()!=null&&entry.payee().length()>500||entry.description()!=null&&entry.description().length()>3000||entry.paymentReference()!=null&&entry.paymentReference().length()>500)throw new SQLException("Payee, description or reference is too long.");
     }
 
     private static void validateOtherIncome(OtherIncomeEntry entry) throws SQLException {
@@ -834,7 +858,10 @@ public final class ServerBalanceSheetService {
     }
 
     public static List<SubmissionOption> listSubmissions() throws SQLException {
-        try (Connection conn = DB.getConnection()) {
+        try (Connection conn = DB.getConnection()) { return listSubmissions(conn); }
+    }
+
+    public static List<SubmissionOption> listSubmissions(Connection conn) throws SQLException {
             ensureSchema(conn);
             Integer locationId = ServerRequestIdentity.locationId();
             String sql = """
@@ -877,25 +904,28 @@ public final class ServerBalanceSheetService {
                 }
             }
             return submissions;
-        }
+
     }
 
     public static BalanceSheet loadSubmission(long submissionId) throws SQLException {
-        try (Connection conn = DB.getConnection()) {
+        try (Connection conn = DB.getConnection()) { return loadSubmission(conn, submissionId); }
+    }
+
+    public static BalanceSheet loadSubmission(Connection conn, long submissionId) throws SQLException {
             ensureSchema(conn);
             String sql = """
                     SELECT *
                     FROM balance_sheet_submissions
-                    WHERE balance_sheet_submission_id = ?
+                    WHERE balance_sheet_submission_id = ? AND location_id = ?
                     """;
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setLong(1, submissionId);
+                ps.setInt(2, ServerRequestIdentity.locationId());
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) return snapshot(rs);
                 }
             }
-        }
-        throw new SQLException("Saved balance sheet was not found.");
+        throw new SQLException("Saved balance sheet was not found for this store.");
     }
 
     private static BalanceSheet snapshot(ResultSet rs) throws SQLException {
@@ -1263,7 +1293,7 @@ public final class ServerBalanceSheetService {
                            COALESCE(s.payment_reference, '') AS reference,
                            COALESCE(s.amount_paid, 0) AS amount,
                            s.location_id AS location_id
-                    FROM sales s
+                    FROM sales_tender_activity s
                     LEFT JOIN customer_accounts ca ON ca.customer_id = s.customer_id
                     WHERE UPPER(COALESCE(s.payment_method, '')) = 'CHEQUE'
                       AND COALESCE(s.amount_paid, 0) > 0
@@ -1318,6 +1348,7 @@ public final class ServerBalanceSheetService {
                     FROM customer_account_transactions t
                     LEFT JOIN customer_accounts ca ON ca.customer_id = t.customer_id
                     WHERE COALESCE(t.transaction_type, '') = 'PAYMENT'
+                  AND COALESCE(t.payment_method,'') <> 'ACCOUNT_CREDIT'
                       AND UPPER(COALESCE(t.payment_method, '')) = 'CHEQUE'
                       AND COALESCE(t.amount, 0) > 0
                     """);
@@ -1373,7 +1404,7 @@ public final class ServerBalanceSheetService {
         String salesSql = """
                 SELECT COALESCE(NULLIF(TRIM(payment_method), ''), 'UNKNOWN') AS label,
                        SUM(COALESCE(amount_paid, 0)) AS amount
-                FROM sales
+                FROM sales_tender_activity
                 WHERE (? IS NULL OR location_id = ?)
                   AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
                 """ + sessionFilter + """
@@ -1849,7 +1880,10 @@ public final class ServerBalanceSheetService {
     }
 
     public static List<DrawSessionRange> findDrawSessionRanges(String storeZoneId, LocalDate from, LocalDate to) throws SQLException {
-        try (Connection conn = DB.getConnection()) {
+        try (Connection conn = DB.getConnection()) { return findDrawSessionRanges(conn, storeZoneId, from, to); }
+    }
+
+    public static List<DrawSessionRange> findDrawSessionRanges(Connection conn, String storeZoneId, LocalDate from, LocalDate to) throws SQLException {
             ensureSchema(conn);
             Integer locationId = ServerRequestIdentity.locationId();
             String sql = """
@@ -1894,7 +1928,7 @@ public final class ServerBalanceSheetService {
                 }
             } while(changed);
             return new ArrayList<>(ranges.values());
-        }
+
     }
 
     private static List<SheetLine> loadDeviceSales(Connection conn, LocalDate from, LocalDate to, String storeZoneId,
@@ -1906,7 +1940,7 @@ public final class ServerBalanceSheetService {
                 """ + deviceLabel + """
                        AS device_label,
                        SUM(COALESCE(s.amount_paid, 0)) AS amount
-                FROM sales s
+                FROM sales_tender_activity s
                 LEFT JOIN devices d ON d.device_id::text = s.device_id
                 WHERE (? IS NULL OR s.location_id = ?)
                   AND (s.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
@@ -1995,6 +2029,7 @@ public final class ServerBalanceSheetService {
                 FROM customer_account_transactions t
                 LEFT JOIN devices d ON d.device_id::text = t.device_id
                 WHERE COALESCE(t.transaction_type, '') = 'PAYMENT'
+                  AND COALESCE(t.payment_method,'') <> 'ACCOUNT_CREDIT'
                   AND (? IS NULL OR t.location_id = ?)
                   AND (t.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
                 """ + sessionFilterSql(cashDrawerSessionIds, "t.cash_drawer_session_id") + """
@@ -2037,6 +2072,7 @@ public final class ServerBalanceSheetService {
                 FROM customer_account_transactions t
                 LEFT JOIN cash_drawer_sessions cds ON cds.cash_drawer_session_id = t.cash_drawer_session_id
                 WHERE COALESCE(t.transaction_type, '') = 'PAYMENT'
+                  AND COALESCE(t.payment_method,'') <> 'ACCOUNT_CREDIT'
                   AND (? IS NULL OR t.location_id = ?)
                   AND (t.created_at AT TIME ZONE ?)::date BETWEEN ? AND ?
                 """ + sessionFilterSql(cashDrawerSessionIds, "t.cash_drawer_session_id") + """
@@ -2079,7 +2115,7 @@ public final class ServerBalanceSheetService {
                        COALESCE(NULLIF(TRIM(receipt_device_id), ''), NULLIF(TRIM(device_name), ''), NULLIF(TRIM(device_id), ''), 'Unassigned Device') AS device_label,
                        COALESCE(NULLIF(TRIM(cash_drawer_name), ''), 'No Drawer') AS drawer_label,
                        COALESCE(amount_paid, 0) AS amount
-                FROM sales
+                FROM sales_tender_activity
                 WHERE (? IS NULL OR location_id = ?)
                   AND UPPER(COALESCE(payment_method, '')) = 'CASH'
                   AND (created_at AT TIME ZONE ?)::date BETWEEN ? AND ?

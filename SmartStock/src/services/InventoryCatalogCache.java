@@ -19,6 +19,7 @@ public final class InventoryCatalogCache {
     });
 
     private static Snapshot snapshot;
+    private static long generation;
     private static CompletableFuture<Snapshot> activeLoad;
     private static Scope activeScope;
 
@@ -56,6 +57,7 @@ public final class InventoryCatalogCache {
         }
         if (activeLoad != null && !activeLoad.isDone() && requestedScope.equals(activeScope)) return activeLoad;
 
+        long requestedGeneration = generation;
         activeScope = requestedScope;
         activeLoad = CompletableFuture.supplyAsync(() -> {
             try {
@@ -67,7 +69,7 @@ public final class InventoryCatalogCache {
             }
         }, LOADER).thenApply(loaded -> {
             synchronized (InventoryCatalogCache.class) {
-                if (loaded.scope().equals(currentScope())) snapshot = loaded;
+                if (requestedGeneration == generation && loaded.scope().equals(currentScope())) snapshot = loaded;
             }
             return loaded;
         });
@@ -87,6 +89,7 @@ public final class InventoryCatalogCache {
     }
 
     public static synchronized void invalidate() {
+        generation++;
         snapshot = null;
     }
 

@@ -18,6 +18,32 @@ class PublicationTest {
   @TempDir Path dir;
 
   @Test
+  void textAlignmentMovesMergedAndFittedTextAndSurvivesTheArchive() throws Exception {
+    var design=new Publication();
+    var text=new Publication.Element();
+    text.text="{{name}}";text.width=70;text.height=12;
+    design.pages.get(0).objects.add(text);
+    for (String mode : List.of("normal", "fitted", "wordArt")) {
+      text.fitText=mode.equals("fitted");text.wordArt=mode.equals("wordArt")?"PLAIN":"NONE";
+      int previous=-1;
+      for (var alignment : TextAlignment.values()) {
+        text.textAlignment=alignment;
+        var restored=PublicationFiles.read(PublicationFiles.archive(design));
+        assertEquals(alignment,restored.pages.get(0).objects.get(0).textAlignment);
+        var image=new BufferedImage(420,240,BufferedImage.TYPE_INT_RGB);
+        var graphics=image.createGraphics();
+        try { graphics.scale(4,4);new PublicationRenderer(restored).page(graphics,0,Map.of("name","Hi")); }
+        finally { graphics.dispose(); }
+        int left=image.getWidth();
+        for(int y=0;y<80;y++) for(int x=0;x<left;x++)
+          if ((image.getRGB(x,y)&0xffffff)<0x444444) left=x;
+        assertTrue(left>previous&&left<image.getWidth(),mode+" "+alignment);
+        previous=left;
+      }
+    }
+  }
+
+  @Test
   void unitsAndResizePreservePhysicalDimensions() {
     assertEquals(25.4, Publication.toMm(1, "IN"), 1e-9);
     assertEquals(10, Publication.toMm(1, "CM"));
@@ -86,6 +112,35 @@ class PublicationTest {
     assertEquals(0, SheetLayout.pack(101, 51, s).capacity());
     s.gapX = .01;
     assertEquals(1, SheetLayout.pack(50, 50, s).capacity());
+  }
+
+  @Test
+  void negativeGapsOverlapPagesWithoutCoveringExistingArtwork() throws Exception {
+    var p = new Publication();
+    p.width = p.height = 50;
+    var s = p.print;
+    s.width = s.height = 90;
+    s.left = s.right = s.top = s.bottom = 0;
+    s.gapX = s.gapY = -10;
+    s.rotate = false;
+    var mark = new Publication.Element();
+    mark.type = "RECT";
+    mark.x = mark.y = 42;
+    mark.width = mark.height = 5;
+    mark.fill = "#000000";
+    p.pages.get(0).objects.add(mark);
+
+    var reopened = PublicationFiles.read(PublicationFiles.archive(p));
+    var layout = SheetLayout.pack(p.width, p.height, reopened.print);
+    assertEquals(4, layout.capacity());
+    assertEquals(new SheetLayout.Placement(40, 40, 50, 50, false), layout.placements().get(3));
+    var sheet = new PublicationRenderer(reopened).raster(0, 254);
+    assertEquals(Color.BLACK.getRGB(), sheet.getRGB(440, 440));
+
+    s.gapY = -50;
+    assertThrows(IllegalArgumentException.class, () -> SheetLayout.pack(p.width, p.height, s));
+    s.gapY = -49.999;
+    assertThrows(IllegalArgumentException.class, () -> SheetLayout.pack(p.width, p.height, s));
   }
 
   @Test

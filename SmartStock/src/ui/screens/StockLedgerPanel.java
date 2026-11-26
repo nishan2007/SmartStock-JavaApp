@@ -119,6 +119,10 @@ final class StockLedgerPanel extends JPanel {
                     "\nUnit cost: "+(text(row,"unit_cost").isEmpty()?"Unavailable or restricted":text(row,"unit_cost"))+
                     "\nValuation: "+text(row,"valuation_source")+"\nSource movement: "+text(row,"source_movement_type")+" #"+text(row,"source_movement_id")+"\nCategory: "+text(row,"category")+"\nDescription / recipient: "+text(row,"description")+"\nReason: "+text(row,"reason")+
                     "\nReceiving reference: "+text(row,"receive_id")+"\nReversal of: "+text(row,"reversal_of");
+            if (!text(data,"checkoutId").isEmpty()) {
+                summary += "\nExpense checkout: " + text(data,"checkoutId")
+                        + "\nRepresentative: " + text(data,"representativeName");
+            }
             JTextArea text=new JTextArea(summary,16,65);text.setEditable(false);text.setLineWrap(true);text.setWrapStyleWord(true);panel.add(new JScrollPane(text),BorderLayout.CENTER);
             String signature=text(data,"signaturePngBase64");if(!signature.isEmpty()){
                 ImageIcon original=new ImageIcon(java.util.Base64.getDecoder().decode(signature));

@@ -1,0 +1,11 @@
+# Merge this entry into the EXISTING tunnel's ingress before its catch-all.
+# Replace the hostname, reserved guest IP and CA path with approved values.
+# Keep all existing SmartStock and other application routes.
+ingress:
+  - hostname: drive-origin.example.com
+    service: https://192.168.1.60:4178
+    originRequest:
+      originServerName: drive-origin.example.com
+      caPool: 'C:\ProgramData\cloudflared\drive-origin-ca.pem'
+      noTLSVerify: false
+  - service: http_status:404

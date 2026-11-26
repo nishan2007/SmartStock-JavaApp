@@ -24,13 +24,119 @@ final class StockLedgerService {
         String category=required(body,"category",80), reason=required(body,"reason",2000), description=required(body,"description",2000);
         if(!List.of("Company Use","Donation").contains(category)) throw invalid("Choose Company Use or Donation.");
         byte[] signature=validateSignature(required(body,"signaturePngBase64",400000));
-        var stock=LanInventoryService.lockStock(c,type,item,location);
-        if(stock.currentStock()<qty) throw invalid("There is not enough stock for this expense.");
-        UUID id=insert(c,stock,"EXPENSE",qty,stock.currentStock()-qty,category,description,reason,user,name,device,location,null,signature,null,null);
-        LanInventoryService.applyStock(c,stock,-qty,location);
-        movement(c,stock,-qty,"STOCK_EXPENSE",id,user,name,device,location);
-        return Map.of("entryId",id.toString());
+        UUID id = postExpense(c, type, item, qty, category, description, reason, device, user, name,
+                location, signature, null, null).id();
+        return Map.of("entryId", id.toString());
     }
+
+    static String expenseAccountName(Connection c, int location) throws SQLException {
+        try (var ps = c.prepareStatement("SELECT name FROM locations WHERE location_id=?")) {
+            ps.setInt(1, location);
+            try (var rs = ps.executeQuery()) {
+                if (!rs.next()) throw new SQLException("The expense account store is unavailable.");
+                return "Deckers " + rs.getString(1) + " Expense";
+            }
+        }
+    }
+
+    static void requireCheckout(Connection c, JsonObject body, int user, int location) throws Exception {
+        LanInventoryService.requirePermission(c, user, "MAKE_SALE");
+        LanInventoryService.requirePermission(c, user, "RECORD_STOCK_EXPENSE");
+        if (integer(body, "storeId") != location) {
+            throw invalid("Select the expense account for this register's store.");
+        }
+    }
+
+    static Map<String, Object> checkout(Connection c, JsonObject body, UUID device,
+                                        int user, String name, int location) throws Exception {
+        requireCheckout(c, body, user, location);
+        String representative = required(body, "representativeName", 200);
+        byte[] signature = validateSignature(required(body, "signaturePngBase64", 400000));
+        var lines = body.get("lines");
+        if (lines == null || !lines.isJsonArray() || lines.getAsJsonArray().isEmpty()
+                || lines.getAsJsonArray().size() > 200) {
+            throw invalid("Add between 1 and 200 inventory lines to the expense.");
+        }
+        Map<Integer, Integer> quantities = new TreeMap<>();
+        for (var element : lines.getAsJsonArray()) {
+            if (!element.isJsonObject()) throw invalid("Invalid expense line.");
+            var line = element.getAsJsonObject();
+            int productId = integer(line, "productId");
+            int quantity = integer(line, "quantity");
+            long combined = (long) quantities.getOrDefault(productId, 0) + quantity;
+            if (productId == 0 || quantity < 1 || combined > 1_000_000) {
+                throw invalid("Enter a valid inventory item and quantity.");
+            }
+            quantities.put(productId, (int) combined);
+        }
+        StorefrontService.lock(c, location);
+        Map<Integer, LanSalesService.CatalogLine> catalog;
+        try {
+            catalog = LanSalesService.lockCatalogLines(c, new ArrayList<>(quantities.keySet()));
+        } catch (LanSalesService.RuleViolation ex) {
+            throw invalid(ex.safeMessage());
+        } catch (SQLException ex) {
+            if (ex.getSQLState() != null) throw ex;
+            throw invalid(ex.getMessage());
+        }
+        for (var item : catalog.values()) {
+            if (!"INVENTORY".equals(item.productType()) || "SMARTSTOCK-MISC".equals(item.sku())) {
+                throw invalid(item.name() + " is not a stock item.");
+            }
+        }
+        UUID checkoutId = UUID.randomUUID();
+        String account = expenseAccountName(c, location);
+        BigDecimal total = BigDecimal.ZERO;
+        for (var line : quantities.entrySet()) {
+            var item = catalog.get(line.getKey());
+            String type = "PRODUCT";
+            int id = item.productId();
+            if (item.customVariantId() != null) {
+                type = "CUSTOM_VARIANT";
+                id = Math.toIntExact(item.customVariantId());
+            } else if (item.customItemId() != null) {
+                type = "CUSTOM_ITEM";
+                id = Math.toIntExact(item.customItemId());
+            }
+            ExpensePosting posting = postExpense(c, type, id, line.getValue(), "Company Use",
+                    account, "Company use at checkout", device, user, name, location, signature, checkoutId, representative);
+            total = total.add(posting.value());
+        }
+        return Map.of("checkoutId", checkoutId.toString(), "accountName", account, "total", total);
+    }
+
+    private static ExpensePosting postExpense(Connection c, String type, int item, int qty, String category,
+                                               String description, String reason, UUID device, int user, String name,
+                                               int location, byte[] signature, UUID checkoutId,
+                                               String representative) throws Exception {
+        var stock = LanInventoryService.lockStock(c, type, item, location);
+        if (stock.currentStock() < qty) throw invalid("There is not enough stock for " + stock.name() + ".");
+        if (checkoutId != null && "PRODUCT".equals(type)) {
+            try {
+                StorefrontAdminService.protectReservations(c, location, item, qty);
+            } catch (IllegalArgumentException ex) {
+                throw invalid(ex.getMessage());
+            }
+        }
+        BigDecimal[] price = prices(c, stock);
+        UUID id = insert(c, stock, "EXPENSE", qty, stock.currentStock() - qty, category, description, reason,
+                user, name, device, location, null, signature, null, price);
+        if (checkoutId != null) {
+            try (var ps = c.prepareStatement("""
+                    UPDATE stock_ledger_entries SET expense_checkout_id=?,representative_name=? WHERE entry_id=?
+                    """)) {
+                ps.setObject(1, checkoutId);
+                ps.setString(2, representative);
+                ps.setObject(3, id);
+                ps.executeUpdate();
+            }
+        }
+        LanInventoryService.applyStock(c, stock, -qty, location);
+        movement(c, stock, -qty, "STOCK_EXPENSE", id, user, name, device, location);
+        return new ExpensePosting(id, price[0].multiply(BigDecimal.valueOf(qty)));
+    }
+
+    private record ExpensePosting(UUID id, BigDecimal value) {}
 
     static void shortage(Connection c, LanInventoryService.LockedStock stock, int counted, String category, String notes,
                          int user,String name,UUID device,int location,String receive) throws Exception {
@@ -131,10 +237,17 @@ final class StockLedgerService {
 
     static Map<String,Object> detail(Connection c,JsonObject body,int user,int location)throws Exception {
         requireReport(c,user);
-        try(var p=c.prepareStatement("SELECT signature_png FROM stock_ledger_entries WHERE entry_id=? AND location_id=?")){
+        try(var p=c.prepareStatement("""
+                SELECT signature_png, expense_checkout_id, representative_name
+                FROM stock_ledger_entries WHERE entry_id=? AND location_id=?
+                """)){
             p.setObject(1,UUID.fromString(required(body,"entryId",40)));p.setInt(2,location);
             try(var r=p.executeQuery()){if(!r.next())throw invalid("Ledger entry was not found.");byte[] bytes=r.getBytes(1);
-                return Map.of("signaturePngBase64",bytes==null?"":Base64.getEncoder().encodeToString(bytes));}
+                UUID reference = r.getObject("expense_checkout_id", UUID.class);
+                String representative = r.getString("representative_name");
+                return Map.of("signaturePngBase64", bytes == null ? "" : Base64.getEncoder().encodeToString(bytes),
+                        "checkoutId", reference == null ? "" : reference.toString(),
+                        "representativeName", representative == null ? "" : representative); }
         }
     }
 

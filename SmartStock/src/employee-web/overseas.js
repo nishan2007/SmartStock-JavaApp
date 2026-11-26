@@ -21,7 +21,7 @@
   function reset(){generation++;current=null;lines=[];permissions.clear();stores=[];store=0;host.replaceChildren();host.hidden=true;}
   window.addEventListener('employee-signed-out',reset);
   window.addEventListener('employee-ready',async event=>{
-    reset();if(!event.detail.canOverseas)return;host.hidden=false;stores=event.detail.overseasStores||[];
+    reset();if(document.body.dataset.workspace!=='overseas'||!event.detail.canOverseas)return;host.hidden=false;stores=event.detail.overseasStores||[];
     if(!stores.length){host.append(n('p','No store is assigned to your account.'));return;}
     store=Number(stores[0].id);renderShell();try{await list();}catch(e){notice(e.message);}
   });
@@ -36,7 +36,7 @@
     const results=n('div');results.id='overseasResults';const editor=n('div');editor.id='overseasEditor';host.append(results,editor);
   }
   async function list(){const version=++generation,data=await send('LIST',{search:document.getElementById('overseasSearch').value,filter:document.getElementById('overseasFilter').value});if(version!==generation)return;const results=document.getElementById('overseasResults');results.replaceChildren();if(!data.rows.length)results.append(n('p','No matching orders.'));for(const row of data.rows){const card=n('article');card.className='session';card.append(n('strong',`${row.number} · ${row.customerName}`),n('p',`${row.customerPhone} · ${trackingLabel(row.tracking,row.storeName)} · Total GYD ${row.total} · Paid ${row.paid} · Balance ${row.balance}`),button('Open order',async()=>{const d=await send('DETAIL',{id:row.id});current=d.order;lines=current.lines.map(l=>({...l}));renderEditor(d);}));results.append(card);}}
-  function newLine(){return {seller:'',description:'',product_url:'',options:'',quantity:1,unit_price:'0',usd_cost:'',exchange_rate:'',screenshot:'',purchased:0,shipped:0,arrived:0,collected:0};}
+  function newLine(){return {digital:false,seller:'',description:'',product_url:'',options:'',quantity:1,unit_price:'0',usd_cost:'',exchange_rate:'',screenshot:'',purchased:0,shipped:0,arrived:0,collected:0};}
   function showWorkspace(open){
     document.getElementById('overseasLookup').hidden=open;
     document.getElementById('overseasResults').hidden=open;
@@ -54,7 +54,7 @@
   const itemTotal=line=>cents(line.unit_price)*Number(line.quantity||0);
   function cartLine(line){
     const card=n('article');card.className='overseas-cart-line';const image=photo(line);if(image){card.classList.add('has-photo');card.append(image);}
-    const text=n('div');text.append(n('strong',line.description||'Untitled item'));if(line.seller)text.append(n('p',`Seller: ${line.seller}`));
+    const text=n('div');text.append(n('strong',line.description||'Untitled item'));if(line.digital)text.append(n('p','Digital item (code; no physical delivery)'));if(line.seller)text.append(n('p',`Seller: ${line.seller}`));
     if(line.options)text.append(n('p',line.options));
     text.append(n('p',`${line.quantity} × ${money(cents(line.unit_price))}`));card.append(text,n('strong',money(itemTotal(line))));return card;
   }
@@ -67,6 +67,7 @@
   function fillSellers(list){list.replaceChildren();for(const seller of sellers){const option=n('option');option.value=seller;list.append(option);}}
   function trackingLabel(stage,store){return ({DRAFT:'Draft',WAITING_FOR_PAYMENT:'Waiting for payment',PROCESSING:'Processing',ORDERED:'Ordered',PARTIALLY_ORDERED:'Partially ordered',ARRIVED:`Arrived at Deckers ${store||storeName()}`,PARTIALLY_ARRIVED:`Partially arrived at Deckers ${store||storeName()}`,COLLECTED:'Collected',CANCELLED:'Cancelled'})[stage]||stage||'Waiting for payment';}
   function progression(line){
+    if(line.digital){const wrap=n('div');wrap.append(n('p',line.collected===line.quantity?'Digital item fulfilled':line.purchased===line.quantity?'Digital item ordered; awaiting full payment':'Digital item; no physical delivery'));return wrap;}
     const wrap=n('div');wrap.className='overseas-tracking';const stage=line.tracking||(line.collected===line.quantity?'COLLECTED':line.arrived===line.quantity?'ARRIVED':line.purchased>0?'ORDERED':Number(current.paid)>0?'PROCESSING':'WAITING_FOR_PAYMENT');
     wrap.append(n('strong',trackingLabel(stage,current.store_name)));
     const steps=n('ol');steps.className='overseas-steps';const index=line.collected===line.quantity?4:line.arrived===line.quantity?3:line.purchased===line.quantity?2:Number(current.paid)>0?1:0;
@@ -81,7 +82,7 @@
       if(allowed('SHIP')&&current.state==='ISSUED'){
         const actions=n('div');actions.className='overseas-actions';
         if(line.purchased<line.quantity)actions.append(button('Mark ordered',async()=>mutate('TRACK',{stage:'ORDERED',lineIds:[line.line_id]})));
-        if(line.purchased>0&&line.arrived<line.quantity)actions.append(button(`Arrived at Deckers ${current.store_name||storeName()}`,async()=>mutate('TRACK',{stage:'ARRIVED',lineIds:[line.line_id]})));
+        if(!line.digital&&line.purchased>0&&line.arrived<line.quantity)actions.append(button(`Arrived at Deckers ${current.store_name||storeName()}`,async()=>mutate('TRACK',{stage:'ARRIVED',lineIds:[line.line_id]})));
         card.append(actions);
       }editor.append(card);
     }
@@ -188,6 +189,7 @@
         itemList.append(n('p',`${lines.length} item${lines.length===1?'':'s'} · Items subtotal ${money(lines.reduce((sum,l)=>sum+itemTotal(l),0))}`));return;
       }
       const line=lines[activeItem];itemEditor.append(n('h4',`Item ${activeItem+1}`));
+      const digital=input('Digital item (code; no physical delivery)','','checkbox');digital.field.checked=!!line.digital;digital.field.addEventListener('change',()=>{line.digital=digital.field.checked;});itemEditor.append(digital.wrap);
       for(const [key,label,type]of [['description','Description','text'],['seller','Seller','text'],['product_url','Product link','url'],['options','Size / colour / options','text'],['quantity','Quantity','number'],['unit_price','Price each GYD (shipping included)','number']]){
         const f=input(label,val(line,key),type);if(['description','quantity','unit_price'].includes(key))f.field.required=true;
         if(type==='number'){f.field.min=key==='quantity'?'1':'0';f.field.max=key==='quantity'?'100000':'';f.field.step=key==='quantity'?'1':'0.01';}

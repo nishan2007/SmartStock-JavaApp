@@ -33,6 +33,7 @@ import java.util.Base64;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -41,6 +42,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Opt-in, store-LAN-only mobile item UI and its separately bound API. */
 public final class MobileItemWebServer implements AutoCloseable {
+    private static volatile MobileItemWebServer active;
     public static final int UI_PORT = 8444;
     public static final int API_PORT = 8445;
     private static final int MAX_JSON = 18 * 1024 * 1024;
@@ -74,7 +76,7 @@ public final class MobileItemWebServer implements AutoCloseable {
             try(Connection c=DB.getConnection()){server.mobileDeviceId(c,DatabaseConfig.load().locationId());}
             ui.createContext("/",x->{try{server.ui(x);}finally{WebRuntimeMetrics.record("mobile",x);}});
             api.createContext("/api/v1/",x->{try{server.api(x);}finally{WebRuntimeMetrics.record("mobile",x);}});
-            ui.start();api.start();WebRuntimeMetrics.started("mobile");return server;
+            ui.start();api.start();WebRuntimeMetrics.started("mobile");active=server;return server;
         }catch(Exception e){if(ui!=null)ui.stop(0);if(api!=null)api.stop(0);if(pool!=null)pool.shutdownNow();throw e;}
     }
 
@@ -82,14 +84,25 @@ public final class MobileItemWebServer implements AutoCloseable {
 
     private void ui(HttpExchange x) {
         try {
-            requireLan(x); String path=x.getRequestURI().getPath();
+            requireLan(x); if(MobileDeviceService.handle(x,"/mobile-management/","https://"+host+":"+UI_PORT,(exchange,c)->{
+                Session s=requireSession(exchange,false);
+                return new DeckersWorkspace.User(s.userId,owner.mobileDisplayName(c,s.userId,s.locationId),Set.copyOf(owner.mobilePermissions(s.userId)));
+            }))return; String path=x.getRequestURI().getPath();
             if(path.startsWith("/api/v1/")){api(x);return;}
-            String resource=switch(path){case "/","/index.html"->"mobile-web/index.html";case "/orders-barcode.js"->"mobile-web/orders-barcode.js";case "/orders.html"->"mobile-web/orders.html";case "/orders.js"->"mobile-web/orders.js";case "/orders.css"->"mobile-web/orders.css";case "/app.css"->"mobile-web/app.css";case "/boot.js"->"mobile-web/boot.js";case "/app.js"->"mobile-web/app.js";case "/photo.html"->"mobile-web/photo.html";case "/photo.js"->"mobile-web/photo.js";case "/background-remover.html"->"mobile-web/background-remover.html";case "/background-remover.js"->"mobile-web/background-remover.js";case "/background-remover.css"->"mobile-web/background-remover.css";case "/spoils.js"->"mobile-web/spoils.js";case "/design.html"->"mobile-web/design.html";case "/design.js"->"mobile-web/design.js";case "/design.css"->"mobile-web/design.css";default->null;};
+            String resource=switch(path){case "/inventory-icon-180.png","/inventory-icon-192.png","/inventory-icon-512.png","/inventory.html","/inventory.js","/inventory.css","/inventory.webmanifest","/inventory-icon.svg" -> "mobile-web"+path;case "/edit-items.html"->"mobile-web/edit-items.html";case "/edit-items.js"->"mobile-web/edit-items.js";case "/edit-items.css"->"mobile-web/edit-items.css";case "/edit-items.webmanifest"->"mobile-web/edit-items.webmanifest";case "/edit-items-icon-180.png"->"mobile-web/edit-items-icon-180.png";case "/edit-items-icon-192.png"->"mobile-web/edit-items-icon-192.png";case "/edit-items-icon-512.png"->"mobile-web/edit-items-icon-512.png";case "/edit-items-icon.svg"->"mobile-web/edit-items-icon.svg";case "/","/index.html"->"mobile-web/index.html";case "/orders-barcode.js"->"mobile-web/orders-barcode.js";case "/orders.html"->"mobile-web/orders.html";case "/orders.js"->"mobile-web/orders.js";case "/orders.css"->"mobile-web/orders.css";case "/app.css"->"mobile-web/app.css";case "/boot.js"->"mobile-web/boot.js";case "/app.js"->"mobile-web/app.js";case "/photo.html"->"mobile-web/photo.html";case "/photo.js"->"mobile-web/photo.js";case "/background-remover.html"->"mobile-web/background-remover.html";case "/background-remover.js"->"mobile-web/background-remover.js";case "/background-remover.css"->"mobile-web/background-remover.css";case "/spoils.js"->"mobile-web/spoils.js";case "/design.html"->"mobile-web/design.html";case "/design.js"->"mobile-web/design.js";case "/design.css"->"mobile-web/design.css";default->null;};
+            if(List.of("/receiving.html","/receiving.js","/receiving.css","/minutes-icons.ttf").contains(path))resource="mobile-web"+path;
             if(resource==null){sendText(x,404,"text/plain; charset=utf-8","Not found");return;}
             try(InputStream in=MobileItemWebServer.class.getClassLoader().getResourceAsStream(resource)){
                 if(in==null){sendText(x,404,"text/plain; charset=utf-8","Web asset missing");return;}
-                byte[] bytes=in.readAllBytes(); String type=resource.endsWith(".css")?"text/css; charset=utf-8":resource.endsWith(".js")?"application/javascript; charset=utf-8":"text/html; charset=utf-8";
-                security(x.getResponseHeaders());x.getResponseHeaders().set("Content-Type",type);x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);
+                byte[] bytes=in.readAllBytes(); String type=resource.endsWith(".png")?"image/png":resource.endsWith(".svg")?"image/svg+xml":resource.endsWith(".webmanifest")?"application/manifest+json":resource.endsWith(".css")?"text/css; charset=utf-8":resource.endsWith(".js")?"application/javascript; charset=utf-8":"text/html; charset=utf-8";
+                Headers headers=x.getResponseHeaders();
+                security(headers);
+                if("/receiving.html".equals(path)){
+                    String policy=headers.getFirst("Content-Security-Policy");
+                    headers.set("Content-Security-Policy",policy.replace("img-src 'self' blob: data:","img-src 'self' blob: data: https:"));
+                }
+                headers.set("Content-Type",path.endsWith(".ttf")?"font/ttf":type);
+                x.sendResponseHeaders(200,bytes.length);x.getResponseBody().write(bytes);
             }
         }catch(Exception e){quietError(x,e);}
         finally{x.close();}
@@ -109,12 +122,21 @@ public final class MobileItemWebServer implements AutoCloseable {
                 return;
             }
             JsonObject body=readJson(x);
+            if(route.equals("/activate"))throw new WebError(401,"ACTIVATION_REQUIRED","Pair this browser in Mobile Management.");
+            MobileDeviceService.requireAny(x,MobileDeviceService.routeApps("mobile",route,body));
             Object result=switch(route){
                 case "/activate"->activate(x,body);
                 case "/login"->login(x,body);
                 case "/session"->session(x);
                 case "/logout"->logout(x);
                 case "/bootstrap"->bootstrap(requireSession(x,false));
+                case "/inventory/search"->inventorySearch(requireSession(x,true),body);
+                case "/receiving/search"->receivingRead(requireSession(x,true),body,false);
+                case "/receiving/history"->receivingRead(requireSession(x,true),body,true);
+                case "/receiving/post"->receivingPost(x,requireSession(x,true),body);
+                case "/receiving/gallery"->receivingGallery(requireSession(x,true),body);
+                case "/receiving/add-photo"->receivingAddPhoto(x,requireSession(x,true),body);
+                case "/receiving/add-barcode"->receivingAddBarcode(x,requireSession(x,true),body);
                 case "/products/search"->productSearch(requireSession(x,false),body);
                 case "/products/save"->productSave(x,requireSession(x,true),body);
                 case "/price-tags/print"->priceTagPrint(requireSession(x,true),body);
@@ -149,11 +171,71 @@ public final class MobileItemWebServer implements AutoCloseable {
             };
             sendJson(x,200,Map.of("ok",true,"data",result==null?Map.of():result));
         }catch(WebError e){try{sendJson(x,e.status,Map.of("ok",false,"error",Map.of("code",e.code,"message",e.getMessage())));}catch(Exception ignored){}}
+        catch(MobileDeviceService.Denied e){try{sendJson(x,e.status,Map.of("ok",false,"error",Map.of("code",e.code,"message",e.getMessage())));}catch(Exception ignored){}}
+        catch(LanInventoryService.RuleViolation e){try{sendJson(x,e.status(),Map.of("ok",false,"error",Map.of("code",e.code(),"message",e.safeMessage())));}catch(Exception ignored){}}
+        catch(SecurityException e){try{sendJson(x,403,Map.of("ok",false,"error",Map.of("code","PERMISSION_DENIED","message",safe(e))));}catch(Exception ignored){}}
         catch(LanProductAdminService.RuleViolation e){try{sendJson(x,e.status(),Map.of("ok",false,"error",Map.of("code",e.code(),"message",e.safeMessage())));}catch(Exception ignored){}}
         catch(CatalogBarcodeService.ConflictException e){try{sendJson(x,409,Map.of("ok",false,"error",Map.of("code","BARCODE_EXISTS","message",safe(e))));}catch(Exception ignored){}}
         catch(IllegalArgumentException e){try{sendJson(x,400,Map.of("ok",false,"error",Map.of("code","VALIDATION_ERROR","message",safe(e))));}catch(Exception ignored){}}
         catch(Exception e){try{sendJson(x,500,Map.of("ok",false,"error",Map.of("code","SERVER_ERROR","message",safe(e))));}catch(Exception ignored){}}
         finally{x.close();}
+    }
+
+    static Object executeWorkspace(HttpExchange x,UUID parent,int userId,String route,JsonObject body)throws Exception {
+        MobileItemWebServer app=active;
+        if(app==null)throw new MobileDeviceService.Denied(409,"WEB_STOPPED","Start Mobile Items on the store server.");
+        try {
+            Browser browser=app.requireBrowser(x);
+            int location=java.util.Objects.requireNonNull(DatabaseConfig.load().locationId(),"Store is not configured");
+            Session session=new Session(parent,browser.id,userId,location);
+            try(Connection connection=DB.getConnection()){app.owner.mobileDisplayName(connection,userId,location);}
+            return app.workspaceDispatch(x,session,"/"+route,body);
+        }catch(WebError e){throw new MobileDeviceService.Denied(e.status,e.code,e.getMessage());}
+        catch(LanInventoryService.RuleViolation e){throw new MobileDeviceService.Denied(e.status(),e.code(),e.safeMessage());}
+        catch(LanProductAdminService.RuleViolation e){throw new MobileDeviceService.Denied(e.status(),e.code(),e.safeMessage());}
+        catch(CatalogBarcodeService.ConflictException e){throw new MobileDeviceService.Denied(409,"BARCODE_EXISTS",safe(e));}
+        catch(IllegalArgumentException e){throw new MobileDeviceService.Denied(400,"VALIDATION_ERROR",safe(e));}
+    }
+    private Object workspaceDispatch(HttpExchange x,Session s,String path,JsonObject body)throws Exception {
+        return switch(path) {
+                case "/bootstrap"->bootstrap(s);
+                case "/inventory/search"->inventorySearch(s,body);
+                case "/receiving/search"->receivingRead(s,body,false);
+                case "/receiving/history"->receivingRead(s,body,true);
+                case "/receiving/post"->receivingPost(x,s,body);
+                case "/receiving/gallery"->receivingGallery(s,body);
+                case "/receiving/add-photo"->receivingAddPhoto(x,s,body);
+                case "/receiving/add-barcode"->receivingAddBarcode(x,s,body);
+                case "/products/search"->productSearch(s,body);
+                case "/products/save"->productSave(x,s,body);
+                case "/price-tags/print"->priceTagPrint(s,body);
+                case "/orders/dashboard"->ordersDashboard(s,body);
+                case "/orders/details"->ordersDetails(s,body);
+                case "/orders/lookup"->ordersLookup(s,body);
+                case "/orders/assign"->ordersAssign(x,s,body);
+                case "/custom/state"->customState(s);
+                case "/custom/save"->customSave(x,s,body);
+                case "/barcodes/generate"->barcode(s);
+                case "/barcodes/scan"->barcodeScan(s,body);
+                case "/images/upload"->imageUpload(x,s,body);
+                case "/images/fetch"->imageFetch(s,body);
+                case "/studio/branding"->studioBranding(s);
+                case "/studio/remove-background"->studioRemoveBackground(s,body);
+                case "/studio/progress"->studioProgress(s,body);
+                case "/studio/catalog"->studioCatalog(s,body);
+                case "/studio/import"->studioImport(x,s,body);
+                case "/spoils/search"->spoilRead(s,body,"SEARCH");
+                case "/spoils/state"->spoilRead(s,body,"STATE");
+                case "/spoils/photo"->spoilRead(s,body,"PHOTO");
+                case "/spoils/submit"->spoilSubmit(x,s,body);
+                case "/spoils/reverse"->spoilReverse(x,s,body);
+                case "/design/state"->designState(s,body);
+                case "/design/save"->designSave(x,s,body);
+                case "/design/file"->designFile(s,body);
+                case "/design/attach"->designAttach(x,s,body);
+                case "/design/publish"->designPublish(x,s,body);
+            default -> throw new WebError(404,"NOT_FOUND","Screen API route not found.");
+        };
     }
 
     private Object activate(HttpExchange x,JsonObject b)throws Exception{
@@ -173,7 +255,7 @@ public final class MobileItemWebServer implements AutoCloseable {
         try(Connection c=DB.getConnection();PreparedStatement p=c.prepareStatement("""
             INSERT INTO mobile_item_web_sessions(browser_id,session_hash,csrf_hash,user_id,location_id,auth_source,expires_at,absolute_expires_at)
             VALUES(?,?,?,?,?,?,?,?)
-            """)){p.setObject(1,browser.id);p.setString(2,LanSecurity.sha256(token));p.setString(3,LanSecurity.sha256(csrf));p.setInt(4,user.userId());p.setInt(5,user.locationId());p.setString(6,user.source());p.setTimestamp(7,Timestamp.from(now.plus(IDLE)));p.setTimestamp(8,Timestamp.from(now.plus(ABSOLUTE)));p.executeUpdate();audit(c,"MOBILE_WEB_LOGIN",user.userId(),"Mobile item web login via "+user.source());}
+            """)){p.setObject(1,browser.id);p.setString(2,LanSecurity.sha256(token));p.setString(3,LanSecurity.sha256(csrf));p.setInt(4,user.userId());p.setInt(5,user.locationId());p.setString(6,user.source());p.setTimestamp(7,Timestamp.from(now.plus(IDLE)));p.setTimestamp(8,Timestamp.from(now.plus(ABSOLUTE)));p.executeUpdate();audit(c,"MOBILE_WEB_LOGIN",user.userId(),"Mobile item web login via "+user.source()+"; phone="+MobileDeviceService.identity(c,MobileDeviceService.credential(x)));}
         setCookie(x,"ss_session",token,12*60*60);return Map.of("csrfToken",csrf,"user",user,"permissions",owner.mobilePermissions(user.userId()));
     }
 
@@ -182,7 +264,12 @@ public final class MobileItemWebServer implements AutoCloseable {
 
     private Object bootstrap(Session s)throws Exception{
         try(Connection c=DB.getConnection()){
-            Map<String,Object> out=new LinkedHashMap<>();out.put("permissions",owner.mobilePermissions(s.userId));
+            Map<String,Object> out=new LinkedHashMap<>();out.put("permissions",owner.mobilePermissions(s.userId));out.put("locationId",s.locationId);
+            List<String> deviceApps=new ArrayList<>();
+            try(var p=c.prepareStatement("SELECT a.app_key FROM mobile_item_web_browsers b JOIN mobile_device_credentials k ON k.credential_hash=b.credential_hash JOIN mobile_device_apps a ON a.device_id=k.device_id WHERE b.browser_id=?")) {
+                p.setObject(1,s.browserId);try(var r=p.executeQuery()){while(r.next())deviceApps.add(r.getString(1));}
+            }
+            out.put("deviceApps",deviceApps);
             try(PreparedStatement p=c.prepareStatement("SELECT COALESCE(require_cost_price_on_new_item,TRUE) FROM company_customization WHERE location_id=?")){p.setInt(1,s.locationId);try(ResultSet r=p.executeQuery()){out.put("requireCostPriceOnNewItem",!r.next()||r.getBoolean(1));}}
             out.put("departments",rows(c,"SELECT category_id id,name FROM categories ORDER BY name"));
             out.put("vendors",rows(c,"SELECT vendor_id id,name FROM vendors WHERE COALESCE(is_active,TRUE)=TRUE ORDER BY name"));
@@ -192,7 +279,145 @@ public final class MobileItemWebServer implements AutoCloseable {
             return out;
         }
     }
+    private Object inventorySearch(Session s,JsonObject b)throws Exception{
+        try(Connection c=DB.getConnection()){return InventoryWebService.search(c,s.userId,s.locationId,b);}
+    }
+    private Object receivingRead(Session s,JsonObject b,boolean history)throws Exception{
+        try(Connection c=DB.getConnection()){
+            LanInventoryService.requirePermission(c,s.userId,"RECEIVING_INVENTORY");
+            return history?Map.of("records",LanInventoryService.receivingHistory(c,b,s.userId,s.locationId))
+                    :Map.of("items",LanInventoryService.receivingSearch(c,optional(b,"query"),s.userId,s.locationId));
+        }
+    }
+    private Object receivingPost(HttpExchange x,Session s,JsonObject b)throws Exception{
+        return idempotent(x,s,b,"receiving.post",c->{
+            // Browser receiving only adds deliveries; stock corrections use the existing supervised workflow.
+            if(!b.has("lines")||!b.get("lines").isJsonArray()||b.getAsJsonArray("lines").isEmpty())
+                throw new IllegalArgumentException("Add at least one receiving item.");
+            for(var element:b.getAsJsonArray("lines")){
+                JsonObject line=element.getAsJsonObject();
+                if(!line.has("expectedSystemStock")||line.get("expectedSystemStock").isJsonNull()
+                        ||line.get("countedStock").getAsInt()!=line.get("expectedSystemStock").getAsInt())
+                    throw new IllegalArgumentException("Refresh stock before receiving. Stock corrections require the register workflow.");
+            }
+            return LanInventoryService.receive(c,b,mobileDeviceId(c,s.locationId),s.userId,
+                    owner.mobileDisplayName(c,s.userId,s.locationId),s.locationId,
+                    (token,permission,action,reason)->{throw new SecurityException("Stock corrections require the register workflow.");});
+        });
+    }
     private Object productSearch(Session s,JsonObject b)throws Exception{try(Connection c=DB.getConnection()){return Map.of("products",LanProductAdminService.searchEditable(c,optional(b,"query"),s.userId,s.locationId));}}
+    private Object receivingAddBarcode(HttpExchange x,Session s,JsonObject b)throws Exception{
+        String type=receivingItemType(b);
+        int id=receivingItemId(b);
+        String barcode=text(b,"barcode",200);
+        try{
+            return idempotent(x,s,b,"receiving.add-barcode",c->
+                    ReceivingBarcodeService.add(c,type,id,barcode,mobileDeviceId(c,s.locationId),s.userId));
+        }catch(ReceivingBarcodeService.RuleViolation e){
+            throw new WebError(e.status,e.code,e.safeMessage);
+        }
+    }
+
+    private Object receivingGallery(Session s,JsonObject b)throws Exception{
+        try(Connection c=DB.getConnection()){
+            LanInventoryService.requirePermission(c,s.userId,"RECEIVING_INVENTORY");
+            var gallery=receivingGalleryTarget(c,receivingItemType(b),receivingItemId(b),false);
+            return Map.of("photos",gallery.photos());
+        }
+    }
+
+    private Object receivingAddPhoto(HttpExchange x,Session s,JsonObject b)throws Exception{
+        String type=receivingItemType(b);
+        int id=receivingItemId(b);
+        return idempotent(x,s,b,"receiving.add-photo",c->{
+            LanInventoryService.requirePermission(c,s.userId,"RECEIVING_INVENTORY");
+            LanInventoryService.requirePermission(c,s.userId,"EDIT_ITEM");
+            byte[] bytes;
+            try{
+                bytes=optimizeSpoilPhoto(Base64.getDecoder().decode(text(b,"bytesBase64",2_800_000)));
+            }catch(IllegalArgumentException e){
+                throw new WebError(400,"IMAGE_INVALID",e.getMessage());
+            }
+            // Acquire the audit device before the catalog row, as the barcode mutation does.
+            audit(c,"RECEIVING_PHOTO_ADDED",s.userId,"Added a gallery photo for "+type+" ID "+id);
+            var gallery=receivingGalleryTarget(c,type,id,true);
+            boolean first=gallery.primary().isBlank()&&gallery.fallback().isBlank()&&gallery.additional().isEmpty();
+            if(!first&&gallery.additional().size()>=20)
+                throw new WebError(409,"PHOTO_LIMIT","This item already has 20 additional photos.");
+            String filename=StorageObjectNameBuilder.productImageFilename("image.jpg",
+                    StorageObjectNameBuilder.newProductImageToken(),gallery.name(),null,null,null,null);
+            String ref=ServerImageAssetService.storeUpload(c,type,"Product Images","products/"+filename,
+                    "image/jpeg",filename,"PUBLIC",bytes);
+            if(first){
+                try(PreparedStatement p=c.prepareStatement("UPDATE "+gallery.table()+
+                        " SET image_url=?,updated_at=CURRENT_TIMESTAMP WHERE "+gallery.key()+"=?")){
+                    p.setString(1,ref);
+                    p.setInt(2,id);
+                    p.executeUpdate();
+                }
+            }else{
+                List<String> additional=new ArrayList<>(gallery.additional());
+                additional.add(ref);
+                CatalogPhotoGalleryService.save(c,gallery.table(),gallery.key(),id,gallery.primary(),additional);
+            }
+            return Map.of("reference",ref,"photos",receivingGalleryTarget(c,type,id,false).photos());
+        });
+    }
+
+    private static ReceivingGallery receivingGalleryTarget(Connection c,String type,int id,boolean lock)throws Exception{
+        String table,key,name,join="",fallback="''",eligible="t.is_active";
+        switch(type){
+            case "PRODUCT" -> {
+                table="products";key="product_id";name="t.name";
+            }
+            case "CUSTOM_ITEM" -> {
+                table="custom_order_items";key="custom_item_id";name="t.item_name";
+                eligible+=" AND NOT t.is_archived AND NOT COALESCE(t.has_variants,FALSE)";
+            }
+            case "CUSTOM_VARIANT" -> {
+                table="custom_order_item_variants";key="custom_variant_id";name="t.variant_name";
+                join=" JOIN custom_order_items parent ON parent.custom_item_id=t.custom_item_id";
+                fallback="COALESCE(parent.image_url,'')";
+                eligible+=" AND parent.is_active AND NOT parent.is_archived";
+            }
+            default -> throw new WebError(400,"VALIDATION_ERROR","Choose a valid receiving item.");
+        }
+        String inventoryOwner=join.isEmpty()?"t":"parent";
+        String sql="SELECT "+name+",COALESCE(t.image_url,''),t.additional_image_urls::text,"+fallback+
+                " FROM "+table+" t"+join+" WHERE t."+key+"=? AND "+eligible+
+                " AND COALESCE("+inventoryOwner+".product_type,'INVENTORY')='INVENTORY'"+(lock?" FOR UPDATE OF t":"");
+        try(PreparedStatement p=c.prepareStatement(sql)){
+            p.setInt(1,id);
+            try(ResultSet r=p.executeQuery()){
+                if(!r.next())throw new WebError(404,"ITEM_NOT_FOUND","The selected receiving item no longer exists.");
+                return new ReceivingGallery(table,key,r.getString(1),r.getString(2),r.getString(4),
+                        CatalogPhotoGalleryService.parse(r.getString(3)));
+            }
+        }
+    }
+
+    private record ReceivingGallery(String table,String key,String name,String primary,String fallback,List<String> additional){
+        List<String> photos(){
+            List<String> photos=new ArrayList<>();
+            String cover=primary.isBlank()?fallback:primary;
+            if(!cover.isBlank())photos.add(cover);
+            photos.addAll(additional);
+            return photos.stream().distinct().toList();
+        }
+    }
+
+    private static String receivingItemType(JsonObject body)throws WebError{
+        return text(body,"itemType",40).toUpperCase(java.util.Locale.ROOT).replace(' ','_');
+    }
+
+    private static int receivingItemId(JsonObject body)throws WebError{
+        try{
+            int id=Integer.parseInt(text(body,"itemId",12));
+            if(id>0)return id;
+        }catch(NumberFormatException ignored){}
+        throw new WebError(400,"VALIDATION_ERROR","Choose a valid receiving item.");
+    }
+
     private Object productSave(HttpExchange x,Session s,JsonObject b)throws Exception{return idempotent(x,s,b,b.has("productId")&&!b.get("productId").isJsonNull()?"product.update":"product.create",c->{UUID deviceId=mobileDeviceId(c,s.locationId);return b.has("productId")&&!b.get("productId").isJsonNull()?LanProductAdminService.update(c,b,deviceId,s.userId,owner.mobileDisplayName(c,s.userId,s.locationId),s.locationId):LanProductAdminService.create(c,b,deviceId,s.userId,owner.mobileDisplayName(c,s.userId,s.locationId),s.locationId);});}
     private Object priceTagPrint(Session s,JsonObject b)throws Exception{
         String itemType=text(b,"itemType",20);long itemId;
@@ -250,8 +475,8 @@ public final class MobileItemWebServer implements AutoCloseable {
             return Map.of("saved",true);
         });
     }
-    private Object customState(Session s)throws Exception{owner.requireMobileCustomPermission(s.userId);try(Connection c=DB.getConnection()){return Map.of("state",LanCustomOrderCatalogAdminService.load(c));}}
-    private Object customSave(HttpExchange x,Session s,JsonObject b)throws Exception{owner.requireMobileCustomPermission(s.userId);return idempotent(x,s,b,"custom."+text(b,"action",40),c->Map.of("recordId",LanCustomOrderCatalogAdminService.mutate(c,text(b,"action",40),b)));}
+    private Object customState(Session s)throws Exception{owner.requireMobileCustomPermission(s.userId);try(Connection c=DB.getConnection()){return Map.of("state",LanCustomOrderCatalogAdminService.load(c,s.locationId));}}
+    private Object customSave(HttpExchange x,Session s,JsonObject b)throws Exception{owner.requireMobileCustomPermission(s.userId);return idempotent(x,s,b,"custom."+text(b,"action",40),c->Map.of("recordId",LanCustomOrderCatalogAdminService.mutate(c,text(b,"action",40),b,s.locationId)));}
     private void requireSpoilPermission(Session s,String... keys)throws Exception{
         var current=owner.mobilePermissions(s.userId);for(String key:keys)if(current.contains(key))return;
         throw new WebError(403,"PERMISSION_DENIED","You do not have permission for this spoil action.");
@@ -562,10 +787,15 @@ public final class MobileItemWebServer implements AutoCloseable {
 
     private Object idempotent(HttpExchange x,Session s,JsonObject b,String op,Work work)throws Exception{String key=x.getRequestHeaders().getFirst("Idempotency-Key");if(key==null||key.isBlank()||key.length()>160)throw new WebError(400,"IDEMPOTENCY_REQUIRED","A valid idempotency key is required.");String hash=LanSecurity.sha256(GSON.toJson(b));try(Connection c=DB.getConnection()){c.setAutoCommit(false);try{try(PreparedStatement lock=c.prepareStatement("SELECT pg_advisory_xact_lock(hashtextextended(?,0))")){lock.setString(1,s.browserId+":"+key);lock.execute();}try(PreparedStatement p=c.prepareStatement("SELECT operation_key,request_hash,response_json::text FROM mobile_item_web_idempotency WHERE browser_id=? AND idempotency_key=?")){p.setObject(1,s.browserId);p.setString(2,key);try(ResultSet r=p.executeQuery()){if(r.next()){if(!op.equals(r.getString(1))||!hash.equals(r.getString(2)))throw new WebError(409,"IDEMPOTENCY_CONFLICT","That save key was already used for different data.");Object prior=GSON.fromJson(r.getString(3),Object.class);c.commit();return prior;}}}Object value=work.run(c);try(PreparedStatement p=c.prepareStatement("INSERT INTO mobile_item_web_idempotency(browser_id,idempotency_key,operation_key,request_hash,response_json) VALUES(?,?,?,?,?::jsonb)")){p.setObject(1,s.browserId);p.setString(2,key);p.setString(3,op);p.setString(4,hash);p.setString(5,GSON.toJson(value));p.executeUpdate();}c.commit();return value;}catch(Exception e){c.rollback();throw e;}finally{c.setAutoCommit(true);}}}
 
-    private Browser requireBrowser(HttpExchange x)throws Exception{String token=cookie(x,"ss_browser");if(token==null)throw new WebError(401,"ACTIVATION_REQUIRED","Scan a current SmartStock activation QR code.");try(Connection c=DB.getConnection();PreparedStatement p=c.prepareStatement("""
-        SELECT b.browser_id FROM mobile_item_web_browsers b JOIN mobile_item_web_runtime r ON r.generation=b.generation
-        WHERE b.credential_hash=? AND b.revoked_at IS NULL AND r.enabled
-        """)){p.setString(1,LanSecurity.sha256(token));try(ResultSet r=p.executeQuery()){if(!r.next())throw new WebError(401,"ACTIVATION_REQUIRED","This browser authorization is no longer active.");return new Browser((UUID)r.getObject(1));}}}
+    private Browser requireBrowser(HttpExchange x)throws Exception {
+        String token=MobileDeviceService.credential(x);
+        try(Connection c=DB.getConnection()) {
+            MobileDeviceService.requireAny(c,token,MobileDeviceService.mobileApps());
+            try(var p=c.prepareStatement("INSERT INTO mobile_item_web_browsers(generation,credential_hash) SELECT generation,? FROM mobile_item_web_runtime WHERE runtime_id=1 AND enabled ON CONFLICT(credential_hash) DO UPDATE SET generation=EXCLUDED.generation,revoked_at=NULL RETURNING browser_id")) {
+                p.setString(1,LanSecurity.sha256(token));try(var r=p.executeQuery()){if(!r.next())throw new WebError(409,"WEB_STOPPED","The mobile app is stopped.");return new Browser((UUID)r.getObject(1));}
+            }
+        }
+    }
     private Session requireSession(HttpExchange x,boolean csrf)throws Exception{Browser b=requireBrowser(x);String token=cookie(x,"ss_session");if(token==null)throw new WebError(401,"LOGIN_REQUIRED","Employee login is required.");try(Connection c=DB.getConnection()){c.setAutoCommit(false);try(PreparedStatement p=c.prepareStatement("""
         SELECT s.session_id,s.user_id,s.location_id,s.csrf_hash,s.expires_at,s.absolute_expires_at FROM mobile_item_web_sessions s
         JOIN users u ON u.user_id=s.user_id AND COALESCE(u.is_active,TRUE)=TRUE
@@ -604,7 +834,7 @@ public final class MobileItemWebServer implements AutoCloseable {
     private static JsonObject readJson(HttpExchange x)throws Exception{if(!"POST".equals(x.getRequestMethod()))throw new WebError(405,"METHOD_NOT_ALLOWED","POST is required.");byte[] bytes=readLimited(x.getRequestBody(),MAX_JSON);if(bytes.length==0)return new JsonObject();return JsonParser.parseString(new String(bytes,StandardCharsets.UTF_8)).getAsJsonObject();}
     private static byte[] readLimited(InputStream in,int max)throws Exception{ByteArrayOutputStream out=new ByteArrayOutputStream();byte[] buf=new byte[8192];int n,total=0;while((n=in.read(buf))>=0){total+=n;if(total>max)throw new WebError(413,"REQUEST_TOO_LARGE","The request is too large.");out.write(buf,0,n);}return out.toByteArray();}
     private void cors(HttpExchange x)throws WebError{String origin=x.getRequestHeaders().getFirst("Origin"),allowed="https://"+host+":"+UI_PORT;if(origin!=null&&!origin.equalsIgnoreCase(allowed))throw new WebError(403,"ORIGIN_DENIED","This web origin is not allowed.");Headers h=x.getResponseHeaders();h.set("Access-Control-Allow-Origin",origin==null?allowed:origin);h.set("Access-Control-Allow-Credentials","true");h.set("Access-Control-Allow-Headers","Content-Type,X-CSRF-Token,Idempotency-Key");h.set("Access-Control-Allow-Methods","POST,OPTIONS");h.set("Vary","Origin");security(h);}
-    private static void security(Headers h){h.set("Cache-Control","no-store");h.set("X-Content-Type-Options","nosniff");h.set("X-Frame-Options","DENY");h.set("Referrer-Policy","no-referrer");h.set("Content-Security-Policy","default-src 'self'; connect-src https:; img-src 'self' blob: data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'");}
+    private static void security(Headers h){h.set("Cache-Control","no-store");h.set("X-Content-Type-Options","nosniff");h.set("X-Frame-Options","DENY");h.set("Referrer-Policy","no-referrer");h.set("Content-Security-Policy","default-src 'self'; connect-src https:; img-src 'self' blob: data:; media-src 'self' blob:; manifest-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'");}
     static boolean allowsLocalWebPeer(InetAddress address, boolean forwarded) {
         return address != null && !forwarded && (address.isLoopbackAddress() || address.isSiteLocalAddress() || address.isLinkLocalAddress());
     }
@@ -619,7 +849,7 @@ public final class MobileItemWebServer implements AutoCloseable {
     private static void quietError(HttpExchange x,Exception e){try{sendText(x,500,"text/plain; charset=utf-8",safe(e));}catch(Exception ignored){}}
     private static String safe(Throwable e){return e.getMessage()==null?e.getClass().getSimpleName():e.getMessage();}
 
-    public void close(){ui.stop(1);api.stop(1);executor.shutdownNow();}
+    public void close(){if(active==this)active=null;ui.stop(1);api.stop(1);executor.shutdownNow();}
     private record Browser(UUID id){}
     private record Session(UUID id,UUID browserId,int userId,int locationId){}
     private record PhotoTarget(String name,String productName,String brand,String itemType,String variant){}

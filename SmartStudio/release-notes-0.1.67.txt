@@ -1,0 +1,9 @@
+SmartStudio 0.1.67 - PDF Editor workspace
+
+Adds PDF Editor to SmartStudio's signed-in workspace chooser. Open local PDFs or drag files in; merge, rearrange, rotate, delete, duplicate, extract and split pages; insert blank/image pages; crop; add movable text, images, highlights, rectangles and drawn signatures; fill forms, add page numbers, search, print and export PDF/PNG.
+
+Optional local Tesseract OCR adds searchable scan text and previewed region corrections. Configure a separately installed engine and language data in OCR settings. Corrected pages become image-based; corrections are not secure redaction. Exported PDF copies are unsigned and not password-protected.
+
+PDF work remains local. Switching Studio workspaces keeps edits; sign-out, closing and installing updates protect unsaved PDF work. The PDF editor is removed from SmartStock in 1.1.80.
+
+Build 1067. Uses shared SmartStock client 1.1.80. AI models remain separate. Real OCR, physical printing and live store acceptance require separate checks.

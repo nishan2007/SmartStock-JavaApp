@@ -1,0 +1,5 @@
+Deckers now uses https://deckersapps.deckers.gy/ as its dedicated employee workspace address. New device pairing QR codes use this entry. One login, in-app screens, device and employee permissions, and store-network checks are retained. Install the store server update before using the new address.
+
+Combined Windows update with the latest shared SmartStock changes, including the unified Deckers employee workspace, mobile device access controls, custom-order account charging and delivery handling, additional customer phone numbers, and receipt preview and printing fixes.
+
+Receipt settings are read from the selected store database. Printing reuses preview settings and runs in the background. Update the store server before registers.

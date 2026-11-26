@@ -41,7 +41,12 @@ class EmployeeWebDatabaseTest {
         }
         String migration=Files.readString(Path.of("database/migrations/v1_after/20261020120000_employee_web.sql"))
                 .replace("CREATE TABLE IF NOT EXISTS public.","CREATE TEMP TABLE IF NOT EXISTS ").replace("public.","");
-        SqlScriptRunner.runSql(c,migration);c.setAutoCommit(false);return c;
+        SqlScriptRunner.runSql(c,migration);
+        SqlScriptRunner.runSql(c,Files.readString(Path.of("database/migrations/v1_after/20261120120000_employee_web_remember_device.sql")).replace("public.",""));
+        String mobile=SqlScriptRunner.readResource("database/migrations/v1_after/20261119120000_shared_mobile_management.sql")
+                .replace("CREATE TABLE IF NOT EXISTS public.","CREATE TEMP TABLE IF NOT EXISTS ").replace("public.","");
+        SqlScriptRunner.runSql(c,mobile);
+        SqlScriptRunner.runSql(c,SqlScriptRunner.readResource("database/migrations/v1_after/20261120200000_mobile_device_remember_login.sql").replace("public.",""));c.setAutoCommit(false);return c;
     }
     private int shift(Connection c,int user,String start,String end,int location)throws Exception {
         try(PreparedStatement p=c.prepareStatement("INSERT INTO employee_time_clock(user_id,work_date,clock_in,clock_out,location_id) VALUES(?,?::date,?::timestamptz,?::timestamptz,?) RETURNING clock_id")) {
@@ -111,43 +116,54 @@ class EmployeeWebDatabaseTest {
     }
     @Test void grantsExpireRedeemOnceAndRevocationBlocksBrowser()throws Exception {
         try(Connection c=open()) {
-            try(Statement s=c.createStatement()){s.execute("INSERT INTO employee_web_grants(grant_hash,device_name,expires_at) VALUES('"+LanSecurity.sha256("expired")+"','Expired',now()-interval '1 second'),('"+LanSecurity.sha256("valid")+"','Phone',now()+interval '10 minutes')");}
-            EmployeeWebServer app=app();Exchange x=new Exchange();JsonObject b=new JsonObject();b.addProperty("token","expired");
-            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"activate",c,x,b));
-            b.addProperty("token","valid");call(app,"activate",c,x,b);
-            x.request.set("Cookie",x.response.get("Set-Cookie").stream().filter(v->v.startsWith("ss_employee_browser=")).findFirst().orElseThrow().split(";",2)[0]);
-            UUID device=(UUID)call(app,"requireBrowser",c,x);
-            try(Statement s=c.createStatement()) {
-                s.execute("INSERT INTO employee_web_sessions(session_hash,csrf_hash,browser_device_id,user_id,auth_user_id,expires_at,absolute_expires_at) VALUES('revocation-session','csrf','"+device+"',1,'00000000-0000-0000-0000-000000000001',now()+interval '15 minutes',now()+interval '8 hours')");
+            try(Statement statement=c.createStatement()) {
+                statement.execute("INSERT INTO permissions VALUES(901,'DEVICE_MANAGEMENT');INSERT INTO role_permissions VALUES(1,901)");
+                statement.execute("INSERT INTO mobile_device_pairings(code_hash,device_name,app_keys,issued_by,expires_at) VALUES('"+LanSecurity.sha256("expired")+"','Expired',ARRAY['EMPLOYEE_WEB'],1,now()-interval '1 second'),('"+LanSecurity.sha256("valid")+"','Phone',ARRAY['EMPLOYEE_WEB'],1,now()+interval '10 minutes')");
             }
-            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"activate",c,new Exchange(),b));
-            JsonObject revoke=new JsonObject();revoke.addProperty("action","REVOKE");revoke.addProperty("deviceId",device.toString());
+            assertThrows(MobileDeviceService.Denied.class,()->MobileDeviceService.redeemPairing(c,"expired","browser"));
+            UUID phone=MobileDeviceService.redeemPairing(c,"valid","browser");
+            EmployeeWebServer app=app();Exchange x=new Exchange();x.request.set("Cookie","ss_mobile_device=browser");
+            UUID browser=(UUID)call(app,"requireBrowser",c,x);
+            assertNotNull(browser);
+            assertThrows(MobileDeviceService.Denied.class,()->MobileDeviceService.redeemPairing(c,"valid","second-browser"));
+            JsonObject revoke=new JsonObject();revoke.addProperty("action","REVOKE");revoke.addProperty("deviceId",phone.toString());
             EmployeeWebAdminService.execute(c,1,revoke);
-            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireBrowser",c,x));
-            try(Statement s=c.createStatement();ResultSet r=s.executeQuery("SELECT revoked_at IS NOT NULL FROM employee_web_sessions WHERE session_hash='revocation-session'")) {r.next();assertTrue(r.getBoolean(1));}
+            assertThrows(MobileDeviceService.Denied.class,()->call(app,"requireBrowser",c,x));
+            try(Statement statement=c.createStatement();ResultSet result=statement.executeQuery("SELECT revoked_at IS NOT NULL FROM mobile_managed_devices WHERE device_id='"+phone+"'")) {result.next();assertTrue(result.getBoolean(1));}
         }
     }
     @Test void sessionsLogoutExpiryAndAccountPermissionChanges()throws Exception {
         try(Connection c=open()) {
-            UUID browser=UUID.randomUUID();
+            UUID browser=UUID.randomUUID(),managed=UUID.randomUUID();
             try(Statement s=c.createStatement()) {
                 s.execute("INSERT INTO employee_web_devices(device_id,browser_hash,device_name) VALUES('"+browser+"','browser','Phone')");
                 s.execute("INSERT INTO employee_web_sessions(session_hash,csrf_hash,browser_device_id,user_id,auth_user_id,expires_at,absolute_expires_at) VALUES('"+LanSecurity.sha256("session")+"','"+LanSecurity.sha256("csrf")+"','"+browser+"',1,'00000000-0000-0000-0000-000000000001',now()+interval '15 minutes',now()+interval '8 hours')");
             }
-            EmployeeWebServer app=app();Exchange x=new Exchange();x.request.set("Cookie","ss_employee=session");x.request.set("X-CSRF-Token","csrf");
-            Object session=call(app,"requireSession",c,x,browser,true);
+            try(Statement statement=c.createStatement()) {
+                statement.execute("INSERT INTO mobile_managed_devices(device_id,device_name) VALUES('"+managed+"','Test Phone')");
+                statement.execute("INSERT INTO mobile_device_credentials(credential_hash,device_id) VALUES('"+LanSecurity.sha256("paired-browser")+"','"+managed+"')");
+            }
+            EmployeeWebServer app=app();Exchange x=new Exchange();x.request.set("Cookie","ss_employee=session; ss_mobile_device=paired-browser");x.request.set("X-CSRF-Token","csrf");
+            Object session=call(app,"requireSession",c,x,browser,true,false);
             try(Statement s=c.createStatement()){s.execute("UPDATE users SET is_active=false WHERE user_id=1");}
-            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireSession",c,x,browser,true));
+            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireSession",c,x,browser,true,false));
             try(Statement s=c.createStatement()){s.execute("UPDATE users SET is_active=true WHERE user_id=1");s.execute("DELETE FROM role_mobile_permissions");}
-            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireSession",c,x,browser,true));
+            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireSession",c,x,browser,true,false));
             try(Statement s=c.createStatement()){s.execute("INSERT INTO role_mobile_permissions VALUES(1,'ACCESS_EMPLOYEE_WEB')");s.execute("UPDATE employee_web_sessions SET absolute_expires_at=now()-interval '1 second'");}
-            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireSession",c,x,browser,true));
+            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireSession",c,x,browser,true,false));
             try(Statement s=c.createStatement()){s.execute("UPDATE employee_web_sessions SET absolute_expires_at=now()+interval '8 hours'");}
             try(Statement s=c.createStatement()){s.execute("UPDATE employee_web_sessions SET expires_at=now()-interval '1 second'");}
-            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireSession",c,x,browser,true));
+            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireSession",c,x,browser,true,false));
             try(Statement s=c.createStatement()){s.execute("UPDATE employee_web_sessions SET expires_at=now()+interval '15 minutes'");}
+            try(Statement s=c.createStatement()){s.execute("UPDATE employee_web_sessions SET remember_device=true");s.execute("UPDATE mobile_managed_devices SET remember_login=true");}
+            call(app,"requireSession",c,x,browser,true,false);
+            assertTrue(x.response.getFirst("Set-Cookie").contains("Max-Age=34560000"));
+            try(Statement s=c.createStatement();ResultSet r=s.executeQuery("SELECT expires_at > now()+interval '399 days' AND absolute_expires_at > now()+interval '399 days' FROM employee_web_sessions")){r.next();assertTrue(r.getBoolean(1));}
+            try(Statement st=c.createStatement()){st.execute("UPDATE mobile_managed_devices SET remember_login=false");}
+            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireSession",c,x,browser,true,false));
+            try(Statement st=c.createStatement()){st.execute("UPDATE mobile_managed_devices SET remember_login=true");}
             call(app,"logout",c,x,session);
-            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireSession",c,x,browser,true));
+            assertThrows(EmployeeWebServer.WebError.class,()->call(app,"requireSession",c,x,browser,true,false));
         }
     }
 

@@ -31,6 +31,10 @@ import java.util.List;
 final class BusinessCardsPanel extends JPanel {
 
     private TextFormattingToolbar textFormatting;
+    private final StudioWorkspaceShell shell;
+    private CutProduction cutProduction;
+    boolean productionBusy(){return cutProduction!=null&&cutProduction.busy();}
+    void closeProduction(){if(cutProduction!=null)cutProduction.close();}
 
     private Publication document = builtin();
     private Publication previewDocument;
@@ -41,6 +45,8 @@ final class BusinessCardsPanel extends JPanel {
     }
 
     private boolean syncingLayerSelection;
+    private boolean updatingLayerRows;
+    private Runnable refreshLayerFormatting=()->{};
     private final Deque<Publication> undoHistory=new ArrayDeque<>(),redoHistory=new ArrayDeque<>();
 
     private Publication historyState;
@@ -70,11 +76,22 @@ final class BusinessCardsPanel extends JPanel {
     private final boolean labels;
     private final boolean banners;
     private final boolean billBooks;
+    private final boolean vinylWorkspace;
     private final JComboBox<String> billBookOutput=new JComboBox<>(new String[]{"Full template + numbers","Numbers only (preprinted books)","Template only (no numbering)"});
     private final JTextField billBookNumberFields=new JTextField("number, num, serial, page1_number",24);
     private SheetNumberingControls numberingControls;
 
     private final JLabel templateSize=new JLabel();
+    private JButton addPageCommand,deletePageCommand;
+    private StudioLayersPanel floatingLayers;
+    private StudioFileView fileView;
+    private JDialog layersWindow;
+    private final JComboBox<String> orientation=new JComboBox<>(new String[]{"Portrait","Landscape"});
+    private final JSpinner layoutWidth=new JSpinner(new SpinnerNumberModel(1.,.001,1000000.,.1)),layoutHeight=new JSpinner(new SpinnerNumberModel(1.,.001,1000000.,.1));
+    private final JComboBox<String> layoutUnits=new JComboBox<>(new String[]{"MM","CM","IN","FT"});
+    private final JCheckBox scaleLayout=new JCheckBox("Scale artwork");
+    private boolean updatingLayout;
+    private String previousLayoutUnit="MM";
 
     private int pageIndex; private boolean updatingPages;
 
@@ -84,11 +101,11 @@ final class BusinessCardsPanel extends JPanel {
 
     private final javax.swing.Timer thumbnailRefresh=new javax.swing.Timer(350,event->pagePreviews.update(document,pageIndex));
 
-    private final JComboBox<String> pageMode = new JComboBox<>(new String[]{"Each page on separate sheets", "Mix pages on the same sheet"});
+    private final JComboBox<String> pageMode = new JComboBox<>(new String[]{"Separate page sheets", "Mixed pages per sheet"});
 
     private final TemplateWorkspace design = new TemplateWorkspace();
 
-    private final DefaultTableModel records = new DefaultTableModel(new String[]{"name","company","title","phone","email","quantity"},0);
+    private final DefaultTableModel records = new DefaultTableModel(new String[0],0);
 
     private final JTable table = new JTable(records){
 
@@ -173,12 +190,13 @@ final class BusinessCardsPanel extends JPanel {
 
     private boolean previewPending;
 
-    private final JSpinner leftMargin = new JSpinner(new SpinnerNumberModel(0.0,0,50,0.5));
-    private final JSpinner rightMargin = new JSpinner(new SpinnerNumberModel(0.0,0,50,0.5));
-    private final JSpinner topMargin = new JSpinner(new SpinnerNumberModel(0.0,0,50,0.5));
-    private final JSpinner bottomMargin = new JSpinner(new SpinnerNumberModel(0.0,0,50,0.5));
+    private final JSpinner leftMargin = new JSpinner(new SpinnerNumberModel(0.0,0.,50/25.4,.01));
+    private final JSpinner rightMargin = new JSpinner(new SpinnerNumberModel(0.0,0.,50/25.4,.01));
+    private final JSpinner topMargin = new JSpinner(new SpinnerNumberModel(0.0,0.,50/25.4,.01));
+    private final JSpinner bottomMargin = new JSpinner(new SpinnerNumberModel(0.0,0.,50/25.4,.01));
 
-    private final JSpinner gap = new JSpinner(new SpinnerNumberModel(0.0,0,20,0.5));
+    private final JSpinner verticalGap = new JSpinner(new SpinnerNumberModel(0.0,-2000/25.4,20/25.4,.01));
+    private final JSpinner gap = new JSpinner(new SpinnerNumberModel(0.0,-2000/25.4,20/25.4,.01));
 
     private final JSpinner copies = new JSpinner(new SpinnerNumberModel(10,1,100000,1));
 
@@ -198,10 +216,13 @@ final class BusinessCardsPanel extends JPanel {
 
     BusinessCardsPanel(boolean labels,boolean banners) {this(labels,banners,false);}
     BusinessCardsPanel(boolean labels,boolean banners,boolean billBooks) {
+        this(labels,banners,billBooks,false);
+    }
+    BusinessCardsPanel(boolean labels,boolean banners,boolean billBooks,boolean vinylWorkspace) {
 
         super(new BorderLayout(8,8));
 
-        this.labels=labels;this.banners=banners;this.billBooks=billBooks;if(banners)document=BannerDocuments.create(20,4,"FT");else if(billBooks)document=BillBookDocuments.create();else if(labels)document=labelTemplate(); setBackground(DeckersPalette.background());
+        this.labels=labels;this.banners=banners;this.billBooks=billBooks;this.vinylWorkspace=vinylWorkspace;if(banners)document=BannerDocuments.create(20,4,"FT");else if(billBooks)document=BillBookDocuments.create();else if(labels)document=labelTemplate();document.displayUnit="IN"; setBackground(DeckersPalette.background());
 
         resetHistory();bindHistory("control Z","undoDesign",false);bindHistory("control Y","redoDesign",true);bindHistory("control shift Z","redoDesignAlternate",true);
         getInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke("control S"),"saveTemplateChanges");
@@ -222,32 +243,34 @@ final class BusinessCardsPanel extends JPanel {
 
         addButton(tools,"Open Publisher template",this::openTemplate);
 
-        addButton(tools,"Undo (Ctrl+Z)",()->historyAction(false));addButton(tools,"Redo (Ctrl+Y)",()->historyAction(true));
+        JButton undoCommand=addButton(tools,"Undo (Ctrl+Z)",()->historyAction(false));JButton redoCommand=addButton(tools,"Redo (Ctrl+Y)",()->historyAction(true));
 
-        addButton(tools,"Save (Ctrl+S)",this::saveChanges);addButton(tools,"Export template file…",this::saveTemplate);addButton(tools,"Save to template library…",this::saveToLibrary); tools.add(pages);addButton(tools,"Add page",this::addPage);addButton(tools,"Delete page",this::deletePage);addButton(tools,"Page number field",this::pageNumberField);
+        addButton(tools,"Save (Ctrl+S)",this::saveChanges);addButton(tools,"Export template file…",this::saveTemplate);addButton(tools,"Save to template library…",this::saveToLibrary); tools.add(pages);addPageCommand=addButton(tools,"Add page",this::addPage);deletePageCommand=addButton(tools,"Delete page",this::deletePage);pagePreviews.setPageActions(addPageCommand,deletePageCommand);JButton pageNumberCommand=addButton(tools,"Page number field",this::pageNumberField);
 
-        addButton(tools,"Add text",() -> {Publication.Element e=new Publication.Element();e.width=Math.min(78,document.width);e.height=Math.min(10,document.height);e.text=banners?"Banner text":"{{name}}";if(banners){e.x=document.width*.05;e.y=document.height*.05;e.width=document.width*.8;e.height=document.height*.25;e.fontSize=Math.min(10000,document.height*.18*72/25.4);}currentPage().objects.add(e);changed();});
+        JButton textCommand=addButton(tools,"Add text",() -> {Publication.Element e=new Publication.Element();e.width=Math.min(78,document.width);e.height=Math.min(10,document.height);e.text=vinylWorkspace?"Vinyl":banners?"Banner text":"{{name}}";if(banners){e.x=document.width*.05;e.y=document.height*.05;e.width=document.width*.8;e.height=document.height*.25;e.fontSize=Math.min(10000,document.height*.18*72/25.4);}currentPage().objects.add(e);changed();});
 
-        addButton(tools,"Insert image…",this::artwork);
+        JButton imageCommand=addButton(tools,"Insert image…",this::artwork);
+        JButton tableCommand=addButton(tools,"Insert table…",()->editTable(true));
+        JButton editTable=addButton(tools,"Edit table…",()->editTable(false));
 
-        addButton(tools,"Copy layers",this::copyLayers);
-        addButton(tools,"Paste",this::pasteLayers);
+        JButton copyCommand=addButton(tools,"Copy layers",this::copyLayers);
+        JButton pasteCommand=addButton(tools,"Paste",this::pasteLayers);
 
-        addButton(tools,"Add WordArt…",()->{commit();var e=publishing.WordArtEditor.choose(this,null);if(e!=null){e.width=Math.min(e.width,document.width);e.height=Math.min(e.height,document.height);e.x=e.y=0;currentPage().objects.add(e);changed();}});
+        JButton wordArtCommand=addButton(tools,"Add WordArt…",()->{commit();var e=publishing.WordArtEditor.choose(this,null);if(e!=null){e.width=Math.min(e.width,document.width);e.height=Math.min(e.height,document.height);e.x=e.y=0;currentPage().objects.add(e);changed();}});
 
-        addButton(tools,"Edit WordArt…",()->{commit();int row=layerTable.getSelectedRow();if(row<0||!currentPage().objects.get(row).type.equals("TEXT"))throw new IllegalArgumentException("Select a text layer first.");var e=publishing.WordArtEditor.choose(this,currentPage().objects.get(row));if(e!=null){currentPage().objects.set(row,e);changed();}});
+        JButton editWordArt=addButton(tools,"Edit WordArt…",()->{commit();int row=layerTable.getSelectedRow();if(row<0||!currentPage().objects.get(row).type.equals("TEXT"))throw new IllegalArgumentException("Select a text layer first.");var e=publishing.WordArtEditor.choose(this,currentPage().objects.get(row));if(e!=null){currentPage().objects.set(row,e);changed();}});
 
-        addButton(tools,"Generate barcode / QR…",()->generateCode(false));
-        addButton(tools,"Generate QR code…",()->generateCode(true));
+        JButton barcodeCommand=addButton(tools,"Add barcode…",()->generateCode(false));
+        JButton qrCommand=addButton(tools,"Add QR code…",()->generateCode(true));
 
-        addButton(tools,"Edit barcode / QR…",()->{commit();int row=layerTable.getSelectedRow();if(row<0||!Set.of("BARCODE","QR").contains(currentPage().objects.get(row).type))throw new IllegalArgumentException("Select a barcode or QR layer first.");var code=BarcodeEditor.choose(this,currentPage().objects.get(row));if(code!=null){currentPage().objects.set(row,code);changed();}});
+        JButton editCode=addButton(tools,"Edit barcode / QR…",()->{commit();int row=layerTable.getSelectedRow();if(row<0||!Set.of("BARCODE","QR").contains(currentPage().objects.get(row).type))throw new IllegalArgumentException("Select a barcode or QR layer first.");var code=BarcodeEditor.choose(this,currentPage().objects.get(row));if(code!=null){currentPage().objects.set(row,code);changed();}});
 
-        addButton(tools,"Replace image with barcode…",()->{commit();int row=layerTable.getSelectedRow();if(row<0||!currentPage().objects.get(row).type.equals("IMAGE"))throw new IllegalArgumentException("Select the barcode picture in Layers first.");var old=currentPage().objects.get(row);var code=BarcodeEditor.choose(this,null);if(code!=null){code.x=old.x;code.y=old.y;code.width=old.width;code.height=old.height;currentPage().objects.set(row,code);changed();}});
+        JButton replaceWithCode=addButton(tools,"Replace image with barcode…",()->{commit();int row=layerTable.getSelectedRow();if(row<0||!currentPage().objects.get(row).type.equals("IMAGE"))throw new IllegalArgumentException("Select the barcode picture in Layers first.");var old=currentPage().objects.get(row);var code=BarcodeEditor.choose(this,null);if(code!=null){code.x=old.x;code.y=old.y;code.width=old.width;code.height=old.height;currentPage().objects.set(row,code);changed();}});
 
         StudioLayerClipboard.bind(design,this::copyLayers,this::pasteLayers);
         StudioLayerClipboard.bind(layerTable,this::copyLayers,this::pasteLayers);
 
-        addButton(tools,"Remove selected layers",() -> {commit();design.deleteSelection();});
+        JButton deleteLayersCommand=addButton(tools,"Remove selected layers",() -> {commit();design.deleteSelection();});
 
         JScrollPane toolsScroll=new JScrollPane(tools,JScrollPane.VERTICAL_SCROLLBAR_NEVER,JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);toolsScroll.setPreferredSize(new Dimension(700,58));add(toolsScroll,BorderLayout.NORTH);
 
@@ -277,13 +300,13 @@ final class BusinessCardsPanel extends JPanel {
 
         customRow.add(new JLabel("Custom width in"));customRow.add(customWidth);customRow.add(new JLabel("Height in"));customRow.add(customHeight);customWidth.setEnabled(false);customHeight.setEnabled(false);
 
-        horizontalMargins.add(new JLabel("Left margin mm"));horizontalMargins.add(leftMargin);horizontalMargins.add(new JLabel("Right margin mm"));horizontalMargins.add(rightMargin);
-        verticalMargins.add(new JLabel("Top margin mm"));verticalMargins.add(topMargin);verticalMargins.add(new JLabel("Bottom margin mm"));verticalMargins.add(bottomMargin);
-        spacingRow.add(new JLabel("Gap mm"));spacingRow.add(gap);spacingRow.add(rotate);spacingRow.add(marks);
+        horizontalMargins.add(new JLabel("Left margin in"));horizontalMargins.add(leftMargin);horizontalMargins.add(new JLabel("Right margin in"));horizontalMargins.add(rightMargin);
+        verticalMargins.add(new JLabel("Top margin in"));verticalMargins.add(topMargin);verticalMargins.add(new JLabel("Bottom margin in"));verticalMargins.add(bottomMargin);
+        spacingRow.add(new JLabel("Horizontal gap in"));spacingRow.add(gap);spacingRow.add(new JLabel("Vertical gap in"));spacingRow.add(verticalGap);spacingRow.add(rotate);spacingRow.add(marks);
 
         countRow.add(new JLabel("Copies (no merge)"));countRow.add(copies);countRow.add(new JLabel("Sheet"));countRow.add(sheet);
 
-        JPanel outputButtons=DeckersSwing.panel();outputButtons.setLayout(new FlowLayout(FlowLayout.LEFT));addButton(outputButtons,"Preview",this::previewSheet);addButton(outputButtons,"Print",this::printCards);addButton(outputButtons,"Export PDF",this::exportPdf);
+        JPanel outputButtons=DeckersSwing.panel();outputButtons.setLayout(new FlowLayout(FlowLayout.LEFT));addButton(outputButtons,"Preview",this::previewPrintSetup);addButton(outputButtons,"Print",this::printCards);addButton(outputButtons,"Export PDF",this::exportPdf);
         if(billBooks){
             JPanel numbering=DeckersSwing.panel();numbering.setLayout(new FlowLayout(FlowLayout.LEFT));
             numbering.add(new JLabel("Print content"));numbering.add(billBookOutput);
@@ -313,7 +336,7 @@ final class BusinessCardsPanel extends JPanel {
         addButton(mergeTools,"Remove row",() -> {int r=table.getSelectedRow();if(r>=0)records.removeRow(r);});
 
         if(billBooks)addButton(mergeTools,"Add number field",this::pageNumberField);
-        addButton(mergeTools,"Fill number series",this::fillSeries);addButton(mergeTools,"Add field",this::addField);addButton(mergeTools,"Connect Excel",this::connectExcel);
+        addButton(mergeTools,"Fill number series",this::fillSeries);addButton(mergeTools,"Add field",this::addField);addButton(mergeTools,"Delete field",this::deleteField);addButton(mergeTools,"Connect Excel",this::connectExcel);
 
         addButton(mergeTools,"Reload Excel",() -> {if(excel==null)throw new IllegalStateException("Connect an Excel file first.");loadExcel(excel,worksheet);});
 
@@ -322,19 +345,52 @@ final class BusinessCardsPanel extends JPanel {
         mergeTools.add(source);JScrollPane mergeToolbar=new JScrollPane(mergeTools,JScrollPane.VERTICAL_SCROLLBAR_NEVER,JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);mergeToolbar.setPreferredSize(new Dimension(700,60));merge.add(mergeToolbar,BorderLayout.NORTH);table.setRowHeight(25);table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);merge.add(new JScrollPane(table));
 
         merge.setPreferredSize(new Dimension(900,160));merge.setMinimumSize(new Dimension(220,100));
+        merge.putClientProperty("studio.task.fill",Boolean.TRUE);
 
         editor.remove(layerScroll);
 
         JSplitPane pageLayout=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,pagePreviews,editor);pageLayout.setResizeWeight(0);pageLayout.setDividerLocation(180);pageLayout.setContinuousLayout(true);pageLayout.setBorder(null);
         pagePreviews.addPropertyChangeListener("preferredSize",e->pageLayout.setDividerLocation(pagePreviews.getPreferredSize().width));
 
-        StudioWorkspaceShell shell=new StudioWorkspaceShell(pageLayout);
+        shell=new StudioWorkspaceShell(pageLayout);
+        shell.useTaskWindows();
+        shell.title(vinylWorkspace?"Vinyl Cut":billBooks?"Bill Books":banners?"Banners":labels?"Labels":"Business Cards");
 
         remove(toolsScroll);
 
         StudioWorkspaceShell.stack(tools);
 
-        shell.addTools(StudioWorkspaceShell.menu("Template & insert",tools));
+        for(JButton editingCommand:new JButton[]{textCommand,imageCommand,undoCommand,redoCommand,copyCommand,pasteCommand,
+                deleteLayersCommand,wordArtCommand,tableCommand,barcodeCommand,qrCommand,pageNumberCommand,addPageCommand,
+                deletePageCommand,editWordArt,editCode,replaceWithCode,editTable})tools.remove(editingCommand);
+        shell.addTools(StudioWorkspaceShell.menu("Template",tools));
+        shell.ribbon().add(StudioCommand.CHANGE_TEMPLATE,this::chooseTemplate);
+        shell.addTextAndImage(textCommand,imageCommand);
+        shell.ribbon().add(StudioCommand.UNDO,undoCommand);
+        shell.ribbon().add(StudioCommand.REDO,redoCommand);
+        shell.ribbon().add(StudioCommand.COPY,copyCommand);
+        shell.ribbon().add(StudioCommand.PASTE,pasteCommand);
+        shell.ribbon().add(StudioCommand.DELETE,deleteLayersCommand);
+        shell.ribbon().add(StudioCommand.WORDART,wordArtCommand);
+        shell.ribbon().add(StudioCommand.TABLE,tableCommand);
+        shell.ribbon().add(StudioCommand.BARCODE,barcodeCommand);
+        shell.ribbon().add(StudioCommand.QR,qrCommand);
+        shell.ribbon().add(StudioCommand.PAGE_NUMBER,pageNumberCommand);
+        shell.ribbon().add(StudioCommand.ADD_PAGE,addPageCommand);
+        shell.ribbon().add(StudioCommand.DELETE_PAGE,deletePageCommand);
+        shell.ribbon().add(StudioCommand.RECTANGLE,()->insertShape("RECT"));
+        shell.ribbon().add(StudioCommand.ELLIPSE,()->insertShape("ELLIPSE"));
+        shell.ribbon().add(StudioCommand.LINE,()->insertShape("LINE"));
+        if(!banners&&!billBooks&&!vinylWorkspace){
+            shell.ribbon().add(StudioCommand.PHOTO_FIELD,this::insertPhotoPlaceholder);
+            shell.ribbon().add("Home","Picture",StudioRibbon.button("Replace photo…",this::replaceSelectedPhoto));
+            shell.ribbon().add("Home","Picture",StudioRibbon.button("Frame photo…",this::frameSelectedPhoto));
+        }
+        shell.ribbon().add("Table","Edit",editTable);
+        shell.ribbon().add("Home","Text",editWordArt);
+        shell.ribbon().add("Code format","Selection",editCode);
+        shell.ribbon().add("Home","Picture",replaceWithCode);
+        shell.ribbon().add("Table","Selection",StudioWorkspaceShell.button("Select whole table",()->{try{selectTable();}catch(Exception ex){error(ex);}}));
         shell.addPrimaryAction("New template",()->{if(!working)newCard();});
 
         shell.addTools(StudioWorkspaceShell.button("Save",()->{try{saveChanges();}catch(Exception ex){error(ex);}}));
@@ -345,30 +401,31 @@ final class BusinessCardsPanel extends JPanel {
         JPanel risoTools=DeckersSwing.panel();risoTools.setLayout(new BoxLayout(risoTools,BoxLayout.Y_AXIS));risoTools.add(StudioWorkspaceShell.button("Automatic colour separation…",this::separateRiso));risoTools.add(StudioWorkspaceShell.button("Linked Riso sub-pages…",()->organiseRiso(pageIndex,LinkedRiso.MAIN)));shell.addTools(StudioWorkspaceShell.menu("Riso",risoTools));
         pagePreviews.setRisoSelection(this::organiseRiso);
 
-        textFormatting=new TextFormattingToolbar(this::selectedTextStyle,this::applyTextStyle);if(banners)textFormatting.setMaximumFontSize(10000);
+        textFormatting=new TextFormattingToolbar(this::selectedTextStyle,this::applyTextStyle,()->publishing.TextAlignment.LEFT);if(banners)textFormatting.setMaximumFontSize(10000);
         BarcodeFormattingToolbar barcodeFormatting=new BarcodeFormattingToolbar(this::selectedBarcode,this::applyBarcodeSettings);
-        ImageFormattingToolbar imageFormatting=new ImageFormattingToolbar(this::selectedPicture,this::applyPictureSize,this::recolourPicture);imageFormatting.setTransparencyEditor(this::applyPictureTransparency);if(banners)imageFormatting.setMaximumSizeMm(BannerDocuments.MAX_MM);
+        ImageFormattingToolbar imageFormatting=new ImageFormattingToolbar(this::selectedPicture,this::applyPictureSize,this::recolourPicture);imageFormatting.setTransparencyEditor(this::applyPictureTransparency);imageFormatting.setRotationEditor(this::applyPictureRotation);if(banners)imageFormatting.setMaximumSizeMm(BannerDocuments.MAX_MM);
         design.setAspectRatioPolicy(i->currentPage().objects.get(i).type.equals("IMAGE")?imageFormatting.locked.isSelected():null);
+        design.setLayerActivation(row->{
+            if(StudioTables.isTable(currentPage().objects.get(row))){try{editTable(false);}catch(Exception ex){error(ex);}return true;}
+            if(!"IMAGE".equals(currentPage().objects.get(row).type))return false;
+            try{replacePhoto(row);}catch(Exception ex){error(ex);}return true;
+        });
         CardLayout contextLayout=new CardLayout();JPanel contextTools=new JPanel(contextLayout);contextTools.setOpaque(false);
-        contextTools.add(textFormatting,"text");contextTools.add(barcodeFormatting,"barcode");contextTools.add(imageFormatting,"image");shell.addTextTools(contextTools);
-        Runnable refreshContext=()->{textFormatting.refresh();barcodeFormatting.refresh();imageFormatting.refresh();contextLayout.show(contextTools,selectedPicture()!=null?"image":selectedBarcode()==null?"text":"barcode");};
-        layerTable.getSelectionModel().addListSelectionListener(event->refreshContext.run());layerTable.getModel().addTableModelListener(event->refreshContext.run());
+        contextTools.add(textFormatting,"text");contextTools.add(barcodeFormatting,"barcode");contextTools.add(imageFormatting,"image");shell.addTextTools(contextTools,this::changeLayerOrder);
+        refreshLayerFormatting=()->{textFormatting.refresh();barcodeFormatting.refresh();imageFormatting.refresh();contextLayout.show(contextTools,selectedPicture()!=null?"image":selectedBarcode()==null?"text":"barcode");};
+        layerTable.getSelectionModel().addListSelectionListener(event->{if(!updatingLayerRows&&!event.getValueIsAdjusting())refreshLayerFormatting.run();});
+        layerTable.getModel().addTableModelListener(event->{if(!updatingLayerRows)refreshLayerFormatting.run();});
 
         shell.addTools(pages);updateTemplateSize();
 
-        shell.addTools(StudioWorkspaceShell.button("−",()->design.zoomBy(1/1.15)));
-
-        shell.addTools(StudioWorkspaceShell.button("Fit",()->{design.setZoom(1);design.scrollRectToVisible(new Rectangle(0,0,1,1));}));
-
-        shell.addTools(StudioWorkspaceShell.button("+",()->design.zoomBy(1.15)));
+        shell.addZoom(()->design.zoomBy(1/1.15),()->{design.setZoom(1);design.scrollRectToVisible(new Rectangle(0,0,1,1));},()->design.zoomBy(1.15));
 
         JPanel layerPanel=DeckersSwing.panel();layerPanel.setLayout(new BorderLayout(4,4));
         JPanel orderTools=DeckersSwing.panel();orderTools.setLayout(new GridLayout(2,2,4,4));
-        String[] orderNames={"Bring forward","Send backward","Bring to front","Send to back"};
         StudioLayerOrder.Move[] orderMoves=StudioLayerOrder.Move.values();
         JPopupMenu orderMenu=new JPopupMenu();
-        for(int i=0;i<orderNames.length;i++){
-            var move=orderMoves[i];String title=orderNames[i];
+        for(var move:orderMoves){
+            String title=StudioCommand.layerOrder(move).label;
             Runnable action=()->{try{reorderLayers(move);}catch(Exception ex){error(ex);}};
             orderTools.add(StudioWorkspaceShell.button(title,action));
             JMenuItem item=new JMenuItem(title);item.addActionListener(e->action.run());orderMenu.add(item);
@@ -381,8 +438,11 @@ final class BusinessCardsPanel extends JPanel {
             getActionMap().put(key,new AbstractAction(){public void actionPerformed(java.awt.event.ActionEvent e){try{reorderLayers(move);}catch(Exception ex){error(ex);}}});
         }
         layerPanel.add(orderTools,BorderLayout.NORTH);layerPanel.add(layerScroll);
-        shell.addSection("Layers",layerPanel);
-
+        shell.addArrangement(this::changeLayerOrder,()->arrangeSelection(false),()->arrangeSelection(true));
+        shell.ribbon().retain(layerPanel);
+        shell.ribbon().add(StudioCommand.LAYERS,this::showLayers);
+        layers.addTableModelListener(e->{if(floatingLayers!=null)floatingLayers.refresh();});
+        layerTable.getSelectionModel().addListSelectionListener(e->{if(floatingLayers!=null&&!e.getValueIsAdjusting())floatingLayers.refresh();});
         shell.addSection(billBooks?"Bill book library":banners?"Banner library":"Shared library",sharedLibraryStatus);
 
         JCheckBox barcodeCaption=new JCheckBox("Show text/numbers below barcode");
@@ -396,17 +456,40 @@ final class BusinessCardsPanel extends JPanel {
         JPanel properties=DeckersSwing.panel();properties.setLayout(new BorderLayout(4,4));properties.add(barcodeCaption,BorderLayout.NORTH);properties.add(StudioWorkspaceShell.properties(layerTable));
         refreshBarcodeCaption.run();shell.addSection("Properties",properties);
 
-        if(!banners)shell.addSection("Data",merge);
+        if(!banners){
+            shell.addSection("Data",merge);
+            shell.ribbon().add(StudioCommand.BROWSE_RECORDS,this::browseMergeRecords);
+            shell.ribbon().task("Data","Records","Edit records",merge);
+            records.addTableModelListener(event->shell.closeRecords());
+            for(Component control:mergeTools.getComponents())if(control instanceof JButton command)
+                shell.ribbon().add("Data","Merge",StudioRibbon.shortcut(command,command.getText()));
+            shell.ribbon().add(StudioCommand.MERGE_FIELD,this::insertMergeField);
+        }
 
-        if(!banners)shell.addSection("Print setup",output);
+        if(labels){cutProduction=new CutProduction(this,()->{commit();return document.copy();},()->pageIndex,vinylWorkspace);cutProduction.install(shell);}
+        installLayoutRibbon(shell);
+        shell.ribbon().retain(output);
+        if(billBooks){
+            JPanel numberingRibbon=new JPanel();numberingRibbon.setOpaque(false);
+            numberingRibbon.add(ribbonField("Print content",billBookOutput,270));
+            numberingRibbon.add(ribbonField("Number fields",billBookNumberFields,180));
+            numberingRibbon.add(ribbonField("Numbering order",numberingControls.order,300));
+            numberingRibbon.add(ribbonField("Custom positions",numberingControls.custom,200));
+            numberingRibbon.add(numberingControls.map);
+            numberingControls.cutStack.setText("Cut and stack");numberingRibbon.add(numberingControls.cutStack);
+            numberingRibbon.add(StudioRibbon.button("Preview",this::previewPrintSetup));
+            for(Component component:numberingRibbon.getComponents())if(component instanceof JPanel field){Dimension size=field.getPreferredSize();field.setPreferredSize(new Dimension(size.width,58));}
+            shell.ribbon().inlineSettings("Numbering",numberingRibbon);
+        }
 
+        installFileView(shell);
         add(shell);
 
-        JPanel footer=DeckersSwing.panel();footer.setLayout(new BorderLayout(0,4));footer.add(templateSize,BorderLayout.NORTH);footer.add(status);
+        JPanel footer=DeckersSwing.panel();footer.setLayout(new BorderLayout(16,0));footer.add(templateSize,BorderLayout.WEST);footer.add(status);
 
         if(billBooks){sharedLibraryStatus.setText("Shared bill book library — sign in to synchronize");status.setText("Use Number series to fill {{number}}. Check imported fonts and every page before printing.");}else if(banners){sharedLibraryStatus.setText("Banner templates on this computer • Export .sspub to reuse elsewhere");status.setText("Ctrl+wheel zoom • middle-drag / scrollbars pan • Fit resets view • PDF at actual size.");}else if(labels)status.setText("Use {{field}} in text to merge table columns. Sheet size is set in Print setup.");
 
-        add(footer,BorderLayout.SOUTH);
+        add(footer,BorderLayout.SOUTH);shell.ribbon().addPropertyChangeListener("fileOpen",e->footer.setVisible(!Boolean.TRUE.equals(e.getNewValue())));
 
         records.addTableModelListener(e -> {dirty=true;design.repaint();refresh.restart();});
 
@@ -416,15 +499,15 @@ final class BusinessCardsPanel extends JPanel {
 
         pageMode.addActionListener(e -> {dirty=true;refresh.restart();});paper.addActionListener(e -> {boolean custom="Custom".equals(paper.getSelectedItem());customWidth.setEnabled(custom);customHeight.setEnabled(custom);dirty=true;refresh.restart();});
 
-        for(JSpinner spinner:List.of(leftMargin,rightMargin,topMargin,bottomMargin,gap,copies,sheet,customWidth,customHeight))spinner.addChangeListener(e -> refresh.restart());
+        for(JSpinner spinner:List.of(leftMargin,rightMargin,topMargin,bottomMargin,gap,verticalGap,copies,sheet,customWidth,customHeight))spinner.addChangeListener(e -> {if(spinner!=sheet)dirty=true;refresh.restart();});
 
-        rotate.addActionListener(e -> refresh.restart());marks.addActionListener(e -> refresh.restart());
+        rotate.addActionListener(e -> {dirty=true;refresh.restart();});marks.addActionListener(e -> {dirty=true;refresh.restart();});
 
-        paper.setSelectedItem("Letter");if(billBooks)restoreSheetSize(document.print);dirty=false;refresh.restart();
+        if(!billBooks){document.print.width=215.9;document.print.height=279.4;}restoreSheetSize(document.print);dirty=false;refresh.restart();
 
     }
 
-    private void newCard(){if(discard()){Publication banner=banners?newBanner():null;if(banners&&banner==null)return;currentLocalFile=null;currentLocalHash="";currentSharedFile=null;currentSharedHash="";document=billBooks?BillBookDocuments.create():banners?banner:labels?labelTemplate():builtin();if(billBooks)restoreSheetSize(document.print);pageIndex=0;refreshPages();records.setRowCount(0);excel=null;source.setText("Built-in table");configureDesign();resetHistory();changed();dirty=false;}}
+    private void newCard(){if(discard()){Publication banner=banners?newBanner():null;if(banners&&banner==null)return;currentLocalFile=null;currentLocalHash="";currentSharedFile=null;currentSharedHash="";document=billBooks?BillBookDocuments.create():banners?banner:labels?labelTemplate():builtin();document.displayUnit="IN";if(!billBooks){document.print.width=215.9;document.print.height=279.4;}restoreSheetSize(document.print);pageIndex=0;refreshPages();records.setDataVector(new Object[0][0],new String[0]);excel=null;source.setText("Built-in table");configureDesign();resetHistory();changed();dirty=false;}}
 
 
 
@@ -433,7 +516,14 @@ final class BusinessCardsPanel extends JPanel {
         if(working){status.setText("Wait for the current operation to finish.");return false;}
 
         try{
-
+            if(sharedActive&&!banners&&!vinylWorkspace){
+                var selected=SmartDriveTemplatePicker.choose(this,billBooks?"BILL_BOOKS":labels?"LABELS":"BUSINESS_CARDS");
+                if(selected.enabled()){
+                    if(selected.current())return true;
+                    if(selected.file()==null||!discard())return false;
+                    openDocument(selected.file(),selected.identity());return true;
+                }
+            }
             var choice=PublicationTemplateLibrary.choose(this,labels,shared,banners,billBooks);if(choice==null)return false;
 
             switch(choice.kind()){
@@ -457,8 +547,8 @@ final class BusinessCardsPanel extends JPanel {
 
 
     private Publication newBanner(){
-        JComboBox<String> units=new JComboBox<>(new String[]{"FT","IN","CM","MM"});
-        JTextField width=new JTextField("20"),height=new JTextField("4");
+        JComboBox<String> units=new JComboBox<>(new String[]{"IN","FT","CM","MM"});
+        JTextField width=new JTextField("240"),height=new JTextField("48");
         JPanel form=new JPanel(new GridLayout(0,2,8,8));form.add(new JLabel("Units"));form.add(units);form.add(new JLabel("Width"));form.add(width);form.add(new JLabel("Height"));form.add(height);
         form.add(new JLabel("Maximum 1,000,000 mm per side"));form.add(new JLabel("PDF export keeps physical dimensions"));
         while(JOptionPane.showConfirmDialog(this,form,"New banner template",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE)==JOptionPane.OK_OPTION){
@@ -467,7 +557,7 @@ final class BusinessCardsPanel extends JPanel {
         }return null;
     }
 
-    static Publication labelTemplate(){Publication p=new Publication();p.title="Label";p.width=50.8;p.height=25.4;p.template=true;return p;}
+    static Publication labelTemplate(){Publication p=new Publication();p.title="Label";p.displayUnit="IN";p.width=50.8;p.height=25.4;p.template=true;return p;}
 
     static Publication readTemplate(Path path,Path executable,boolean labels)throws Exception{return readTemplate(path,executable,labels,false); }
     static Publication readTemplate(Path path,Path executable,boolean labels,boolean banners)throws Exception{
@@ -516,10 +606,55 @@ final class BusinessCardsPanel extends JPanel {
 
     }
 
-    private static String sizeDescription(Publication p){return String.format(Locale.ROOT,"%.3f × %.3f %s (%.2f × %.2f mm)",Publication.fromMm(p.width,p.displayUnit),Publication.fromMm(p.height,p.displayUnit),p.displayUnit,p.width,p.height);}
+    private static String sizeDescription(Publication p){return String.format(Locale.ROOT,"%.3f × %.3f %s",Publication.fromMm(p.width,p.displayUnit),Publication.fromMm(p.height,p.displayUnit),p.displayUnit);}
 
-    private void updateTemplateSize(){templateSize.setText(sizeDescription(document));}
+    private void updateTemplateSize(){
+        templateSize.setText(sizeDescription(document));updatingLayout=true;
+        try{orientation.setSelectedIndex(document.width>document.height?1:0);layoutUnits.setSelectedItem(document.displayUnit);previousLayoutUnit=document.displayUnit;layoutWidth.setValue(Publication.fromMm(document.width,document.displayUnit));layoutHeight.setValue(Publication.fromMm(document.height,document.displayUnit));}
+        finally{updatingLayout=false;}
+    }
 
+    private static JPanel ribbonField(String label,JComponent control,int width){
+        return StudioRibbon.field(label,control,width);
+    }
+
+    private void installLayoutRibbon(StudioWorkspaceShell shell){
+        for(JSpinner measurement:List.of(leftMargin,rightMargin,topMargin,bottomMargin,gap,verticalGap))measurement.setEditor(new JSpinner.NumberEditor(measurement,"0.###"));
+        JPanel layout=new JPanel();layout.setOpaque(false);layout.add(StudioCommand.LAYERS.button(this::showLayers));
+        layout.add(ribbonField("Orientation",orientation,120));orientation.addActionListener(e->{if(!updatingLayout)try{orientTemplate(orientation.getSelectedIndex()==0);}catch(Exception ex){error(ex);}});
+        layout.add(ribbonField("Width",layoutWidth,86));layout.add(ribbonField("Height",layoutHeight,86));layout.add(ribbonField("Units",layoutUnits,70));layout.add(scaleLayout);
+        layoutUnits.addActionListener(e->{if(updatingLayout)return;String unit=layoutUnits.getSelectedItem().toString();
+            layoutWidth.setValue(Publication.fromMm(Publication.toMm(((Number)layoutWidth.getValue()).doubleValue(),previousLayoutUnit),unit));
+            layoutHeight.setValue(Publication.fromMm(Publication.toMm(((Number)layoutHeight.getValue()).doubleValue(),previousLayoutUnit),unit));previousLayoutUnit=unit;});
+        layout.add(StudioRibbon.button("Apply size",()->{try{layoutWidth.commitEdit();layoutHeight.commitEdit();String unit=layoutUnits.getSelectedItem().toString();double width=Publication.toMm(((Number)layoutWidth.getValue()).doubleValue(),unit),height=Publication.toMm(((Number)layoutHeight.getValue()).doubleValue(),unit);resizeTemplate(width,height,scaleLayout.isSelected());document.displayUnit=unit;updateTemplateSize();}catch(Exception ex){error(ex);}}));
+        if(!banners){
+            layout.add(ribbonField("Paper",paper,105));layout.add(ribbonField("Paper W (in)",customWidth,105));layout.add(ribbonField("Paper H (in)",customHeight,105));layout.add(ribbonField("Page layout",pageMode,220));
+            JPanel print=new JPanel();print.setOpaque(false);
+            print.add(ribbonField("Left (in)",leftMargin,86));print.add(ribbonField("Right (in)",rightMargin,86));print.add(ribbonField("Top (in)",topMargin,86));print.add(ribbonField("Bottom in",bottomMargin,86));
+            print.add(ribbonField("Gap X (in)",gap,92));print.add(ribbonField("Gap Y (in)",verticalGap,92));print.add(ribbonField("Copies",copies,80));print.add(ribbonField("Sheet",sheet,80));print.add(rotate);print.add(marks);
+            print.add(StudioRibbon.button("Preview",()->{try{previewPrintSetup();}catch(Exception ex){error(ex);}}));
+            print.add(StudioRibbon.button("Copy print details",()->{try{java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new java.awt.datatransfer.StringSelection(PublicationPrintDiagnostics.latestReport()),null);status.setText("Print details copied • Paste them into the support chat.");}catch(Exception ex){error(ex);}}));
+            print.add(StudioRibbon.button("Save template setup",()->{try{saveChanges();}catch(Exception ex){error(ex);}}));
+            shell.ribbon().inlineSettings("Print Setup",print);
+        }else{
+            JPanel print=new JPanel();print.setOpaque(false);print.add(new JLabel("Actual size · Set banner dimensions in Layout"));
+            print.add(StudioRibbon.button("Print…",()->{try{printCards();}catch(Exception ex){error(ex);}}));
+            print.add(StudioRibbon.button("Export PDF",()->{try{exportPdf();}catch(Exception ex){error(ex);}}));
+            print.add(StudioRibbon.button("Save template setup",()->{try{saveChanges();}catch(Exception ex){error(ex);}}));
+            shell.ribbon().inlineSettings("Print Setup",print);
+        }
+        layout.add(StudioWorkspaceShell.alignmentMenu(()->arrangementTargets(currentPage()).size(),this::arrangeLayers),1);
+        shell.ribbon().inlineSettings("Layout",layout);updateTemplateSize();
+    }
+
+    void orientTemplate(boolean portrait){commit();Publication next=document.copy();if(TemplateOrientation.turn(next,portrait)){document=next;changed();}}
+
+    void applyPictureRotation(double degrees){
+        try{commit();if(selectedPicture()==null)return;int row=layerTable.getSelectedRow();var next=document.copy();var element=next.pages.get(pageIndex).objects.get(row);
+            if(element.locked)throw new IllegalStateException("Unlock this picture before rotating it.");
+            element.rotation=ImageFormattingToolbar.normalized(degrees);next.validate();document=next;changed();layerTable.setRowSelectionInterval(row,row);
+        }catch(Exception ex){error(ex);}
+    }
     void resizeTemplate(double width,double height,boolean scale){commit();Publication next=document.copy();next.resize(width,height,scale);next.validate();document=next;changed();}
 
     private void changeTemplateSize()throws Exception{
@@ -560,11 +695,54 @@ final class BusinessCardsPanel extends JPanel {
 
     private Publication.Element selectedText(){if(layerTable.getSelectedRowCount()!=1)return null;int row=layerTable.getSelectedRow();return row>=0&&row<currentPage().objects.size()&&currentPage().objects.get(row).type.equals("TEXT")?currentPage().objects.get(row):null;}
 
-    private TextFormattingToolbar.Style selectedTextStyle(){var e=selectedText();return e==null?null:new TextFormattingToolbar.Style(e.font,e.fontSize,e.bold,e.italic,e.underline,e.strike,e.color,e.wordArt.equals("NONE")?e.textOutline:e.wordArtOutlineWidth>0,e.wordArt.equals("NONE")?e.textOutlineColor:e.wordArtOutline,e.wordArt.equals("NONE")?e.textOutlineWidth:e.wordArtOutlineWidth);}
+    private void arrangeSelection(boolean distribute){
+        try{
+            commit();int[] selected=layerTable.getSelectedRows();
+            if(selected.length<(distribute?3:2))throw new IllegalArgumentException(distribute?"Select at least three objects to distribute.":"Select at least two objects to align.");
+            String[] labels=distribute?new String[]{"Horizontal gaps","Vertical gaps"}:new String[]{"Left","Centre","Right","Top","Middle","Bottom"};
+            String choice=(String)JOptionPane.showInputDialog(this,distribute?"Equal spacing between selected objects":"Align selected objects to their combined bounds",distribute?"Distribute":"Align",JOptionPane.PLAIN_MESSAGE,null,labels,labels[0]);
+            if(choice!=null)arrangeLayers(StudioArrange.Operation.values()[java.util.Arrays.asList(labels).indexOf(choice)+(distribute?6:0)]);
+        }catch(Exception ex){error(ex);}
+    }
 
-    private void applyTextStyle(TextFormattingToolbar.Style style){commit();var e=selectedText();if(e==null)return;int selected=layerTable.getSelectedRow();e.font=style.font();if(e.fontSize!=style.size()){if(e.wordArt.equals("NONE"))e.fitText=false;else{double ratio=style.size()/e.fontSize;e.width*=ratio;e.height*=ratio;}}e.fontSize=style.size();e.bold=style.bold();e.italic=style.italic();e.underline=style.underline();e.strike=style.strike();e.color=style.color();e.textOutline=style.outline();e.textOutlineColor=style.outlineColor();e.textOutlineWidth=style.outlineWidth();if(!e.wordArt.equals("NONE")){e.wordArtOutline=style.outlineColor();e.wordArtOutlineWidth=style.outline()?style.outlineWidth():0;}document.validate();changed();if(selected>=0&&selected<layerTable.getRowCount())layerTable.setRowSelectionInterval(selected,selected);}
+    private List<Publication.Element> arrangementTargets(Publication.Page page){
+        var groups=Arrays.stream(layerTable.getSelectedRows()).mapToObj(row->TableGeometry.members(page,page.objects.get(row)))
+                .sorted(Comparator.<List<Publication.Element>>comparingInt(List::size).reversed()).toList();
+        Set<Publication.Element> covered=Collections.newSetFromMap(new IdentityHashMap<>());
+        var targets=new ArrayList<Publication.Element>();
+        for(var group:groups){
+            if(group.stream().noneMatch(covered::contains)){targets.add(group.get(0));covered.addAll(group);}
+        }
+        return targets;
+    }
 
-    private ImageFormattingToolbar.Picture selectedPicture(){if(layerTable.getSelectedRowCount()!=1)return null;int row=layerTable.getSelectedRow();if(row<0||row>=currentPage().objects.size())return null;var e=currentPage().objects.get(row);return e.type.equals("IMAGE")?new ImageFormattingToolbar.Picture(e.id,e.width,e.height,e.transparency):null;}
+    void arrangeLayers(StudioArrange.Operation operation){
+        try{
+            commit();var page=currentPage();var targets=arrangementTargets(page);
+            if(targets.stream().anyMatch(layer->TableGeometry.locked(page,layer)))
+                throw new IllegalArgumentException("Unlock the selected layers before aligning or distributing them.");
+            var raw=targets.stream().map(layer->TableGeometry.bounds(page,layer)).toList();
+            double[][] boxes=new double[targets.size()][];
+            for(int i=0;i<targets.size();i++)boxes[i]=StudioArrange.bounds(raw.get(i),targets.get(i).rotation);
+            double[][] positions=StudioArrange.positions(boxes,operation,document.width,document.height);
+            if(Arrays.deepEquals(boxes,positions))return;
+            var originals=new IdentityHashMap<Publication.Element,double[]>();
+            for(var target:targets)for(var layer:TableGeometry.members(page,target))originals.put(layer,new double[]{layer.x,layer.y});
+            for(int i=0;i<targets.size();i++)TableGeometry.move(page,targets.get(i),
+                    raw.get(i).getX()+positions[i][0]-boxes[i][0],raw.get(i).getY()+positions[i][1]-boxes[i][1]);
+            try{document.validate();}catch(RuntimeException ex){
+                originals.forEach((layer,position)->{layer.x=position[0];layer.y=position[1];});
+                throw ex;
+            }
+            changed();
+        }catch(Exception ex){error(ex);}
+    }
+
+    private TextFormattingToolbar.Style selectedTextStyle(){var e=selectedText();return e==null?null:new TextFormattingToolbar.Style(e.font,e.fontSize,e.bold,e.italic,e.underline,e.strike,e.color,e.wordArt.equals("NONE")?e.textOutline:e.wordArtOutlineWidth>0,e.wordArt.equals("NONE")?e.textOutlineColor:e.wordArtOutline,e.wordArt.equals("NONE")?e.textOutlineWidth:e.wordArtOutlineWidth,e.textAlignment);}
+
+    private void applyTextStyle(TextFormattingToolbar.Style style){commit();var e=selectedText();if(e==null)return;int selected=layerTable.getSelectedRow();if(e.wordArt.equals("NONE")&&(!e.font.equals(style.font())||e.fontSize!=style.size()||e.bold!=style.bold()||e.italic!=style.italic()))e.fitText=false;e.font=style.font();if(e.fontSize!=style.size()){if(e.wordArt.equals("NONE"))e.fitText=false;else{double ratio=style.size()/e.fontSize;e.width*=ratio;e.height*=ratio;}}e.fontSize=style.size();e.bold=style.bold();e.italic=style.italic();e.underline=style.underline();e.strike=style.strike();e.color=style.color();e.textOutline=style.outline();e.textOutlineColor=style.outlineColor();e.textOutlineWidth=style.outlineWidth();e.textAlignment=style.alignment();if(!e.wordArt.equals("NONE")){e.wordArtOutline=style.outlineColor();e.wordArtOutlineWidth=style.outline()?style.outlineWidth():0;}document.validate();changed();if(selected>=0&&selected<layerTable.getRowCount())layerTable.setRowSelectionInterval(selected,selected);}
+
+    private ImageFormattingToolbar.Picture selectedPicture(){if(layerTable.getSelectedRowCount()!=1)return null;int row=layerTable.getSelectedRow();if(row<0||row>=currentPage().objects.size())return null;var e=currentPage().objects.get(row);return e.type.equals("IMAGE")?new ImageFormattingToolbar.Picture(e.id,e.width,e.height,e.transparency,e.rotation):null;}
     private void applyPictureTransparency(int value){
         try{commit();if(selectedPicture()==null)return;int row=layerTable.getSelectedRow();var element=currentPage().objects.get(row);
             if(element.locked)throw new IllegalStateException("Unlock this image before editing it.");
@@ -598,6 +776,16 @@ final class BusinessCardsPanel extends JPanel {
         layerTable.setRowSelectionInterval(layers.getRowCount()-1,layers.getRowCount()-1);
     }
 
+    private void insertMergeField(){
+        if(records.getColumnCount()==0){error(new IllegalArgumentException("Add a field in Data first."));return;}
+        String[] names=new String[records.getColumnCount()];for(int i=0;i<names.length;i++)names[i]=records.getColumnName(i);
+        String field=(String)JOptionPane.showInputDialog(this,"Choose an existing data field","Insert merge field",JOptionPane.PLAIN_MESSAGE,null,names,names[0]);
+        if(field==null)return;
+        commit();Publication.Element text=selectedText();
+        if(text==null){text=new Publication.Element();text.text="";text.width=Math.min(78,document.width);text.height=Math.min(10,document.height);currentPage().objects.add(text);}
+        text.text+="{{"+field+"}}";changed();
+    }
+
     private Publication.Element selectedBarcode(){if(layerTable.getSelectedRowCount()!=1)return null;int row=layerTable.getSelectedRow();return row>=0&&row<currentPage().objects.size()&&Set.of("BARCODE","QR").contains(currentPage().objects.get(row).type)?currentPage().objects.get(row):null;}
     private void applyBarcodeSettings(BarcodeFormattingToolbar.Settings settings){
         commit();var old=selectedBarcode();if(old==null)return;int selected=layerTable.getSelectedRow();
@@ -609,7 +797,7 @@ final class BusinessCardsPanel extends JPanel {
 
     private Publication.Page currentPage(){return document.pages.get(pageIndex);}
 
-    private void refreshPages(){updatingPages=true;try{pages.removeAllItems();for(int i=0;i<document.pages.size();i++)pages.addItem((i+1)+" · "+document.pages.get(i).name);pages.setSelectedIndex(pageIndex);}finally{updatingPages=false;}pagePreviews.update(document,pageIndex);}
+    private void refreshPages(){addPageCommand.setEnabled(document.pages.size()<500);deletePageCommand.setEnabled(document.pages.size()>1);updatingPages=true;try{pages.removeAllItems();for(int i=0;i<document.pages.size();i++)pages.addItem((i+1)+" · "+document.pages.get(i).name);pages.setSelectedIndex(pageIndex);}finally{updatingPages=false;}pagePreviews.update(document,pageIndex);}
 
     private void addPage()throws Exception{
 
@@ -617,7 +805,7 @@ final class BusinessCardsPanel extends JPanel {
 
         Publication.Page page=new Publication.Page();page.name="Page "+(document.pages.size()+1);document.pages.add(page);pageIndex=document.pages.size()-1;
 
-        refreshPages();configureDesign();pageNumberField();changed();
+        refreshPages();configureDesign();if(billBooks)pageNumberField();changed();
 
     }
 
@@ -674,23 +862,42 @@ final class BusinessCardsPanel extends JPanel {
 
         JComboBox<String> column=new JComboBox<>();for(int c=0;c<records.getColumnCount();c++)column.addItem(records.getColumnName(c));column.setEditable(true);column.setSelectedItem(suggested);
 
-        JTextField start=new JTextField("1"),step=new JTextField("1");
+        String initial="1";int existing=-1;for(int c=0;c<records.getColumnCount();c++)if(records.getColumnName(c).equals(suggested))existing=c;
+        if(existing>=0&&records.getRowCount()>0){Object value=records.getValueAt(0,existing);if(value!=null&&!value.toString().isBlank())initial=value.toString();}
+        JTextField start=new JTextField(initial),step=new JTextField("1");
 
         JSpinner count=new JSpinner(new SpinnerNumberModel(Math.max(1,records.getRowCount()),1,10000,1));
 
         JSpinner firstRow=new JSpinner(new SpinnerNumberModel(Math.max(1,table.getSelectedRow()+1),1,10000,1));
 
-        JSpinner digits=new JSpinner(new SpinnerNumberModel(0,0,40,1));
+        JCheckBox pad=new JCheckBox("Add leading zeros",true);
+        JSpinner digits=new JSpinner(new SpinnerNumberModel(BusinessCardSeries.savedWidth(initial),0,40,1));
+        digits.setToolTipText("0 = match largest number; 3 = 001; 4 = 0001. Longer numbers are never cut off.");
+        JLabel sample=new JLabel();
+        Runnable preview=()->{
+            digits.setEnabled(pad.isSelected());
+            try{
+                var run=pad.isSelected()?BusinessCardSeries.paddedValues(start.getText(),step.getText(),(int)count.getValue(),(int)digits.getValue()):BusinessCardSeries.values(start.getText(),step.getText(),(int)count.getValue(),0);
+                sample.setText(run.get(0)+"  …  "+run.get(run.size()-1));
+            }catch(IllegalArgumentException ex){sample.setText("Enter valid numbers to preview");}
+        };
+        javax.swing.event.DocumentListener updates=new javax.swing.event.DocumentListener(){
+            public void insertUpdate(javax.swing.event.DocumentEvent e){preview.run();}
+            public void removeUpdate(javax.swing.event.DocumentEvent e){preview.run();}
+            public void changedUpdate(javax.swing.event.DocumentEvent e){preview.run();}
+        };
+        start.getDocument().addDocumentListener(updates);step.getDocument().addDocumentListener(updates);
+        count.addChangeListener(e->preview.run());digits.addChangeListener(e->preview.run());pad.addActionListener(e->preview.run());preview.run();
 
         JPanel form=new JPanel(new GridLayout(0,2,8,8));
 
-        form.add(new JLabel("Column (existing or new)"));form.add(column);form.add(new JLabel("Starting number"));form.add(start);form.add(new JLabel("Step"));form.add(step);form.add(new JLabel("Number of values"));form.add(count);form.add(new JLabel("Start at table row"));form.add(firstRow);form.add(new JLabel("Minimum digits (zero padding)"));form.add(digits);
+        form.add(new JLabel("Column (existing or new)"));form.add(column);form.add(new JLabel("Starting number"));form.add(start);form.add(new JLabel("Step"));form.add(step);form.add(new JLabel("Number of values"));form.add(count);form.add(new JLabel("Start at table row"));form.add(firstRow);form.add(new JLabel("Number format"));form.add(pad);form.add(new JLabel("Minimum digits (0 = automatic)"));form.add(digits);form.add(new JLabel("Preview"));form.add(sample);
 
         if(JOptionPane.showConfirmDialog(this,form,"Fill number series",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
 
         String key=column.getSelectedItem().toString().trim();int offset=(int)firstRow.getValue()-1;
 
-        List<String> values=BusinessCardSeries.values(start.getText(),step.getText(),(int)count.getValue(),(int)digits.getValue());
+        List<String> values=pad.isSelected()?BusinessCardSeries.paddedValues(start.getText(),step.getText(),(int)count.getValue(),(int)digits.getValue()):BusinessCardSeries.values(start.getText(),step.getText(),(int)count.getValue(),0);
 
         if(offset+values.size()>10000)throw new IllegalArgumentException("The series exceeds 10000 table rows.");
 
@@ -710,15 +917,36 @@ final class BusinessCardsPanel extends JPanel {
 
     private void syncCanvasSelection(){syncingLayerSelection=true;try{layerTable.clearSelection();for(int row:design.selectedIndices())if(row<layers.getRowCount())layerTable.addRowSelectionInterval(row,row);}finally{syncingLayerSelection=false;}}
 
+    void toggleLayerVisibility(int index){
+        commit();if(index<0||index>=currentPage().objects.size())return;
+        var element=currentPage().objects.get(index);element.hidden=!element.hidden;changed();
+        layerTable.setRowSelectionInterval(index,index);
+        status.setText(element.hidden?"Layer hidden. Save the template to keep this change.":"Layer shown. Save the template to keep this change.");
+    }
+
+    private void showLayers(){
+        if(GraphicsEnvironment.isHeadless())return;
+        if(layersWindow!=null&&layersWindow.isDisplayable()){floatingLayers.refresh();layersWindow.setVisible(true);layersWindow.toFront();return;}
+        Window owner=SwingUtilities.getWindowAncestor(this);layersWindow=new JDialog(owner,"Layers",Dialog.ModalityType.MODELESS);
+        layersWindow.setUndecorated(true);
+        if(layersWindow.getGraphicsConfiguration().getDevice().isWindowTranslucencySupported(GraphicsDevice.WindowTranslucency.PERPIXEL_TRANSLUCENT))layersWindow.setBackground(new Color(0,0,0,0));
+        floatingLayers=new StudioLayersPanel(()->currentPage().objects,()->layerTable.getSelectedRow(),index->{if(index>=0&&index<layerTable.getRowCount())layerTable.setRowSelectionInterval(index,index);},index->{try{toggleLayerVisibility(index);}catch(Exception ex){error(ex);}},move->{try{reorderLayers(move);}catch(Exception ex){error(ex);}},()->{try{commit();design.deleteSelection();}catch(Exception ex){error(ex);}},()->layersWindow.dispose());
+        layersWindow.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);layersWindow.setContentPane(floatingLayers);
+        layersWindow.getRootPane().registerKeyboardAction(e->layersWindow.dispose(),KeyStroke.getKeyStroke("ESCAPE"),JComponent.WHEN_IN_FOCUSED_WINDOW);
+        Rectangle usable=GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        if(owner!=null){Rectangle screen=owner.getGraphicsConfiguration().getBounds();Insets insets=Toolkit.getDefaultToolkit().getScreenInsets(owner.getGraphicsConfiguration());usable=new Rectangle(screen.x+insets.left,screen.y+insets.top,screen.width-insets.left-insets.right,screen.height-insets.top-insets.bottom);}
+        layersWindow.setSize(Math.min(280,usable.width-32),Math.min(370,usable.height-48));layersWindow.setMinimumSize(new Dimension(260,220));
+        Point anchor=isShowing()?getLocationOnScreen():new Point(usable.x+16,usable.y+16);
+        layersWindow.setLocation(Math.max(usable.x,Math.min(anchor.x+24,usable.x+usable.width-layersWindow.getWidth())),Math.max(usable.y,Math.min(anchor.y+120,usable.y+usable.height-layersWindow.getHeight())));
+        layersWindow.setVisible(true);
+    }
+
+    private void changeLayerOrder(StudioLayerOrder.Move move){try{reorderLayers(move);}catch(Exception ex){error(ex);}}
     void reorderLayers(StudioLayerOrder.Move move){
         commit();
         var result=StudioLayerOrder.move(currentPage().objects,layerTable.getSelectedRows(),move,e->e.locked);
         if(!result.changed())return;
-        changed();
-        syncingLayerSelection=true;
-        try{layerTable.clearSelection();for(int row:result.selection())layerTable.addRowSelectionInterval(row,row);}
-        finally{syncingLayerSelection=false;}
-        design.selectIndices(result.selection());design.repaint();
+        changed(result.selection());
         status.setText("Layer order updated. Ctrl+Z to undo.");
     }
 
@@ -730,49 +958,112 @@ final class BusinessCardsPanel extends JPanel {
 
             public double width(){return document.width;}public double height(){return document.height;}public int size(){return currentPage().objects.size();}
 
-            public Rectangle2D bounds(int i){var e=currentPage().objects.get(i);return new Rectangle2D.Double(e.x,e.y,e.width,e.height);}
+            public double rotation(int i){return currentPage().objects.get(i).rotation;}
+            public Rectangle2D bounds(int i){return TableGeometry.bounds(currentPage(),currentPage().objects.get(i));}
 
-            public void move(int i,double x,double y){var e=currentPage().objects.get(i);e.x=x;e.y=y;}
+            public void move(int i,double x,double y){TableGeometry.move(currentPage(),currentPage().objects.get(i),x,y);}
 
             public boolean canResize(){return true;}
 
-            public void resize(int i,Rectangle2D b){var e=currentPage().objects.get(i);e.x=b.getX();e.y=b.getY();e.width=b.getWidth();e.height=b.getHeight();}
+            public void resize(int i,Rectangle2D b){TableGeometry.resize(currentPage(),currentPage().objects.get(i),b);}
 
             public void remove(int i){currentPage().objects.remove(i);}
-            public boolean locked(int i){return currentPage().objects.get(i).locked;}
+            public boolean locked(int i){return TableGeometry.locked(currentPage(),currentPage().objects.get(i));}
+            public boolean hidden(int i){return currentPage().objects.get(i).hidden;}
 
             public String text(int i){var e=currentPage().objects.get(i);return "TEXT".equals(e.type)?e.text:null;}
 
             public boolean setText(int i,String value){var e=currentPage().objects.get(i);String old=e.text;e.text=value;try{document.validate();return true;}catch(Exception ex){e.text=old;return false;}}
 
-            public void paint(Graphics2D g,double scale){Graphics2D draw=(Graphics2D)g.create();try{draw.scale(scale,scale);canvasRenderer().page(draw,pageIndex,selectedRecord());}finally{draw.dispose();}}
+            public void paint(Graphics2D g,double scale){
+                Graphics2D draw=(Graphics2D)g.create();
+                try{
+                    draw.scale(scale,scale);
+                    canvasRenderer().page(draw,pageIndex,selectedRecord());
+                    paintEmptyPhotoPlaceholders(draw,scale);
+                }finally{draw.dispose();}
+            }
 
         },r -> syncCanvasSelection(),this::changed);
 
     }
 
+    private Publication.Element selectedTableElement(){
+        int row=layerTable.getSelectedRow();if(row<0||row>=currentPage().objects.size()||!StudioTables.isTable(currentPage().objects.get(row)))throw new IllegalArgumentException("Select a table cell first, then choose Table > Edit table.");return currentPage().objects.get(row);
+    }
+
+    private void selectTable(){
+        commit();var grid=StudioTables.read(currentPage(),selectedTableElement());
+        int index=java.util.stream.IntStream.range(0,currentPage().objects.size()).filter(i->grid.replaced.contains(currentPage().objects.get(i).id)).findFirst().orElseThrow();design.select(index);syncCanvasSelection();
+    }
+
+    private void editTable(boolean creating){
+        commit();StudioTables.Grid grid=creating?StudioTables.create(5,3,Math.max(.3,Math.min(120,document.width-10)),Math.max(.5,Math.min(50,document.height-10))):StudioTables.read(currentPage(),selectedTableElement());
+        if(creating){grid.x=Math.max(0,Math.min(5,(document.width-grid.width())/2));grid.y=Math.max(0,Math.min(5,(document.height-grid.height())/2));}
+        grid=TableEditor.choose(this,grid,creating);if(grid==null)return;
+        Publication next=document.copy();int index=StudioTables.apply(next,pageIndex,grid);document=next;configureDesign();changed();design.selectIndices(new int[]{index});syncCanvasSelection();status.setText("Table updated • Drag to move; drag a handle to resize; double-click to edit cells. Ctrl+Z to undo.");
+    }
+
+    private void browseMergeRecords(){
+        if(shell.recordsOpen()){shell.closeRecords();return;}
+        try{
+            commit();
+            var design=document.copy();
+            int previewPage=pageIndex;
+            var columns=new LinkedHashMap<String,String>();
+            for(int col=0;col<records.getColumnCount();col++)columns.put("field-"+col,records.getColumnName(col));
+            var rows=new ArrayList<StudioRecordBrowser.Row<Integer>>();
+            for(int row=0;row<records.getRowCount();row++){
+                var values=new LinkedHashMap<String,String>();
+                for(int col=0;col<records.getColumnCount();col++)values.put("field-"+col,Objects.toString(records.getValueAt(row,col),""));
+                rows.add(new StudioRecordBrowser.Row<>(row,values));
+            }
+            var browser=new StudioRecordBrowser<Integer>(design.title,columns,record->{
+                var values=new LinkedHashMap<String,String>();
+                columns.forEach((key,label)->values.put(label,record.values().get(key)));
+                double scale=460/Math.max(design.width,design.height);
+                var image=new java.awt.image.BufferedImage(Math.max(1,(int)Math.ceil(design.width*scale)),
+                        Math.max(1,(int)Math.ceil(design.height*scale)),java.awt.image.BufferedImage.TYPE_INT_RGB);
+                Graphics2D draw=image.createGraphics();
+                try{
+                    draw.scale(scale,scale);
+                    new PublicationRenderer(design).page(draw,previewPage,values);
+                }finally{draw.dispose();}
+                return new StudioRecordBrowser.Details(image,()->{
+                    shell.closeRecords();
+                    int viewRow=table.convertRowIndexToView(record.id());
+                    if(viewRow>=0){
+                        table.setRowSelectionInterval(viewRow,viewRow);
+                        if(table.getColumnCount()>0)table.scrollRectToVisible(table.getCellRect(viewRow,0,true));
+                    }
+                });
+            },shell::closeRecords);
+            shell.showRecords(browser,()->rows);
+        }catch(Exception ex){error(ex);}
+    }
+
     private Map<String,String> selectedRecord(){int r=table.getSelectedRow();if(r<0 && records.getRowCount()>0)r=0;return r<0?Map.of():row(r);}
 
-    private Map<String,String> row(int r){Map<String,String> values=new LinkedHashMap<>();for(int c=0;c<records.getColumnCount();c++){Object v=records.getValueAt(r,c);String s=v==null?"":v.toString();if(records.getColumnName(c).equals("quantity") && s.isBlank())s="1";values.put(records.getColumnName(c),s);}return values;}
+    private Map<String,String> row(int r){Map<String,String> values=new LinkedHashMap<>();for(int c=0;c<records.getColumnCount();c++){Object v=records.getValueAt(r,c);String s=v==null?"":v.toString();values.put(records.getColumnName(c),s);}return values;}
 
     private void commit(){if(!design.finishText(true))throw new IllegalStateException("Finish editing the text.");for(JTable t:List.of(table,layerTable))if(t.isEditing()&&!t.getCellEditor().stopCellEditing())throw new IllegalStateException("Finish editing the current cell.");}
 
     Publication output(){
 
-        commit();Publication p=document.copy();if(banners){p.mergeRows.clear();p.validate();return p;}p.mergeRows.clear();
+        commit();Publication p=document.copy();if(banners){p.mergeRows.clear();p.validate();return p;}p.mergeRows.clear();p.mergeColumns.clear();for(int c=0;c<records.getColumnCount();c++)p.mergeColumns.add(records.getColumnName(c));
 
-        for(int r=0;r<records.getRowCount();r++){Map<String,String> values=row(r);if(values.entrySet().stream().anyMatch(e -> !e.getKey().equals("quantity")&&!e.getValue().isBlank()))p.mergeRows.add(values);}
+        for(int r=0;r<records.getRowCount();r++)p.mergeRows.add(row(r));
 
         double[] size=BusinessCardPaper.size(paper.getSelectedItem().toString(),((Number)customWidth.getValue()).doubleValue(),((Number)customHeight.getValue()).doubleValue());p.print.width=size[0];p.print.height=size[1];
 
-        p.print.left=((Number)leftMargin.getValue()).doubleValue();p.print.right=((Number)rightMargin.getValue()).doubleValue();
-        p.print.top=((Number)topMargin.getValue()).doubleValue();p.print.bottom=((Number)bottomMargin.getValue()).doubleValue();
+        p.print.left=((Number)leftMargin.getValue()).doubleValue()*25.4;p.print.right=((Number)rightMargin.getValue()).doubleValue()*25.4;
+        p.print.top=((Number)topMargin.getValue()).doubleValue()*25.4;p.print.bottom=((Number)bottomMargin.getValue()).doubleValue()*25.4;
 
-        p.print.gapX=p.print.gapY=((Number)gap.getValue()).doubleValue();p.print.quantity=(int)copies.getValue();
+        p.print.gapX=((Number)gap.getValue()).doubleValue()*25.4;p.print.gapY=((Number)verticalGap.getValue()).doubleValue()*25.4;p.print.quantity=(int)copies.getValue();
 
-        p.print.maximize=true;p.print.rotate=rotate.isSelected();p.print.cropMarks=marks.isSelected();p.print.duplex=false;p.print.booklet=false;
+        p.print.maximize=true;p.print.rotate=rotate.isSelected();p.print.cropMarks=marks.isSelected();
 
-        p.print.mixPages=pageMode.getSelectedIndex()==1; p.print.skip=0;p.print.offsetX=p.print.offsetY=0;p.print.bleed=0;
+        p.print.mixPages=pageMode.getSelectedIndex()==1;
         if(numberingControls!=null)numberingControls.apply(p.print);
 
         p.validate();return p;
@@ -789,11 +1080,39 @@ final class BusinessCardsPanel extends JPanel {
         };
     }
 
-    private void changed(){LinkedRiso.prune(document);thumbnailRefresh.restart();recordHistory();updateTemplateSize();design.revalidate();dirty=true;int[] selected=layerTable.getSelectedRows();syncingLayerSelection=true;try{layers.fireTableDataChanged();for(int row:selected)if(row<layerTable.getRowCount())layerTable.addRowSelectionInterval(row,row);}finally{syncingLayerSelection=false;}design.selectIndices(layerTable.getSelectedRows());design.repaint();refresh.restart();}
+    private void insertShape(String type){
+        try{
+            if(working)throw new IllegalStateException("Wait for the current operation.");
+            commit();
+            var shape=new Publication.Element();
+            shape.type=type;
+            shape.width=Math.min(25,document.width*.6);
+            shape.height=Math.min(type.equals("LINE")?.5:15,document.height*.6);
+            shape.x=(document.width-shape.width)/2;
+            shape.y=(document.height-shape.height)/2;
+            String colour=String.format("#%06x",DeckersPalette.PURPLE.getRGB()&0xffffff);
+            shape.color=colour;
+            shape.fill=type.equals("LINE")?"none":colour;
+            shape.stroke=type.equals("LINE")?colour:"none";
+            var objects=currentPage().objects;
+            objects.add(shape);
+            changed(new int[]{objects.size()-1});
+        }catch(Exception ex){error(ex);}
+    }
+
+    private void changed(){changed(layerTable.getSelectedRows());}
+    private void changed(int[] selected){
+        LinkedRiso.prune(document);thumbnailRefresh.restart();recordHistory();updateTemplateSize();design.revalidate();dirty=true;
+        syncingLayerSelection=true;updatingLayerRows=true;
+        try{layers.fireTableDataChanged();for(int row:selected)if(row<layerTable.getRowCount())layerTable.addRowSelectionInterval(row,row);}
+        finally{updatingLayerRows=false;syncingLayerSelection=false;}
+        refreshLayerFormatting.run();
+        design.selectIndices(layerTable.getSelectedRows());design.repaint();refresh.restart();
+    }
 
     private void previewSheet(){
 
-        if(banners){status.setText(sizeDescription(document)+" • Ctrl+wheel zoom • scrollbars / middle-drag pan • Fit resets view • Export PDF for your print shop.");return;}
+        if(banners){status.setText(sizeDescription(document)+" • Ctrl+wheel zoom • scrollbars / middle-drag pan • Fit resets view • Print through your installed driver or export PDF.");return;}
         if(working){previewPending=true;return;}
 
         try{Publication p=printOutput();int index=(int)sheet.getValue()-1;PublicationRenderer renderer=new PublicationRenderer(p);int count=renderer.sheets();
@@ -815,6 +1134,14 @@ final class BusinessCardsPanel extends JPanel {
     }
 
     private void openTemplate(Path path)throws Exception{
+        openDocument(path);
+    }
+
+    void openDocument(Path path)throws Exception{
+        openDocument(path,null);
+    }
+
+    private void openDocument(Path path,publishing.StudioDriveIdentity identity)throws Exception{
 
         String[] openedHash={null};
 
@@ -822,30 +1149,39 @@ final class BusinessCardsPanel extends JPanel {
 
         run("Opening template…",() -> {if(Files.size(path)>(banners?PublicationLargeFiles.MAX_BYTES:PublicationFiles.MAX_BYTES))throw new java.io.IOException(banners?"Template exceeds 5 GiB.":"Template exceeds 48 MB.");String before=BadgeTemplateLibrary.fingerprint(path);Publication p=readTemplate(path,executable,labels,banners);if(!before.equals(BadgeTemplateLibrary.fingerprint(path)))throw new java.io.IOException("Template changed while opening; refresh and reopen it.");openedHash[0]=before;
 
-            if(p.pages.stream().anyMatch(pg -> pg.reference))throw new java.io.IOException("Choose printable pages; remove reference pages in Publisher first.");return p;},p -> {currentSharedFile=shared!=null&&shared.contains(path)?path:null;currentSharedHash=currentSharedFile==null?"":openedHash[0];currentLocalFile=currentSharedFile==null&&path.toString().toLowerCase(Locale.ROOT).endsWith(".sspub")?path:null;currentLocalHash=currentLocalFile==null?"":openedHash[0];document=p;pageIndex=0;refreshPages();restoreSheetSize(p.print);pageMode.setSelectedIndex(p.print.mixPages?1:0);loadRows(p.mergeRows);excel=null;source.setText("Built-in table");configureDesign();resetHistory();changed();dirty=false;if(path.toString().toLowerCase(Locale.ROOT).endsWith(".pub"))JOptionPane.showMessageDialog(this,"Publisher objects and text fields were imported separately.\nReview fonts, colours, rotated text and every page against the original before printing.","Publisher import",JOptionPane.INFORMATION_MESSAGE);});
+            var fileIdentity=publishing.StudioDriveIdentity.fromFile(path);
+            if(fileIdentity!=null)p.smartDrive=fileIdentity;
+            else if(identity!=null)p.smartDrive=identity;
+            if(p.pages.stream().anyMatch(pg -> pg.reference))throw new java.io.IOException("Choose printable pages; remove reference pages in Publisher first.");return p;},p -> {currentSharedFile=shared!=null&&shared.contains(path)?path:null;currentSharedHash=currentSharedFile==null?"":openedHash[0];currentLocalFile=currentSharedFile==null&&path.toString().toLowerCase(Locale.ROOT).endsWith(".sspub")?path:null;currentLocalHash=currentLocalFile==null?"":openedHash[0];document=p;document.displayUnit="IN";pageIndex=0;refreshPages();restoreSheetSize(p.print);pageMode.setSelectedIndex(p.print.mixPages?1:0);loadRows(p.mergeColumns,p.mergeRows);excel=null;source.setText("Built-in table");configureDesign();resetHistory();changed();dirty=false;if(path.toString().toLowerCase(Locale.ROOT).endsWith(".pub"))JOptionPane.showMessageDialog(this,"Publisher objects and text fields were imported separately.\nReview fonts, colours, rotated text and every page against the original before printing.","Publisher import",JOptionPane.INFORMATION_MESSAGE);});
 
     }
 
     void restoreSheetSize(SheetLayout.Settings settings){
-
-        // The sheet is a workspace choice, independent of imported artwork dimensions.
-
-        if(billBooks){
-            customWidth.setValue(settings.width/25.4);customHeight.setValue(settings.height/25.4);
-            paper.setSelectedItem("Custom");
-            leftMargin.setValue(settings.left);rightMargin.setValue(settings.right);
-            topMargin.setValue(settings.top);bottomMargin.setValue(settings.bottom);gap.setValue(settings.gapX);
-            copies.setValue(Math.max(1,settings.quantity));rotate.setSelected(settings.rotate);marks.setSelected(settings.cropMarks);
-            if(numberingControls!=null)numberingControls.restore(settings);
-        }else paper.setSelectedItem("Letter");
-
+        customWidth.setValue(settings.width/25.4);customHeight.setValue(settings.height/25.4);
+        String selected="Custom";
+        for(String candidate:new String[]{"Letter","A4","Legal","11 × 17"}){
+            double[] size=BusinessCardPaper.size(candidate,1,1);
+            if(Math.abs(size[0]-settings.width)<.01&&Math.abs(size[1]-settings.height)<.01){selected=candidate;break;}
+        }
+        paper.setSelectedItem(selected);
+        leftMargin.setValue(settings.left/25.4);rightMargin.setValue(settings.right/25.4);
+        topMargin.setValue(settings.top/25.4);bottomMargin.setValue(settings.bottom/25.4);gap.setValue(settings.gapX/25.4);verticalGap.setValue(settings.gapY/25.4);
+        copies.setValue(Math.max(1,settings.quantity));rotate.setSelected(settings.rotate);marks.setSelected(settings.cropMarks);
+        pageMode.setSelectedIndex(settings.mixPages?1:0);
+        if(numberingControls!=null)numberingControls.restore(settings);
     }
 
-    private boolean showPrintPreview(Publication p){
+    void previewPrintSetup(){
+        try{showPrintPreview(printOutput(),false);}catch(Exception ex){error(ex);}
+    }
+
+    private boolean showPrintPreview(Publication p){return showPrintPreview(p,true);}
+
+    private boolean showPrintPreview(Publication p,boolean printing){
 
         int count=new PublicationRenderer(p).sheets();
 
-        JDialog dialog=new JDialog(SwingUtilities.getWindowAncestor(this),billBooks?"Bill books — full sheet preview":"Business cards — full sheet preview",Dialog.ModalityType.APPLICATION_MODAL);
+        JDialog dialog=new JDialog(SwingUtilities.getWindowAncestor(this),(billBooks?"Bill books":labels?"Labels":"Business cards")+" — "+(printing?"full sheet preview":"sheet preview"),Dialog.ModalityType.APPLICATION_MODAL);
 
         dialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);dialog.setLayout(new BorderLayout(8,8));
 
@@ -855,11 +1191,11 @@ final class BusinessCardsPanel extends JPanel {
 
         JPanel top=DeckersSwing.panel();top.setLayout(new FlowLayout(FlowLayout.LEFT));top.add(details);top.add(new JLabel("Sheet"));
 
-        JSpinner number=new JSpinner(new SpinnerNumberModel(1,1,count,1));top.add(number);dialog.add(top,BorderLayout.NORTH);
+        JSpinner number=new JSpinner(new SpinnerNumberModel(Math.max(1,Math.min(count,(int)sheet.getValue())),1,count,1));top.add(number);dialog.add(top,BorderLayout.NORTH);
 
         JPanel actions=DeckersSwing.panel();actions.setLayout(new FlowLayout(FlowLayout.RIGHT));JLabel note=new JLabel("Rendering…");actions.add(note);
 
-        JButton cancel=new JButton("Cancel"),print=new JButton("Continue to printer…");DeckersSwing.styleUtilityButton(cancel,DeckersPalette.PURPLE);DeckersSwing.styleUtilityButton(print,DeckersPalette.PURPLE);actions.add(cancel);actions.add(print);dialog.add(actions,BorderLayout.SOUTH);
+        JButton cancel=new JButton(printing?"Cancel":"Close"),print=new JButton("Continue to printer…");DeckersSwing.styleUtilityButton(cancel,DeckersPalette.PURPLE);DeckersSwing.styleUtilityButton(print,DeckersPalette.PURPLE);actions.add(cancel);if(printing)actions.add(print);dialog.add(actions,BorderLayout.SOUTH);
 
         boolean[] accepted={false};int[] generation={0};
 
@@ -869,16 +1205,58 @@ final class BusinessCardsPanel extends JPanel {
 
                 protected java.awt.image.BufferedImage doInBackground(){return new PublicationRenderer(p).raster(index,96);}
 
-                protected void done(){if(current!=generation[0]||!dialog.isDisplayable())return;try{fullSheet.setImage(get());note.setText("Sheet "+(index+1)+" of "+count);print.setEnabled(true);}catch(Exception ex){note.setText("Unable to render sheet.");}}
+                protected void done(){if(current!=generation[0]||!dialog.isDisplayable())return;try{fullSheet.setImage(get());note.setText("Sheet "+(index+1)+" of "+count);print.setEnabled(true);}catch(Exception ex){Throwable cause=ex.getCause()==null?ex:ex.getCause();note.setText("Unable to render: "+cause.getMessage());note.setToolTipText(cause.getMessage());}}
 
             }.execute();};
 
         number.addChangeListener(e->render.run());cancel.addActionListener(e->dialog.dispose());print.addActionListener(e->{accepted[0]=true;dialog.dispose();});
 
-        dialog.setSize(850,760);dialog.setMinimumSize(new Dimension(560,440));dialog.setLocationRelativeTo(this);dialog.addNotify();render.run();dialog.setVisible(true);generation[0]++;return accepted[0];
+        Rectangle usable=GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        Window owner=SwingUtilities.getWindowAncestor(this);
+        if(owner!=null){Rectangle screen=owner.getGraphicsConfiguration().getBounds();Insets insets=Toolkit.getDefaultToolkit().getScreenInsets(owner.getGraphicsConfiguration());usable=new Rectangle(screen.x+insets.left,screen.y+insets.top,screen.width-insets.left-insets.right,screen.height-insets.top-insets.bottom);}
+        int width=Math.max(1,Math.min(850,usable.width-32)),height=Math.max(1,Math.min(760,usable.height-32));
+        dialog.setSize(width,height);dialog.setMinimumSize(new Dimension(Math.min(560,width),Math.min(440,height)));
+        StudioVisuals.styleTree(dialog.getContentPane());dialog.getRootPane().registerKeyboardAction(e->dialog.dispose(),KeyStroke.getKeyStroke("ESCAPE"),JComponent.WHEN_IN_FOCUSED_WINDOW);
+        dialog.setLocationRelativeTo(this);dialog.setLocation(Math.max(usable.x,Math.min(dialog.getX(),usable.x+usable.width-width)),Math.max(usable.y,Math.min(dialog.getY(),usable.y+usable.height-height)));
+        dialog.addNotify();render.run();dialog.setVisible(true);generation[0]++;return accepted[0];
 
     }
 
+    private void installFileView(StudioWorkspaceShell shell){
+        fileView=shell.installFile(new StudioFileView.Actions(){
+            public StudioFileView.Info info(){return new StudioFileView.Info(billBooks?"Bill Books":banners?"Banners":labels?"Labels":"Business Cards",currentLocalFile==null?document.title:currentLocalFile.getFileName().toString().replaceFirst("(?i)\\.sspub$",""),".sspub",currentSharedFile!=null?"Shared template library":currentLocalFile!=null?currentLocalFile.getParent().toString():"Unsaved draft",sizeDescription(document),document.pages.size(),dirty,working||productionBusy(),shared!=null&&sharedActive&&shared.online,currentSharedFile!=null||currentLocalFile!=null,currentLocalFile);}
+            public void create(){Publication before=document;boolean changed=dirty;dirty=false;newCard();if(document==before)dirty=changed;shell.ribbon().select("Home");}
+            public void open(Path path)throws Exception{Publication before=document;boolean changed=dirty;dirty=false;try{if(path==null)chooseTemplate();else openTemplate(path);}finally{if(document==before)dirty=changed;}shell.ribbon().select("Home");}
+            public void save()throws Exception{saveChanges();}
+            public void saveAs(String name,Path folder,boolean store)throws Exception{saveAsFile(name,folder,store);}
+            public void rename(String name)throws Exception{renameFile(name);}
+            public void importArtwork()throws Exception{artwork();}
+            public String[] exportFormats(){return new String[]{"PDF document (.pdf)","Portable template (.sspub)"};}
+            public void export(String format)throws Exception{if(format.startsWith("PDF"))exportPdf();else saveTemplate();}
+            public void print()throws Exception{printCards();}
+            public void printSetup(){shell.ribbon().select("Print Setup");}
+            public void close(){dirty=false;resetFields();document=new Publication();pageIndex=0;refreshPages();configureDesign();resetHistory();firePropertyChange("closeWorkspace",false,true);}
+        });
+        getInputMap(WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke("control shift S"),"saveAsFile");getActionMap().put("saveAsFile",new AbstractAction(){public void actionPerformed(java.awt.event.ActionEvent e){shell.ribbon().select("File");fileView.show("save-as");}});
+    }
+    void saveAsFile(String name,Path folder,boolean store)throws Exception{
+        if(working)throw new IllegalStateException("Wait for the current operation.");Publication next=output();next.title=StudioFileNames.clean(name,".sspub");next.smartDrive=null;
+        if(store){if(shared==null||!sharedActive||!shared.online)throw new java.io.IOException("Reconnect to save shared templates.");shared.requireUniqueName(next.title,null);var active=shared;long generation=sharedGeneration;run("Saving new shared copy…",()->active.save(next,null,"",()->sharedActive&&generation==sharedGeneration),saved->{currentSharedFile=saved.file();currentSharedHash=saved.sha256();currentLocalFile=null;document.title=next.title;savedState(next);status.setText("Saved new shared copy.");});}
+        else{Path target=StudioFileNames.target(folder,name,".sspub");if(currentLocalFile!=null&&target.equals(currentLocalFile.toAbsolutePath().normalize()))throw new java.io.IOException("Choose a different name for the new copy.");String expected=StudioDocumentSave.observe(target);if(Files.exists(target)&&JOptionPane.showConfirmDialog(this,"Replace "+target.getFileName()+"?","Save As",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;saveLocal(next,target,expected);}
+    }
+    void renameFile(String name)throws Exception{
+        if(working)throw new IllegalStateException("Wait for the current operation.");String clean=StudioFileNames.clean(name,".sspub");
+        if(currentSharedFile!=null){shared.requireUniqueName(clean,currentSharedFile);Publication next=PublicationFiles.read(Files.readAllBytes(currentSharedFile));next.title=clean;saveShared(next);return;}
+        Path source=currentLocalFile;String expected=currentLocalHash;
+        if(source==null)throw new java.io.IOException("Save this draft with Save As before renaming it.");
+        run("Renaming template…",()->{
+            Publication saved=banners?PublicationLargeFiles.read(source,PublicationLargeFiles.cache()):PublicationFiles.read(Files.readAllBytes(source));saved.title=clean;
+            Path target=StudioFileNames.renameWithContent(source,clean,".sspub",expected,path->writeTemplate(path,saved,null,banners));
+            return new LocalRename(target,BadgeTemplateLibrary.fingerprint(target),saved);
+        },result->{currentLocalFile=result.file();currentLocalHash=result.hash();document.title=clean;recordHistory();savedState(result.saved());status.setText("Renamed template: "+clean);});
+    }
+
+    private record LocalRename(Path file,String hash,Publication saved){}
     void saveChanges()throws Exception{
         if(working)throw new IllegalStateException("Wait for the current operation.");
         if(currentSharedFile!=null){saveShared(output());return;}
@@ -891,17 +1269,22 @@ final class BusinessCardsPanel extends JPanel {
         try{dirty=!sameDesign(output(),snapshot);}catch(Exception ex){dirty=true;}
     }
 
-    private void saveLocal(Publication p,Path target,String expected){
-        Publication snapshot=p.copy();p.template=true;p.mergeRows.clear();
-        run("Saving template…",()->writeTemplate(target,p,expected,banners),hash->{currentLocalFile=target;currentLocalHash=hash;currentSharedFile=null;currentSharedHash="";savedState(snapshot);status.setText("Saved: "+target.getFileName()+" • Merge records are excluded.");});
+    private void saveLocal(Publication p,Path target,String expected)throws Exception{
+        String revision=expected==null?StudioDocumentSave.observe(target):expected;
+        if(currentLocalFile==null||!target.toAbsolutePath().normalize().equals(currentLocalFile.toAbsolutePath().normalize()))
+            p.smartDrive=banners||vinylWorkspace?null:publishing.StudioDriveIdentity.forNewFile(target,billBooks?"BILL_BOOKS":labels?"LABELS":"BUSINESS_CARDS");
+        Publication snapshot=p.copy();p.template=true;
+        run("Saving template…",()->writeTemplate(target,p,revision,banners),hash->{currentLocalFile=target;currentLocalHash=hash;currentSharedFile=null;currentSharedHash="";document.title=p.title;document.smartDrive=p.smartDrive;savedState(snapshot);status.setText("Saved: "+target.getFileName()+" • Fields and records saved with this template.");});
     }
 
     static String writeTemplate(Path target,Publication p,String expected)throws Exception{
         return writeTemplate(target,p,expected,!p.assetFiles.isEmpty());
     }
     static String writeTemplate(Path target,Publication p,String expected,boolean large)throws Exception{
-        if(expected!=null&&(!Files.exists(target)||!expected.equals(BadgeTemplateLibrary.fingerprint(target))))throw new java.io.IOException("This template changed on disk. Export your draft to a new file, then reopen the updated template.");
-        if(large)PublicationLargeFiles.write(target,p);else PublicationFiles.writeAtomic(target,PublicationFiles.archive(p));return BadgeTemplateLibrary.fingerprint(target);
+        return StudioDocumentSave.write(target,expected,path->{
+            if(large)PublicationLargeFiles.write(path,p);
+            else PublicationFiles.writeAtomic(path,PublicationFiles.archive(p));
+        });
     }
 
     private void saveShared(Publication p)throws Exception{
@@ -910,9 +1293,20 @@ final class BusinessCardsPanel extends JPanel {
         run("Saving template on the store server…",()->active.save(p,current,expected,()->sharedActive&&generation==sharedGeneration),saved->{currentSharedFile=saved.file();currentSharedHash=saved.sha256();currentLocalFile=null;currentLocalHash="";document.title=p.title;snapshot.title=p.title;savedState(snapshot);sharedLibraryStatus.setText(active.status);status.setText("Saved on server. Other computers refresh automatically; OneDrive backup is queued.");});
     }
 
-    private void saveTemplate()throws Exception{Publication p=output();Path path=choose(true,"Publisher template","sspub");if(path==null)return;saveLocal(p,path,null);}
+    private void saveTemplate()throws Exception{
+        Publication p=output();JFileChooser chooser=new JFileChooser();chooser.setDialogTitle("Publisher template");
+        Path driveRoot=shared!=null&&shared.smartDrive?SmartDriveTemplatePicker.suggestedRoot():null;
+        if(driveRoot!=null)chooser.setCurrentDirectory(driveRoot.toFile());
+        chooser.setFileFilter(new FileNameExtensionFilter("Publisher template","sspub"));
+        if(chooser.showSaveDialog(this)!=JFileChooser.APPROVE_OPTION)return;
+        Path path=chooser.getSelectedFile().toPath();if(!path.toString().toLowerCase(Locale.ROOT).endsWith(".sspub"))path=Path.of(path+".sspub");
+        String expected=StudioDocumentSave.observe(path);
+        if(Files.exists(path)&&JOptionPane.showConfirmDialog(this,"Replace "+path.getFileName()+"?","Publisher template",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
+        saveLocal(p,path,expected);
+    }
 
     private void saveToLibrary()throws Exception{
+        if(shared!=null&&shared.smartDrive){saveTemplate();return;}
 
         Publication p=output();String name=JOptionPane.showInputDialog(this,"Template name",p.title);if(name==null)return;name=name.strip();if(name.isBlank()||name.length()>120||name.matches(".*[<>:\"/\\\\|?*].*"))throw new IllegalArgumentException("Use a template name without path characters.");
 
@@ -924,13 +1318,105 @@ final class BusinessCardsPanel extends JPanel {
 
         }
 
-        Path target=(billBooks?BillBookDocuments.folder():banners?BannerDocuments.folder():PublicationTemplateLibrary.folder(labels)).resolve(name+".sspub");if(Files.exists(target)&&JOptionPane.showConfirmDialog(this,"Replace the existing library template?","Save template",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
+        Path target=(billBooks?BillBookDocuments.folder():banners?BannerDocuments.folder():PublicationTemplateLibrary.folder(labels)).resolve(name+".sspub");String expected=StudioDocumentSave.observe(target);if(Files.exists(target)&&JOptionPane.showConfirmDialog(this,"Replace the existing library template?","Save template",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
 
-        document.title=name;p.title=name;saveLocal(p,target,null);
+        document.title=name;p.title=name;saveLocal(p,target,expected);
 
     }
 
-    private void artwork()throws Exception{Path path=choose(false,"Image","png","jpg","jpeg");if(path!=null)loadImageLayer(()->banners?StudioImageFile.loadArtwork(path):StudioImageFile.load(path));}
+    private void artwork()throws Exception{
+        int source=StudioPhotoPicker.source(this);
+        if(source==0){Path path=choose(false,"Image","png","jpg","jpeg");if(path!=null)loadImageLayer(()->banners?StudioImageFile.loadArtwork(path):StudioImageFile.load(path));}
+        else if(source==1){var photo=StudioPhotoPicker.queued(this);if(photo!=null){var bytes=new java.io.ByteArrayOutputStream();javax.imageio.ImageIO.write(photo.image(),"png",bytes);insertImageLayer(new StudioImageFile.Loaded(bytes.toByteArray(),photo.image(),photo.name()));}}
+    }
+
+    private void insertPhotoPlaceholder(){
+        try{
+            if(working)throw new IllegalStateException("Wait for the current operation.");
+            commit();
+            var slot=new Publication.Element();
+            slot.type="IMAGE";
+            slot.text="Photo placeholder";
+            slot.photoPlaceholder=true;
+            slot.height=Math.min(27,document.height*.65);
+            slot.width=Math.min(slot.height*.75,document.width*.65);
+            slot.x=(document.width-slot.width)/2;
+            slot.y=(document.height-slot.height)/2;
+            var objects=currentPage().objects;
+            objects.add(slot);
+            changed(new int[]{objects.size()-1});
+        }catch(Exception ex){error(ex);}
+    }
+
+    private void paintEmptyPhotoPlaceholders(Graphics2D graphics,double scale){
+        for(var layer:currentPage().objects){
+            if(!layer.photoPlaceholder||layer.hidden||!layer.asset.isBlank())continue;
+            var draw=(Graphics2D)graphics.create();
+            try{
+                draw.translate(layer.x,layer.y);
+                draw.rotate(Math.toRadians(layer.rotation),layer.width/2,layer.height/2);
+                float pixel=(float)(1/scale);
+                draw.setColor(DeckersPalette.PURPLE);
+                draw.setStroke(new BasicStroke(pixel,BasicStroke.CAP_BUTT,BasicStroke.JOIN_ROUND,1,
+                        new float[]{4*pixel,3*pixel},0));
+                draw.draw(new java.awt.geom.Rectangle2D.Double(0,0,layer.width,layer.height));
+                String label="Photo";
+                draw.setFont(StudioVisuals.font(Font.PLAIN,12).deriveFont(12*pixel));
+                var metrics=draw.getFontMetrics();
+                if(metrics.stringWidth(label)+4*pixel<layer.width)
+                    draw.drawString(label,(float)(layer.width-metrics.stringWidth(label))/2,
+                            (float)(layer.height+metrics.getAscent())/2);
+            }finally{draw.dispose();}
+        }
+    }
+
+    private int selectedPhotoPlaceholder(){
+        int row=layerTable.getSelectedRow();
+        if(layerTable.getSelectedRowCount()!=1||row<0||row>=currentPage().objects.size()
+                ||!currentPage().objects.get(row).photoPlaceholder)
+            throw new IllegalArgumentException("Select one photo placeholder first.");
+        return row;
+    }
+
+    private void replaceSelectedPhoto(){
+        try{replacePhoto(selectedPhotoPlaceholder());}catch(Exception ex){error(ex);}
+    }
+
+    private void frameSelectedPhoto(){
+        try{
+            if(working)throw new IllegalStateException("Wait for the current operation.");
+            commit();
+            int row=selectedPhotoPlaceholder();
+            var slot=currentPage().objects.get(row);
+            if(slot.locked)throw new IllegalArgumentException("Unlock the photo placeholder before framing it.");
+            if(slot.asset.isBlank())throw new IllegalArgumentException("Add a photo to this placeholder first.");
+            var source=PublicationPhotoFrame.source(document,slot);
+            var frame=PublicationPhotoFrame.choose(this,slot,source);
+            if(frame!=null){frame.apply(slot,source);changed(new int[]{row});}
+        }catch(Exception ex){error(ex);}
+    }
+
+    private void replacePhoto(int row)throws Exception{
+        if(working)throw new IllegalStateException("Wait for the current operation.");
+        commit();Publication target=document;int targetPage=pageIndex;
+        var selected=currentPage().objects.get(row);
+        if(selected.photoPlaceholder&&selected.locked)throw new IllegalArgumentException("Unlock the photo placeholder before replacing its photo.");
+        var image=StudioPhotoPicker.photo(this,()->{Path path=choose(false,"Image","png","jpg","jpeg");return path==null?null:StudioImageFile.loadPhoto(path).image();});
+        if(image==null||document!=target||pageIndex!=targetPage)return;
+        replacePhoto(row,image);
+    }
+
+    void replacePhoto(int row,java.awt.image.BufferedImage image)throws Exception{
+        var original=currentPage().objects.get(row);
+        var frame=PublicationPhotoFrame.CENTERED;
+        if(original.photoPlaceholder&&!original.asset.isBlank())
+            frame=PublicationPhotoFrame.from(original,PublicationPhotoFrame.source(document,original));
+        Publication next=document.copy();var page=next.pages.get(pageIndex);var element=page.objects.get(row);
+        PublicationImport.addImage(next,page,image,element.x,element.y,element.width,element.height);
+        element.asset=page.objects.remove(page.objects.size()-1).asset;
+        if(element.photoPlaceholder)frame.apply(element,image);
+        next.validate();document=next;changed(new int[]{row});
+    }
 
 
     private void copyLayers(){try{commit();int[] rows=design.selectedIndices();if(rows.length>0)StudioLayerClipboard.put(StudioLayerClipboard.publication(document,pageIndex,rows));}catch(Exception ex){error(ex);}}
@@ -961,10 +1447,39 @@ final class BusinessCardsPanel extends JPanel {
         if(banners)PublicationImport.addEncodedImage(next,next.pages.get(pageIndex),image.bytes(),(next.width-size[0])/2,(next.height-size[1])/2,size[0],size[1]);else PublicationImport.addImage(next,next.pages.get(pageIndex),image.image(),(next.width-size[0])/2,(next.height-size[1])/2,size[0],size[1]);next.validate();document=next;changed();
 
         int row=currentPage().objects.size()-1;layerTable.setRowSelectionInterval(row,row);design.requestFocusInWindow();
+        if (banners) {
+            double ppi = Math.min(image.sourceWidth() * 25.4 / size[0], image.sourceHeight() * 25.4 / size[1]);
+            status.setText(String.format(java.util.Locale.ROOT, "Image inserted • %d × %d px • %.1f PPI at placed size",
+                    image.sourceWidth(), image.sourceHeight(), ppi));
+        }
 
     }
 
+    void receiveArtwork(StudioImageFile.Loaded image)throws Exception{
+        if(working||productionBusy())throw new IllegalStateException("Wait for the current operation.");
+        insertImageLayer(image);
+        shell.closeRecords();
+        shell.ribbon().select("Home");
+    }
+
     private void addField()throws Exception{String key=JOptionPane.showInputDialog(this,"Field name (use {{field}} in template text):");if(key==null)return;List<String> names=new ArrayList<>();for(int c=0;c<records.getColumnCount();c++)names.add(records.getColumnName(c));BusinessCardMerge.validateHeader(key.trim(),names);records.addColumn(key.trim());}
+
+    private void deleteField(){
+        if(records.getColumnCount()==0){status.setText("There are no fields to delete.");return;}
+        String[] names=new String[records.getColumnCount()];for(int c=0;c<names.length;c++)names[c]=records.getColumnName(c);
+        int selected=table.getSelectedColumn();
+        String field=(String)JOptionPane.showInputDialog(this,"Choose the field to delete:","Delete field",JOptionPane.PLAIN_MESSAGE,null,names,names[selected<0?0:table.convertColumnIndexToModel(selected)]);
+        if(field==null)return;
+        if(JOptionPane.showConfirmDialog(this,"Delete field '"+field+"' and its values from every record?\nOther fields and artwork are preserved. Any {{"+field+"}} placeholders in the artwork will need updating.","Delete field",JOptionPane.YES_NO_OPTION,JOptionPane.WARNING_MESSAGE)==JOptionPane.YES_OPTION)deleteField(field);
+    }
+
+    void deleteField(String field){
+        commit();int removed=-1;for(int c=0;c<records.getColumnCount();c++)if(records.getColumnName(c).equals(field)){removed=c;break;}
+        if(removed<0)throw new IllegalArgumentException("This field no longer exists.");
+        String[] names=new String[records.getColumnCount()-1];Object[][] values=new Object[records.getRowCount()][names.length];
+        for(int c=0,next=0;c<records.getColumnCount();c++)if(c!=removed){names[next]=records.getColumnName(c);for(int r=0;r<values.length;r++)values[r][next]=records.getValueAt(r,c);next++;}
+        records.setDataVector(values,names);status.setText("Deleted field '"+field+"'. Save the template to keep this change.");
+    }
 
     private void connectExcel()throws Exception{
 
@@ -982,14 +1497,21 @@ final class BusinessCardsPanel extends JPanel {
 
     }
 
-    private void loadRows(List<Map<String,String>> rows){records.setRowCount(0);if(rows.isEmpty())return;LinkedHashSet<String> keys=new LinkedHashSet<>();rows.forEach(r -> keys.addAll(r.keySet()));records.setDataVector(new Object[0][0],keys.toArray());rows.forEach(r -> records.addRow(keys.stream().map(r::get).toArray()));}
+    void loadRows(List<String> columns,List<Map<String,String>> rows){
+        LinkedHashSet<String> keys=new LinkedHashSet<>(columns);rows.forEach(r->keys.addAll(r.keySet()));
+        records.setDataVector(new Object[0][0],keys.toArray());
+        rows.forEach(r->records.addRow(keys.stream().map(k->r.getOrDefault(k,"")).toArray()));
+    }
 
-    void resetFields(){sessionGeneration++;currentLocalFile=null;currentLocalHash="";currentSharedFile=null;currentSharedHash="";records.setRowCount(0);excel=null;worksheet=null;source.setText("Built-in table");source.setToolTipText(null);document.mergeRows.clear();sheetImage.setImage(null);design.repaint();}
 
-    boolean discard(){return !working && (!dirty || JOptionPane.showConfirmDialog(this,"Discard unsaved "+(billBooks?"bill-book":banners?"banner":labels?"label":"business-card")+" changes and merge records?",billBooks?"Bill Books":banners?"Banners":labels?"Labels":"Business Cards",JOptionPane.YES_NO_OPTION)==JOptionPane.YES_OPTION);}
+    void clearFileHistory(){if(fileView!=null)fileView.clearRecent();}
+    void resetFields(){closeProduction();sessionGeneration++;currentLocalFile=null;currentLocalHash="";currentSharedFile=null;currentSharedHash="";records.setDataVector(new Object[0][0],new String[0]);excel=null;worksheet=null;source.setText("Built-in table");source.setToolTipText(null);document.mergeRows.clear();document.mergeColumns.clear();sheetImage.setImage(null);design.repaint();}
+
+    boolean discard(){return !productionBusy() && !working && (!dirty || JOptionPane.showConfirmDialog(this,"Discard unsaved "+(billBooks?"bill-book":banners?"banner":labels?"label":"business-card")+" changes and merge records?",billBooks?"Bill Books":banners?"Banners":labels?"Labels":"Business Cards",JOptionPane.YES_NO_OPTION)==JOptionPane.YES_OPTION);}
 
     void printCards(){
-        if(banners){JOptionPane.showMessageDialog(this,"Export the banner PDF and print through your large-format RIP at actual size.\nCheck the PDF dimensions and UserUnit support with your print shop.\nRoll width, maximum job length and tiling depend on the printer/driver.","Banner printing",JOptionPane.INFORMATION_MESSAGE);return;}
+        if(cutProduction!=null&&cutProduction.enabled.isSelected()){cutProduction.open();return;}
+        if(banners){printBanner();return;}
 
         try{if(working)throw new IllegalStateException("Wait for the current operation.");Publication p=PublicationPrintOptions.choose(this,printOutput(),pageIndex);if(p==null)return;PublicationPreflight.requireMergeData(p);PublicationRenderer renderer=new PublicationRenderer(p);int count=renderer.sheets();
 
@@ -999,14 +1521,7 @@ final class BusinessCardsPanel extends JPanel {
 
             stock.setSize(p.print.width*scale,p.print.height*scale);stock.setImageableArea(0,0,stock.getWidth(),stock.getHeight());format.setPaper(stock);
 
-            javax.print.attribute.PrintRequestAttributeSet settings=new javax.print.attribute.HashPrintRequestAttributeSet();
-
-
-
-            javax.print.attribute.standard.MediaSizeName media=switch(paper.getSelectedItem().toString()){case "A4"->javax.print.attribute.standard.MediaSizeName.ISO_A4;case "Legal"->javax.print.attribute.standard.MediaSizeName.NA_LEGAL;case "11 × 17"->javax.print.attribute.standard.MediaSizeName.TABLOID;case "Custom"->null;default->javax.print.attribute.standard.MediaSizeName.NA_LETTER;};if(media!=null)settings.add(media);
-
-            settings.add(PublicationPrintOptions.sides(p));
-            settings.add(PublicationPrinting.requestedArea(p,job.getPrintService(),settings));
+            javax.print.attribute.PrintRequestAttributeSet settings=PublicationPrinting.settings(p,paper.getSelectedItem().toString());
 
             job.setPrintable((g,pf,index)->Printable.NO_SUCH_PAGE,format);
 
@@ -1016,30 +1531,141 @@ final class BusinessCardsPanel extends JPanel {
 
             if(p.print.duplex&&!job.getPrintService().isAttributeValueSupported(PublicationPrintOptions.sides(p),null,settings))throw new IllegalStateException("This printer does not support the selected two-sided mode. Choose single-sided or a duplex printer.");
 
-            settings.remove(javax.print.attribute.standard.MediaPrintableArea.class);
-            settings.add(PublicationPrinting.requestedArea(p,job.getPrintService(),settings));
+            // Resolve hardware margins from the selected printer and media;
+            // the dialog may have supplied Java's one-inch default clip.
+            PublicationPrinting.selectedPrinterArea(p,job.getPrintService(),settings);
+            PublicationPrinting.selectedPrinterQuality(job.getPrintService(),settings);
             PageFormat actual=job.getPageFormat(settings);
 
             PublicationPrinting.requireFits(p,actual);
 
-            job.setPrintable(PublicationPrinting.printable(p),actual);
+            var diagnostics=PublicationPrintDiagnostics.start(p,job.getPrintService(),settings,actual);
+            job.setPrintable(diagnostics.wrap(PublicationPrinting.printable(p)),actual);
 
-            run(billBooks?"Sending bill books to printer…":"Sending business cards to printer…",() -> {job.print(settings);return true;},ignored -> status.setText("Print job sent • Verify physical size and cut alignment."));
+            run(billBooks?"Sending bill books to printer…":"Sending business cards to printer…",() -> {try{job.print(settings);diagnostics.note("Job submitted");return true;}catch(Exception ex){diagnostics.note("Print failed: "+ex.getClass().getSimpleName());throw ex;}},ignored -> {status.setText("Print job sent • Diagnostics: "+diagnostics.path());status.setToolTipText(diagnostics.path().toString());});
 
         }catch(Exception ex){error(ex);}
 
     }
 
+    private void printBanner(){
+        try {
+            if (working) throw new IllegalStateException("Wait for the current operation.");
+            Publication banner = output();
+            run("Checking banner image resolution…", () -> BannerImageResolution.belowTarget(banner),
+                    pictures -> printCheckedBanner(banner, pictures));
+        } catch (Exception ex) {
+            error(ex);
+        }
+    }
+
+    private void printCheckedBanner(Publication p, List<BannerImageResolution.Picture> pictures) {
+        BannerResolutionChoice choice = chooseBannerResolution(pictures);
+        if (choice == BannerResolutionChoice.CANCEL) {
+            status.setText("Banner print cancelled.");
+            return;
+        }
+        try{
+            Printable artwork=BannerPrinting.printable(p);
+            PrinterJob job=PrinterJob.getPrinterJob();job.setJobName(p.title);
+            PageFormat requested=BannerPrinting.format(p);
+            job.setPageable(BannerPrinting.pages(p,artwork,requested));
+            var settings=new javax.print.attribute.HashPrintRequestAttributeSet();
+            BannerPrinting.configureDialog(settings);
+            settings.add(javax.print.attribute.standard.Sides.ONE_SIDED);
+            settings.add(p.width>p.height?javax.print.attribute.standard.OrientationRequested.LANDSCAPE:javax.print.attribute.standard.OrientationRequested.PORTRAIT);
+            if(!BannerPrinting.showDialog(this,p,job,artwork,settings))return;
+            // Keep the media selected in Printer Properties. A second page dialog
+            // can reset roll/custom media to the driver's default sheet size.
+            PageFormat actual=BannerPrinting.selectedFormat(p,job,settings);
+            BannerPrinting.requireSize(p,actual);
+            if(JOptionPane.showConfirmDialog(this,"Print "+sizeDescription(p)+" at actual size on "+job.getPrintService().getName()+"?\nConfirm roll/media settings in the driver. Artwork outside the printer margins will be clipped.","Print banner",JOptionPane.OK_CANCEL_OPTION)!=JOptionPane.OK_OPTION)return;
+            run(choice == BannerResolutionChoice.RESAMPLE ? "Resampling banner and sending to printer…" : "Sending banner to printer…", () -> {
+                Publication printSource = choice == BannerResolutionChoice.RESAMPLE
+                        ? BannerImageResolution.resample(p, pictures) : p;
+                try {
+                Printable printArtwork = printSource == p ? artwork : BannerPrinting.printable(printSource);
+                PublicationPrintDiagnostics diagnostics = PublicationPrintDiagnostics.start(
+                        printSource, job.getPrintService(), settings, actual);
+                job.setPageable(BannerPrinting.pages(printSource, diagnostics.wrap(printArtwork), actual));
+                job.print(settings);
+                return true;
+                } finally { BannerImageResolution.cleanup(p,printSource); }
+            }, ignored -> status.setText("Banner print job sent • Verify physical size and margins."));
+        }catch(Exception ex){error(ex);}
+    }
     private void separateRiso(){try{if(working)throw new IllegalStateException("Wait for the current operation.");Publication p=PublicationPrintOptions.chooseRiso(this,printOutput(),pageIndex);if(p!=null){p.print.duplex=false;RisoSeparationDialog.open(this,p);}}catch(Exception ex){error(ex);}}
     private void organiseRiso(int mainPage,String subPage){try{if(working)throw new IllegalStateException("Wait for the current operation.");var result=RisoSubPagesDialog.edit(this,output(),mainPage,subPage);if(result!=null){document=result.document();pageIndex=result.page();refreshPages();configureDesign();changed();status.setText("Linked Riso sub-pages updated • Save the template to keep these assignments.");if(result.saveRequested())saveChanges();}else pagePreviews.select(pageIndex);}catch(Exception ex){error(ex);}}
 
-    private void exportPdf()throws Exception{if(banners){Publication banner=output();Path file=choose(true,"Banner at actual size","pdf");if(file!=null)run("Exporting banner PDF…",()->{BannerDocuments.pdf(banner,file);return file;},saved->status.setText("Saved "+saved.getFileName()+" • "+sizeDescription(banner)+" • Actual size; confirm UserUnit support with printer."));return;}Publication p=printOutput();PublicationPreflight.requireMergeData(p);int count=new PublicationRenderer(p).sheets();Path path=choose(true,billBooks?"Bill book sheets":labels?"Label sheets":"Business card sheets","pdf");if(path!=null)run("Exporting PDF…",() -> {PublicationFiles.pdf(p,path,0,count-1);return path;},saved -> status.setText("Saved "+saved.getFileName()+" • Print at actual size / 100%."));}
+    private void exportPdf()throws Exception{if(cutProduction!=null&&cutProduction.enabled.isSelected()){cutProduction.open();return;}if(banners){exportBannerPdf();return;}Publication p=printOutput();PublicationPreflight.requireMergeData(p);int count=new PublicationRenderer(p).sheets();Path path=choose(true,billBooks?"Bill book sheets":labels?"Label sheets":"Business card sheets","pdf");if(path!=null)run("Exporting PDF…",() -> {PublicationPdf.write(p,path,0,count-1);return path;},saved -> status.setText("Saved "+saved.getFileName()+" • Print at actual size / 100%."));}
+
+    private void exportBannerPdf() {
+        if (working) return;
+        Publication banner = output();
+        run("Checking banner image resolution…", () -> BannerImageResolution.belowTarget(banner),
+                pictures -> exportCheckedBanner(banner, pictures));
+    }
+
+    private enum BannerResolutionChoice { SOURCE, RESAMPLE, CANCEL }
+
+    private BannerResolutionChoice chooseBannerResolution(List<BannerImageResolution.Picture> pictures) {
+        if (pictures.isEmpty()) return BannerResolutionChoice.SOURCE;
+        boolean canResample = pictures.stream().anyMatch(BannerImageResolution.Picture::canResample);
+        var message = new StringBuilder("These images are below 300 pixels per inch at their placed size.\n\n");
+        for (var picture : pictures) {
+            message.append(picture.description());
+            if (picture.canResample()) message.append(String.format(java.util.Locale.ROOT,
+                    " • resample to approximately %.0f PPI", picture.outputPpi()));
+            else message.append(" • keep source pixels (already above the resampling memory budget)");
+            message.append('\n');
+        }
+        message.append(canResample
+                ? "\nResampling adds pixels and can smooth edges. Large images use a lower PPI to fit available memory; banner dimensions stay unchanged. For more detail, use a higher-resolution original."
+                : "\nThese source images already exceed the resampling memory budget. Keep their existing pixels to preserve detail.");
+        var details = new JTextArea(message.toString(), 11, 60);
+        details.setEditable(false);
+        details.setLineWrap(true);
+        details.setWrapStyleWord(true);
+        details.setCaretPosition(0);
+        Object[] choices = canResample
+                ? new Object[]{"Resample (up to 300 PPI)", "Keep source pixels", "Cancel"}
+                : new Object[]{"Keep source pixels", "Cancel"};
+        int choice = JOptionPane.showOptionDialog(this, new JScrollPane(details), "Banner image resolution",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, choices, choices[choices.length - 1]);
+        if (choice < 0 || choice == choices.length - 1) return BannerResolutionChoice.CANCEL;
+        return canResample && choice == 0 ? BannerResolutionChoice.RESAMPLE : BannerResolutionChoice.SOURCE;
+    }
+
+    private void exportCheckedBanner(Publication banner, List<BannerImageResolution.Picture> pictures) {
+        BannerResolutionChoice choice = chooseBannerResolution(pictures);
+        if (choice == BannerResolutionChoice.CANCEL) {
+            status.setText("Banner export cancelled.");
+            return;
+        }
+        try {
+            Path file = choose(true, "Banner at actual size", "pdf");
+            if (file == null) {
+                status.setText("Banner export cancelled.");
+                return;
+            }
+            boolean use300Ppi = choice == BannerResolutionChoice.RESAMPLE;
+            run(use300Ppi ? "Resampling and exporting banner PDF…" : "Exporting banner PDF…", () -> {
+                Publication output=use300Ppi ? BannerImageResolution.resample(banner,pictures) : banner;
+                try { BannerDocuments.pdf(output,file); }
+                finally { BannerImageResolution.cleanup(banner,output); }
+                return file;
+            }, saved -> status.setText("Saved " + saved.getFileName() + " • " + sizeDescription(banner)
+                    + (use300Ppi || pictures.isEmpty() ? " • Images at 300 PPI or higher" : " • Source resolution preserved")));
+        } catch (Exception ex) {
+            error(ex);
+        }
+    }
 
     private Path choose(boolean save,String title,String... extensions){JFileChooser chooser=new JFileChooser();chooser.setDialogTitle(title);chooser.setFileFilter(new FileNameExtensionFilter(title,extensions));if((save?chooser.showSaveDialog(this):chooser.showOpenDialog(this))!=JFileChooser.APPROVE_OPTION)return null;Path path=chooser.getSelectedFile().toPath();if(save&&!path.toString().toLowerCase(Locale.ROOT).endsWith("."+extensions[0]))path=Path.of(path+"."+extensions[0]);if(save&&Files.exists(path)&&JOptionPane.showConfirmDialog(this,"Replace "+path.getFileName()+"?",title,JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return null;return path;}
 
     private interface Action{void call()throws Exception;}
 
-    private void addButton(JPanel panel,String text,Action action){JButton button=new JButton(text);DeckersSwing.styleUtilityButton(button,DeckersPalette.PURPLE);button.addActionListener(e -> {try{if(working)throw new IllegalStateException("Wait for the current operation.");action.call();}catch(Exception ex){error(ex);}});panel.add(button);}
+    private JButton addButton(JPanel panel,String text,Action action){JButton button=new JButton(text);DeckersSwing.styleUtilityButton(button,DeckersPalette.PURPLE);button.addActionListener(e -> {try{if(working)throw new IllegalStateException("Wait for the current operation.");action.call();}catch(Exception ex){error(ex);}});panel.add(button);return button;}
 
     private <T> void run(String message,java.util.concurrent.Callable<T> task,java.util.function.Consumer<T> done){if(working)return;working=true;int generation=sessionGeneration;status.setText(message);new SwingWorker<T,Void>(){protected T doInBackground()throws Exception{return task.call();}protected void done(){working=false;if(generation!=sessionGeneration)return;try{done.accept(get());}catch(Exception ex){error(ex.getCause()==null?ex:ex.getCause());}finally{if(previewPending){previewPending=false;refresh.restart();}}}}.execute();}
 
@@ -1047,13 +1673,13 @@ final class BusinessCardsPanel extends JPanel {
 
     private final class LayerModel extends AbstractTableModel{
 
-        final String[] names={"Text / {{field}}","X mm","Y mm","Width mm","Height mm","Font pt","Bold","Colour","Font family","Rotation °","Fill","Stroke","Type"};
+        final String[] names={"Text / {{field}}","X in","Y in","Width in","Height in","Font pt","Bold","Colour","Font family","Rotation °","Fill","Stroke","Type"};
 
         public int getRowCount(){return currentPage().objects.size();}public int getColumnCount(){return names.length;}public String getColumnName(int c){return names[c];}public boolean isCellEditable(int r,int c){return c!=12;}
 
-        public Object getValueAt(int r,int c){var e=currentPage().objects.get(r);return switch(c){case 0->e.text;case 1->e.x;case 2->e.y;case 3->e.width;case 4->e.height;case 5->e.fontSize;case 6->e.bold;case 7->e.color;case 8->e.font;case 9->e.rotation;case 10->e.fill;case 11->e.stroke;default->e.sourceTable.isBlank()?e.type:"CELL R"+(e.sourceRow+1)+" C"+(e.sourceColumn+1);};}
+        public Object getValueAt(int r,int c){var e=currentPage().objects.get(r);return switch(c){case 0->e.text;case 1->e.x/25.4;case 2->e.y/25.4;case 3->e.width/25.4;case 4->e.height/25.4;case 5->e.fontSize;case 6->e.bold;case 7->e.color;case 8->e.font;case 9->e.rotation;case 10->e.fill;case 11->e.stroke;default->e.sourceTable.isBlank()?e.type:"CELL R"+(e.sourceRow+1)+" C"+(e.sourceColumn+1);};}
 
-        public void setValueAt(Object value,int r,int c){Publication old=document.copy();try{var e=currentPage().objects.get(r);String s=value.toString();switch(c){case 0->e.text=s;case 1->e.x=Double.parseDouble(s);case 2->e.y=Double.parseDouble(s);case 3->e.width=Double.parseDouble(s);case 4->e.height=Double.parseDouble(s);case 5->e.fontSize=Double.parseDouble(s);case 6->e.bold=Boolean.parseBoolean(s);case 7->e.color=s;case 8->e.font=s;case 9->e.rotation=Double.parseDouble(s);case 10->e.fill=s;case 11->e.stroke=s;}document.validate();changed();}catch(Exception ex){document=old;fireTableDataChanged();error(ex);}}
+        public void setValueAt(Object value,int r,int c){Publication old=document.copy();try{var e=currentPage().objects.get(r);String s=value.toString();switch(c){case 0->e.text=s;case 1->e.x=Double.parseDouble(s)*25.4;case 2->e.y=Double.parseDouble(s)*25.4;case 3->e.width=Double.parseDouble(s)*25.4;case 4->e.height=Double.parseDouble(s)*25.4;case 5->e.fontSize=Double.parseDouble(s);case 6->e.bold=Boolean.parseBoolean(s);case 7->e.color=s;case 8->e.font=s;case 9->e.rotation=Double.parseDouble(s);case 10->e.fill=s;case 11->e.stroke=s;}document.validate();changed();}catch(Exception ex){document=old;fireTableDataChanged();error(ex);}}
 
     }
 

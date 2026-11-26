@@ -1,0 +1,10 @@
+{
+  "name": "smartdrive",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.js",
+    "branding": "node src/branding.js",
+    "test": "node --test"
+  }
+}

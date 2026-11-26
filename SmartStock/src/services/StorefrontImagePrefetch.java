@@ -23,6 +23,10 @@ final class StorefrontImagePrefetch {
                 var manifest=item.getAsJsonObject("_imageManifest");String hash=StorefrontService.text(manifest,"sha256");
                 if(hash.matches("[a-f0-9]{64}"))unique.putIfAbsent(hash,manifest.deepCopy());
             }
+            for(var manifest:ServiceProductPhotos.manifests(snapshot)){
+                String hash=StorefrontService.text(manifest,"sha256");
+                if(hash.matches("[a-f0-9]{64}"))unique.putIfAbsent(hash,manifest.deepCopy());
+            }
             if(snapshot.has("projects"))for(var project:snapshot.getAsJsonArray("projects")){
                 var item=project.getAsJsonObject();
                 if(item.has("_coverManifest")){

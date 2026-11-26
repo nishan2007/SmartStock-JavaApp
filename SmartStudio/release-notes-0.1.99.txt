@@ -1,0 +1,3 @@
+SmartStudio 0.1.99
+
+Includes completed SmartStudio workspace changes and the SmartStock 1.1.108 client dependency. Retains table editing, bill-book rendering and selected-printer margin/Canon Windows print corrections from 0.1.98. Model weights remain separate and existing profile models are preserved. Physical printer and iPhone camera checks remain separate.

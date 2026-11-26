@@ -1,0 +1,5 @@
+SmartStock 1.1.124
+
+Fix SmartStudio reporting "This credential is only for SmartStudio" when opening Badge Cards, Business Cards, Labels, or Bill Books. Allow the authenticated SmartStudio requests for shared design selection, shared fonts, and processing progress. Existing user permission checks remain enforced.
+
+Update the store server first. SmartStudio does not need an update for this fix.

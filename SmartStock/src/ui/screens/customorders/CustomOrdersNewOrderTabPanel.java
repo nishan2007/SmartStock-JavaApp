@@ -61,6 +61,7 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
     DefaultTableModel printAddonModel;
     JTable printAddonTable;
     final JTextField lineQuantityField;
+    final CustomOrderItemPictures itemPictures = new CustomOrderItemPictures();
     final CustomOrderSizeSetEditor sizeSetEditor = new CustomOrderSizeSetEditor();
     final JTextField lineDiscountPercentField;
     final JTextField lineDiscountReasonField;
@@ -296,7 +297,9 @@ class CustomOrdersNewOrderTabPanel extends JPanel {
         leftGbc.gridy = 5;
         leftColumn.add(areaCalculationLabel, leftGbc);
         areaLineComponents.add(areaCalculationLabel);
-        addColumnBottomGlue(leftColumn, leftGbc, 6);
+        leftGbc.gridx=0;leftGbc.gridy=6;leftGbc.gridwidth=2;
+        leftGbc.weightx=1;leftGbc.weighty=1;leftGbc.fill=GridBagConstraints.BOTH;
+        leftColumn.add(itemPictures,leftGbc);
 
         addField(rightColumn, rightGbc, 0, "Design Placement:", buildDesignPlacementPanel(addPlacementButton));
         JScrollPane notesScroll = new JScrollPane(lineNotesArea);

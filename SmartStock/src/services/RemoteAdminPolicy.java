@@ -8,11 +8,13 @@ import java.util.Set;
 /** Shared deny-by-default policy for operations that require physical store presence. */
 public final class RemoteAdminPolicy {
     private static final Set<String> BLOCKED_PREFIXES = Set.of(
-            "/v1/loyalty/", "/v1/cash/", "/v1/cash-drawers/", "/v1/held-carts/",
+            "/v1/store-keys/",
+            "/v1/sales-tasks/", "/v1/loyalty/", "/v1/cash/", "/v1/cash-drawers/", "/v1/held-carts/", "/v1/custom-orders/exchange/",
             "/v1/time-clock/punch", "/v1/employees/badge-",
             "/v1/workstation/", "/v1/sync/run", "/v1/sync/resolve", "/v1/sync/billing-period"
     );
     private static final Set<String> BLOCKED_EXACT = Set.of(
+            StudioPdfOcrService.PATH, StudioPdfOcrService.STATUS_PATH,
             "/v1/web/mutation", "/v1/storefront/mutation", "/v1/sales/checkout", "/v1/sales/refund", "/v1/inventory/receive",
             "/v1/transfers/receive", "/v1/cloud/storage/upload"
     );
@@ -42,7 +44,10 @@ public final class RemoteAdminPolicy {
 
     public static boolean isMutation(String path) {
         if (path == null) return false;
-        if(path.equals("/v1/sync/billing-period"))return true;
+        if(Set.of("/v1/security/mobile-devices/issue","/v1/security/mobile-devices/repair","/v1/security/mobile-devices/restore").contains(path))return true;
+        if(path.equals("/v1/products/merge"))return true;
+        if(path.equals("/v1/phone-minutes/reverse"))return true;
+        if(path.equals("/v1/sync/billing-period")||path.equals("/v1/accounting/balance-sheet/workspace"))return true;
         if(Set.of("/v1/stock-ledger/post","/v1/stock-ledger/reverse","/v1/stock-ledger/account-transfer").contains(path))return true;
         return path.endsWith("/update") || path.endsWith("/save") || path.endsWith("/create")
                 || path.endsWith("/assign") || path.endsWith("/unassign") || path.endsWith("/adjust")

@@ -13,11 +13,29 @@ import java.util.UUID;
 public final class QuotationInvoiceService {
     private static final Gson GSON=LanJson.create();
     private QuotationInvoiceService(){}
+    public static QuotationInvoiceViewService.CustomerOption createCustomer(String name, String phone, String key)
+            throws Exception {
+        JsonObject body = new JsonObject();
+        body.addProperty("name", name);
+        body.addProperty("phone", phone);
+        JsonObject response = LanApiClient.quotationMutation("CREATE_CUSTOMER", body, key);
+        var customer = GSON.fromJson(response.get("customer"), QuotationInvoiceViewService.CustomerOption.class);
+        if (customer == null || customer.customerId() <= 0) {
+            throw new SQLException("The server returned no customer account.");
+        }
+        return customer;
+    }
     public static QuotationResult createQuotation(int customerId,LocalDate validUntil,LocalDate productionDueDate,String notes,List<QuotationLineInput>lines)throws SQLException{JsonObject b=base(customerId,validUntil,productionDueDate,notes,lines);return result("CREATE",b,"quotation",QuotationResult.class);}
     public static QuotationResult createQuotation(int customerId,LocalDate validUntil,LocalDate productionDueDate,String notes,List<QuotationLineInput>lines,boolean applyCustomerDiscount)throws SQLException{JsonObject b=base(customerId,validUntil,productionDueDate,notes,lines);b.addProperty("applyCustomerDiscount",applyCustomerDiscount);return result("CREATE",b,"quotation",QuotationResult.class);}
     public static void issueQuotation(long id)throws SQLException{mutate("ISSUE",id,null);}
     public static QuotationResult updateDraftQuotation(long id,int customerId,LocalDate validUntil,LocalDate productionDueDate,String notes,List<QuotationLineInput>lines)throws SQLException{JsonObject b=base(customerId,validUntil,productionDueDate,notes,lines);b.addProperty("quotationId",id);return result("UPDATE",b,"quotation",QuotationResult.class);}
     public static QuotationResult updateDraftQuotation(long id,int customerId,LocalDate validUntil,LocalDate productionDueDate,String notes,List<QuotationLineInput>lines,boolean applyCustomerDiscount)throws SQLException{JsonObject b=base(customerId,validUntil,productionDueDate,notes,lines);b.addProperty("quotationId",id);b.addProperty("applyCustomerDiscount",applyCustomerDiscount);return result("UPDATE",b,"quotation",QuotationResult.class);}
+    public static void cancelInvoice(long id,String reason)throws SQLException{cancelDocument("CANCEL_INVOICE","invoiceId",id,reason,null);}
+    public static void cancelDelivery(long id,String reason)throws SQLException{cancelDocument("CANCEL_DELIVERY","deliveryEventId",id,reason,null);}
+    public static void cancelInvoicePayment(long id,String reason,String reference)throws SQLException{cancelDocument("CANCEL_PAYMENT","transactionId",id,reason,reference);}
+    private static void cancelDocument(String action,String field,long id,String reason,String reference)throws SQLException{
+        JsonObject b=new JsonObject();b.addProperty(field,id);b.addProperty("reason",reason);b.addProperty("reference",reference);mutate(action,null,b);
+    }
     public static void cancelQuotation(long id,String reason)throws SQLException{JsonObject b=new JsonObject();b.addProperty("quotationId",id);b.addProperty("reason",reason);mutate("CANCEL",null,b);}
     public static InvoiceResult acceptQuotation(long id)throws SQLException{JsonObject b=new JsonObject();b.addProperty("quotationId",id);return result("ACCEPT",b,"invoice",InvoiceResult.class);}
     public static PaymentReceiptRef recordPayment(long id,BigDecimal amount,String method,String reference)throws SQLException{return recordPayment(id,amount,method,reference,null,null);}

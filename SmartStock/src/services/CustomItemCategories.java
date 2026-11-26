@@ -34,7 +34,9 @@ public final class CustomItemCategories {
         JsonArray categories=list(c);
         for(var entry:categories){var category=entry.getAsJsonObject();category.remove("revision");category.add("items",rows(c,"""
             SELECT i.custom_item_id AS id,i.item_name AS name,COALESCE(i.description,'') AS description,
-                   COALESCE(i.size,'') AS size,COALESCE(i.color,'') AS color
+                   COALESCE(i.size,'') AS size,COALESCE(i.color,'') AS color,COALESCE(i.image_url,'') AS "_imageReference",i.additional_image_urls::text AS "_galleryReferences",
+                   CASE WHEN i.pricing_type='FIXED' THEN CASE WHEN i.has_variants THEN (SELECT MIN(v.fixed_price) FROM custom_order_item_variants v WHERE v.custom_item_id=i.custom_item_id AND v.is_active AND v.fixed_price>=0) ELSE i.fixed_price END END AS price,i.has_variants AS "priceFrom",
+                   COALESCE((SELECT t.name FROM item_types t WHERE t.item_type_id=i.item_type_id),'') AS "itemType"
             FROM storefront.custom_item_category_assignments a JOIN custom_order_items i ON i.custom_item_id=a.custom_item_id
             WHERE a.category_id=? AND i.is_active AND NOT i.is_archived
               AND NOT i.is_shirt AND NOT i.is_sublimation AND NOT i.is_business_cards AND NOT i.is_large_format_printing AND NOT i.is_laser

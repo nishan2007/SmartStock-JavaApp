@@ -20,7 +20,7 @@ public final class PublicationFiles {
     p.assets.clear();
     p.assetFiles.clear();
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-    byte[] json = Publication.JSON.toJson(p).getBytes(StandardCharsets.UTF_8);
+    byte[] json = PublicationPreview.documentJson(p, original);
     long expanded = json.length;
     if (expanded > MAX_BYTES) throw new IOException("Project document exceeds 48 MiB.");
     try (ZipOutputStream zip = new ZipOutputStream(bytes)) {

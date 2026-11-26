@@ -41,7 +41,7 @@ class InventoryLookupPickerArchitectureTest {
         assertTrue(web.contains("selectedCategoryId(p.categoryId)"));
         assertTrue(web.contains("class=\"lookup-options secondary\""));
         assertTrue(web.contains("function cachedBootstrap()"));
-        assertTrue(web.contains("loadBootstrap().catch(()=>{})"));
+        assertTrue(web.contains("loadBootstrap().then(filterChoices).catch(()=>{})"));
         assertTrue(web.contains("rememberSavedLookups(f);if(saveAndPrint)"));
         assertTrue(web.contains("note('Item saved successfully.')"));
         assertFalse(web.contains("bootstrap=await call('/bootstrap');note('Item saved successfully.')"));

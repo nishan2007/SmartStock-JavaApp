@@ -84,6 +84,13 @@ public final class CompanyBackupService {
         sql.append("SET LOCAL lock_timeout = '10s';\n");
         sql.append("SET LOCAL statement_timeout = '5min';\n\n");
 
+        // Only the physical-server restore workflow runs this owner-level SQL.
+        // Normal accounting requests cannot alter or truncate the history tables.
+        for(TableInfo table:tables) {
+            if(table.name().equals("balance_sheet_workspace_events")||table.name().equals("balance_sheet_workspace_snapshots"))
+                sql.append("ALTER TABLE ").append(table.qualifiedName()).append(" DISABLE TRIGGER USER;\n");
+        }
+
         if (!tables.isEmpty()) {
             sql.append("TRUNCATE TABLE ");
             for (int i = 0; i < tables.size(); i++) {
@@ -109,6 +116,10 @@ public final class CompanyBackupService {
             appendSequenceResets(table, sql);
         }
 
+        for(TableInfo table:tables) {
+            if(table.name().equals("balance_sheet_workspace_events")||table.name().equals("balance_sheet_workspace_snapshots"))
+                sql.append("ALTER TABLE ").append(table.qualifiedName()).append(" ENABLE TRIGGER USER;\n");
+        }
         sql.append("\nCOMMIT;\n");
         return new BackupData(sql.toString(),tables.size(),rowCount,assets);
     }
@@ -163,6 +174,8 @@ public final class CompanyBackupService {
         String lower = tableName == null ? "" : tableName.toLowerCase(Locale.ROOT);
         return !lower.startsWith("sync_")
                 && !lower.startsWith("mobile_item_web_")
+                && !lower.startsWith("mobile_device_")
+                && !lower.equals("mobile_managed_devices")
                 && !lower.equals("app_releases")
                 && !lower.equals("spatial_ref_sys")
                 && !lower.equals("schema_migrations");

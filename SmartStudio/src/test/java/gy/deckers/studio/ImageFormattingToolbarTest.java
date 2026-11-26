@@ -23,8 +23,8 @@ class ImageFormattingToolbarTest{
   SwingUtilities.invokeAndWait(()->{
    var selected=new AtomicReference<>(new ImageFormattingToolbar.Picture("one",50.8,25.4));var count=new AtomicInteger();
    var toolbar=new ImageFormattingToolbar(selected::get,size->{count.incrementAndGet();selected.set(new ImageFormattingToolbar.Picture(selected.get().key(),size.width(),size.height()));});
-   assertTrue(toolbar.locked.isSelected());assertEquals(50.8,toolbar.width.getValue());assertEquals(0,count.get());
-   toolbar.width.setValue(101.6);assertEquals(50.8,selected.get().height());assertEquals(50.8,toolbar.height.getValue());
+   assertTrue(toolbar.locked.isSelected());assertEquals(2.,toolbar.width.getValue());assertEquals(0,count.get());
+   toolbar.width.setValue(4.);assertEquals(50.8,selected.get().height());assertEquals(2.,toolbar.height.getValue());
    toolbar.units.setSelectedIndex(1);assertEquals(4.,toolbar.width.getValue());assertEquals(2.,toolbar.height.getValue());assertEquals(1,count.get());
    toolbar.locked.doClick();toolbar.height.setValue(3.);assertEquals(101.6,selected.get().width());assertEquals(76.2,selected.get().height(),.00001);
    selected.set(new ImageFormattingToolbar.Picture("two",30,60));toolbar.refresh();assertTrue(toolbar.locked.isSelected());
@@ -44,7 +44,7 @@ class ImageFormattingToolbarTest{
     publishing.PublicationImport.addImage(p,p.pages.get(0),new java.awt.image.BufferedImage(80,40,1),3,4,40,20);
     var before=p.pages.get(0).objects.get(0);String asset=before.asset,bytes=p.assets.get(asset);
     var tf=BusinessCardsPanel.class.getDeclaredField("layerTable");tf.setAccessible(true);var table=(JTable)tf.get(panel);((javax.swing.table.AbstractTableModel)table.getModel()).fireTableDataChanged();table.setRowSelectionInterval(0,0);
-    var toolbar=find(panel);assertNotNull(toolbar);assertEquals(40.,toolbar.width.getValue());toolbar.width.setValue(60.);
+    var toolbar=find(panel);assertNotNull(toolbar);assertEquals(1,toolbar.units.getSelectedIndex());toolbar.units.setSelectedIndex(0);assertEquals(40.,toolbar.width.getValue());toolbar.width.setValue(60.);
     var after=panel.output().pages.get(0).objects.get(0);assertEquals(60,after.width);assertEquals(30,after.height);assertEquals(3,after.x);assertEquals(4,after.y);assertEquals(asset,after.asset);assertEquals(bytes,p.assets.get(asset));
     toolbar.locked.doClick();toolbar.height.setValue(25.);assertEquals(60,panel.output().pages.get(0).objects.get(0).width);assertEquals(25,panel.output().pages.get(0).objects.get(0).height);
    }

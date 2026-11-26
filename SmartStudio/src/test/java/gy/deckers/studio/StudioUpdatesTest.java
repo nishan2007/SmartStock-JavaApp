@@ -33,4 +33,27 @@ class StudioUpdatesTest {
             assertThrows(java.io.IOException.class,()->StudioUpdates.verifyInstaller(path,release));
         }finally{java.nio.file.Files.deleteIfExists(path);}
     }
+    @Test void handoffWaitsForDesktopExitBeforeRunningSetup()throws Exception{
+        org.junit.jupiter.api.Assumptions.assumeTrue(System.getProperty("os.name").startsWith("Windows"));
+        var directory=java.nio.file.Files.createTempDirectory("studio handoff ' test ");
+        var installer=directory.resolve("setup.cmd");var marker=directory.resolve("started.txt");
+        java.nio.file.Files.writeString(installer,"@echo off\r\necho started>\""+marker+"\"\r\n");
+        var desktop=new ProcessBuilder("powershell.exe","-NoProfile","-NonInteractive","-WindowStyle","Hidden","-Command","Start-Sleep -Seconds 4").start();
+        Process helper=null;
+        try{
+            helper=new ProcessBuilder(StudioUpdates.handoffCommand(installer,directory,desktop.pid())).redirectErrorStream(true).redirectOutput(directory.resolve("helper.log").toFile()).start();
+            assertFalse(desktop.waitFor(500,java.util.concurrent.TimeUnit.MILLISECONDS));assertFalse(java.nio.file.Files.exists(marker),"Setup must wait for the desktop");
+            assertTrue(helper.waitFor(20,java.util.concurrent.TimeUnit.SECONDS));assertEquals(0,helper.exitValue(),java.nio.file.Files.readString(directory.resolve("helper.log")));
+            assertFalse(desktop.isAlive());assertTrue(java.nio.file.Files.exists(marker));
+        }finally{if(desktop.isAlive())desktop.destroyForcibly();if(helper!=null&&helper.isAlive())helper.destroyForcibly();}
+    }
+    @Test void handoffQuotesPathsAndNeverForcesTheDesktopClosed(){
+        var path=java.nio.file.Path.of("C:/Studio's folder/setup.exe");var root=java.nio.file.Path.of("C:/Studio's folder");
+        var command=StudioUpdates.handoffCommand(path,root,12345);
+        String script=new String(java.util.Base64.getDecoder().decode(command.get(command.size()-1)),java.nio.charset.StandardCharsets.UTF_16LE);
+        assertTrue(script.contains("Studio''s folder"));assertTrue(script.contains("WaitForExit(120000)"));
+        assertTrue(script.indexOf("WaitForExit")<script.indexOf("& '"));assertFalse(script.contains("Stop-Process"));assertFalse(script.contains("/RESTARTAPPLICATIONS"));
+        assertThrows(IllegalArgumentException.class,()->StudioUpdates.handoffCommand(path,root,0));
+    }
+
 }

@@ -1,0 +1,68 @@
+:root { color-scheme: light; font: 16px system-ui, sans-serif; color: #252029; background: #f7f5f3; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; }
+header { display: flex; gap: .9rem; align-items: center; padding: .85rem max(1rem, calc((100vw - 72rem) / 2)); background: #8d1028; color: white; }
+header span { color: #ffe3a4; white-space: nowrap; }
+header button { margin-left: auto; border-color: #fff; }
+main { max-width: 84rem; margin: auto; padding: 1.5rem; }
+h1 { font-size: 2rem; letter-spacing: -.04em; margin: 0 0 .4rem; }
+h2 { font-size: 1.2rem; letter-spacing: -.02em; }
+.muted { color: #625a60; margin: .25rem 0 1.4rem; }
+button { font: inherit; cursor: pointer; }
+button, input, select { border: 1px solid #d6cbd0; border-radius: .35rem; padding: .65rem .8rem; font: inherit; }
+button { background: #fff; color: #801427; }
+button:disabled { cursor: wait; opacity: .65; }
+button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid #a66d00; outline-offset: 2px; }
+.account { max-width: 60rem; min-height: 31rem; margin: 3rem auto; display: grid; grid-template-columns: .95fr 1.05fr; border: 1px solid #ddd2d4; border-radius: .8rem; overflow: hidden; background: #fffdfb; }
+.brand-panel { background: #820d26; color: white; padding: 3.5rem 2rem; text-align: center; border-bottom: .35rem solid #e7bd5b; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.brand-icon { width: 8rem; height: 8rem; object-fit: contain; margin-bottom: 1rem; }
+.brand-panel h1 { font-size: 2.5rem; }
+.suite-label { color: #f3cc69; font-size: 1.6rem; margin: .3rem 0 1.8rem; }
+.brand-panel p:last-child { max-width: 17rem; border-top: 1px solid #d7ac57; padding-top: 1.4rem; line-height: 1.6; }
+.account-form { padding: 3rem 2.5rem; align-self: center; }
+.account-form h2 { font-size: 1.65rem; margin: 0 0 .5rem; }
+.account-form form > button { width: 100%; margin-top: .8rem; font-weight: 600; }
+.workspace { display: grid; grid-template-columns: 11rem minmax(0,1fr); min-height: 70vh; border: 1px solid #ded5d8; background: #fff; }
+.workspace-nav { border-right: 1px solid #e5dce0; padding: 1.5rem .75rem; background: #fdfaf7; }
+.workspace-nav button { display: block; width: 100%; text-align: left; border: none; margin-bottom: .4rem; padding: .85rem; font-weight: 600; }
+.workspace-nav button[aria-pressed=true] { background: #faecd8; color: #a20d29; }
+#management, #fileBrowser { padding: 1.75rem; min-width: 0; }
+#management { overflow-wrap: anywhere; }
+#managementNav { display: flex; overflow-x: auto; border-bottom: 1px solid #d9ced3; gap: .35rem; margin: 1.3rem 0 1.7rem; }
+#managementNav button { border: 0; border-radius: .3rem .3rem 0 0; padding: .8rem 1rem; color: #342d33; }
+#managementNav button[aria-pressed=true] { color: #a20d29; border-bottom: 3px solid #a20d29; background: #fcf1e3; font-weight: 600; }
+#management section > button { margin: .2rem .35rem .5rem 0; }
+#health p, #activity p, #backupVersions p, #selectedFolders p, #scannerControls p { border-bottom: 1px solid #eee6e8; padding: .8rem .2rem; margin: 0; line-height: 1.6; }
+label { display: block; margin: 1rem 0; }
+input { display: block; width: 100%; font: inherit; margin-top: .3rem; }
+form button, #activate { color: white; background: #8d1028; }
+#notice:empty { display: none; }
+#notice { color: #79132a; }
+#crumbs { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+.files { display: grid; grid-template-columns: minmax(16rem, 2fr) minmax(16rem, 1fr); gap: 1rem; }
+ul { list-style: none; padding: 0; margin: 0; background: white; border: 1px solid #ded5d8; }
+li + li { border-top: 1px solid #eee6e8; }
+li button { width: 100%; border: 0; padding: .85rem; text-align: left; overflow-wrap: anywhere; }
+.fileDetails { display: block; margin-top: .3rem; font-size: .8rem; color: #655861; line-height: 1.5; }
+li button:hover, li button[aria-pressed=true] { background: #f6e5e9; }
+#preview { background: white; border: 1px solid #ded5d8; padding: 1rem; overflow-wrap: anywhere; }
+#preview h2 { margin-top: 0; }
+#preview img, #qr { max-width: 100%; }
+@media (max-width: 650px) {
+    .account, .files { grid-template-columns: 1fr; }
+    .account { margin: 1rem auto; }
+    .brand-panel, .account-form { padding: 1.25rem; }
+    .files:has(#preview:not([hidden])) ul { display: none; }
+    main { padding: .7rem; }
+    header { padding: .65rem .8rem; gap: .5rem; }
+    header span { font-size: .8rem; }
+    .workspace { display: block; }
+    .workspace-nav { display: flex; gap: .5rem; border-right: 0; border-bottom: 1px solid #e5dce0; padding: .6rem; }
+    .workspace-nav button { width: auto; margin: 0; }
+    #management, #fileBrowser { padding: 1rem; }
+    .brand-panel h1 { font-size: 2rem; }
+    .brand-icon { width: 5rem; height: 5rem; margin-bottom: .5rem; }
+    .suite-label { margin-bottom: .7rem; font-size: 1.2rem; }
+    .brand-panel p:last-child { display: none; }
+}

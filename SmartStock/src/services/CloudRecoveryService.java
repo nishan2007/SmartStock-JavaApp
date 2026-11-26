@@ -199,6 +199,7 @@ final class CloudRecoveryService {
 
     static int restoreRows(Connection target, String table, JsonArray rows) throws SQLException {
         if (!tableExists(target, table)) return 0;
+        if ("customer_accounts".equals(table)) rows = translateLegacyCustomerClassification(target, rows);
         return insertRows(target, table, writableColumnTypes(target, table), rows);
     }
 
@@ -296,8 +297,30 @@ final class CloudRecoveryService {
         if ("users".equals(table)) {
             rows = translateUserRoleIds(target, rows, references);
         }
+        if ("customer_accounts".equals(table)) rows = translateLegacyCustomerClassification(target, rows);
         rows = translateCatalogIds(table, rows, references, false);
         return insertRows(target, table, targetTypes, rows);
+    }
+
+    /** Translate pre-upgrade recovery evidence once; the removed flag is never stored. */
+    static JsonArray translateLegacyCustomerClassification(Connection target, JsonArray rows) throws SQLException {
+        JsonArray translated = new JsonArray();
+        Integer businessType = null;
+        for (JsonElement element : rows) {
+            JsonObject row = element.getAsJsonObject().deepCopy();
+            if (row.has("is_business") && !row.get("is_business").isJsonNull() && row.get("is_business").getAsBoolean()) {
+                if (businessType == null) {
+                    try (PreparedStatement ps = target.prepareStatement("SELECT customer_type_id FROM customer_types WHERE LOWER(BTRIM(name)) IN ('business','businesses') ORDER BY is_active DESC,customer_type_id LIMIT 1"); ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next()) throw new SQLException("Restore customer types before legacy business accounts.");
+                        businessType = rs.getInt(1);
+                    }
+                }
+                row.addProperty("customer_type_id", businessType);
+            }
+            row.remove("is_business");
+            translated.add(row);
+        }
+        return translated;
     }
 
     private static void rememberItemTypes(JsonArray rows, RecoveryReferences references)

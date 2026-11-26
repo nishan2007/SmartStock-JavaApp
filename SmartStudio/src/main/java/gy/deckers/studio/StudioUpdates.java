@@ -81,7 +81,24 @@ final class StudioUpdates {
         Path root=jar.getParent()==null?null:jar.getParent().getParent();
         if(!Files.isRegularFile(jar)||root==null||!Files.isRegularFile(root.resolve("SmartStudio.exe")))
             throw new IOException("Install the desktop version of SmartStudio before using in-app installation.");
-        // Inno Setup handles replacement, existing uninstall registration and shortcut preservation.
-        new ProcessBuilder(installer.toString(),"/SILENT","/CLOSEAPPLICATIONS","/RESTARTAPPLICATIONS","/REOPENSTUDIO","/DIR="+root).start();
+        // A detached Windows process waits for this exact desktop process before
+        // Inno's Restart Manager scans files. Starting setup directly races JVM shutdown.
+        Path log=installer.resolveSibling("smartstudio-update-handoff.log");
+        new ProcessBuilder(handoffCommand(installer,root,ProcessHandle.current().pid()))
+                .redirectErrorStream(true).redirectOutput(ProcessBuilder.Redirect.appendTo(log.toFile())).start();
     }
+    static java.util.List<String> handoffCommand(Path installer,Path root,long pid){
+        String encoded=java.util.Base64.getEncoder().encodeToString(handoffScript(installer,root,pid).getBytes(java.nio.charset.StandardCharsets.UTF_16LE));
+        return java.util.List.of("powershell.exe","-NoProfile","-NonInteractive","-WindowStyle","Hidden","-EncodedCommand",encoded);
+    }
+    private static String literal(String text){return "'"+text.replace("'","''")+"'";}
+    static String handoffScript(Path installer,Path root,long pid){
+        if(pid<=0)throw new IllegalArgumentException("Invalid desktop process.");
+        return "$ErrorActionPreference='Stop'; "
+                +"$desktop=Get-Process -Id "+pid+" -ErrorAction SilentlyContinue; "
+                +"if($null -ne $desktop){if(!$desktop.WaitForExit(120000)){throw 'SmartStudio did not close. Close it before retrying the update.'}}; "
+                +"& "+literal(installer.toAbsolutePath().toString())+" '/SILENT' '/CLOSEAPPLICATIONS' '/REOPENSTUDIO' "+literal("/DIR="+root.toAbsolutePath())+"; "
+                +"if($LASTEXITCODE -ne 0){throw ('SmartStudio setup failed: '+$LASTEXITCODE)}";
+    }
+
 }

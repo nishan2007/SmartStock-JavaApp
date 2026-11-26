@@ -1,0 +1,7 @@
+SmartStock 1.1.139 - Deckers Payroll and cumulative quick update
+
+Adds Payroll inside the unified Deckers workspace, with device approval and Payroll Dashboard permission enforcement, store and pay-period selectors, employee hours/pay/balances and exact payment recording. Current store defaults after a verified LAN check; elsewhere defaults to All stores. Payments reuse desktop accounting and include retry/stale-balance protection.
+
+Moves app headings into the purple shared header. Improves iPhone saved-password submission handling. Adds employee photo framing with overlapping badge/avatar guides, preserved originals and Reframe. Includes saved transfer drafts, clearer work queue failure messages, and shared publication image reuse for SmartStudio.
+
+Windows update only. Install on the store server before registers. Publishing does not install or restart applications. Real iPhone, LAN certificate, database/service and physical printer/drawer/NFC acceptance remain separate deployment checks. Model files remain separate and are preserved.

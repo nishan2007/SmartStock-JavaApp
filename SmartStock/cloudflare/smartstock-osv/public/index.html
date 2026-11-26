@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Orealla Riders Permit</title>
+  <link rel="stylesheet" href="/permit.css">
+  <script src="/permit.js" type="module"></script>
+</head>
+<body>
+  <main>
+    <header class="permit-header">
+      <div class="permit-intro">
+        <div class="council-brand">
+          <span class="council-mark"><img src="/council-mark.png" alt="" width="1077" height="616"></span>
+          <p class="council">Orealla / Siparuta<br>Village Council</p>
+        </div>
+        <h1>Riders Permit</h1>
+        <p class="intro-text">Enter the rider’s details and upload a portrait for their permit.</p>
+      </div>
+      <div class="permit-art" aria-hidden="true">
+        <img src="/permit-feathers.png" alt="" width="451" height="688" fetchpriority="high">
+      </div>
+    </header>
+    <div class="body">
+      <p id="status" role="status" aria-live="polite"></p>
+      <form id="access" hidden>
+        <label for="code">Organization access code</label>
+        <input id="code" type="password" required minlength="8" maxlength="128" autocomplete="off">
+        <div id="setup" hidden>
+          <label for="confirm">Confirm access code</label>
+          <input id="confirm" type="password" minlength="8" maxlength="128" autocomplete="off">
+        </div>
+        <button>Continue</button>
+      </form>
+      <form id="permit" hidden>
+        <fieldset class="rider-details">
+          <legend>Rider details</legend>
+          <div id="fields"></div>
+        </fieldset>
+        <fieldset class="portrait">
+          <legend>Portrait photo</legend>
+          <label for="photo">Upload a photo</label>
+          <input id="photo" type="file" accept="image/*">
+          <small>Choose a clear, front-facing portrait.</small>
+          <p id="photo-status" role="status"></p>
+          <div id="portrait-editor" hidden>
+            <div class="photo-preview">
+              <canvas id="portrait" role="img" aria-label="Portrait preview in the printed photo area"></canvas>
+              <small>Drag the photo to position it, or use the sliders.</small>
+            </div>
+            <div class="photo-controls">
+              <div class="photo-actions">
+                <button id="remove-background" type="button">Remove background</button>
+                <button id="restore-background" class="secondary" type="button" disabled>Restore background</button>
+              </div>
+              <label for="zoom">Zoom</label>
+              <input id="zoom" type="range" min="0.1" max="4" step="0.01" value="1">
+              <label for="offsetX">Horizontal position</label>
+              <input id="offsetX" type="range" min="-1" max="1" step="0.01" value="0">
+              <label for="offsetY">Vertical position</label>
+              <input id="offsetY" type="range" min="-1" max="1" step="0.01" value="0">
+              <label for="brightness">Brightness</label>
+              <input id="brightness" type="range" min="-100" max="100" value="0">
+              <label for="contrast">Contrast</label>
+              <input id="contrast" type="range" min="-100" max="100" value="0">
+              <label for="saturation">Saturation</label>
+              <input id="saturation" type="range" min="-100" max="100" value="0">
+              <button id="reset-photo-edits" class="secondary" type="button">Reset position and adjustments</button>
+            </div>
+          </div>
+        </fieldset>
+        <button id="save">Save permit</button>
+      </form>
+      <section id="receipt" hidden aria-labelledby="receipt-heading">
+        <h2 id="receipt-heading">Permit saved</h2>
+        <p class="number" id="number"></p>
+        <p>This number is assigned to the QR code on the back of the card.</p>
+        <button id="another" type="button">Add another rider</button>
+      </section>
+      <button id="sign-in" class="secondary" type="button" hidden>Re-enter access code</button>
+    </div>
+  </main>
+</body>
+</html>

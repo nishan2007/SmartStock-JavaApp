@@ -21,8 +21,9 @@ class PriceTagPrintingQuantityArchitectureTest {
         assertTrue(screen.contains("\"Brand\""));
         assertTrue(screen.contains("PriceTagItem(String.valueOf(cart.getValueAt(r,0))"));
         assertTrue(service.contains("current_quantity"));
-        assertTrue(service.contains("COALESCE(coi.quantity_on_hand,0)"));
-        assertTrue(service.contains("COALESCE(v.quantity_on_hand,0)"));
+        assertTrue(service.contains("custom_stock_value(coi.custom_item_id,NULL,__CUSTOM_STORE__,'quantity_on_hand')"));
+        assertTrue(service.contains("custom_stock_value(v.custom_item_id,v.custom_variant_id,__CUSTOM_STORE__,'quantity_on_hand')"));
+        assertTrue(service.contains("Integer.toString(locationId)"));
         assertTrue(service.contains("NULLIF(BTRIM(v.size),'')"));
         assertTrue(service.contains("NULLIF(BTRIM(v.color),'')"));
         assertTrue(service.contains("COALESCE(v.brand_id,coi.brand_id)"));

@@ -1,0 +1,9 @@
+SmartStock 1.1.83 (build 101083) - Windows quick update
+
+Sales Tasks: guided workspace, customer lookup, calendar/time selectors and ASAP, inventory prices, provisional quantities, attachment actions, advances, final pricing and pickup. Preserves company branding and light/dark themes. Pending service work is also available in Orders Work Queue.
+Balance Sheet: browser workspace with existing device activation, Balance Sheet permission, live editing, immutable history/snapshots and comparison, plus phone home-screen icons.
+Product Photo Studio: rejected photos move to a separate list; review continues to the next pending photo.
+Includes completed existing-customer retry/phone-ownership corrections, time-clock/overseas web separation, current order/editor web assets and shirt/polo preview fixes.
+Includes the current shared publication/font/rendering fixes used by SmartStudio.
+
+Quick update only. Update the store server first, then registers. The new Orders-screen redesign is still in progress and is excluded. AI models remain separately hosted. No model weights are included.

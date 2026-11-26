@@ -30,16 +30,32 @@ final class StudioPhotoQueuePanel extends JPanel {
     private int generation,selectionVersion;
     private String lastListing="";
     StudioPhotoQueuePanel(Consumer<Photo> use){
+        this(use,false);
+    }
+    StudioPhotoQueuePanel(Consumer<Photo> use,boolean picker){
         super(new BorderLayout(8,8));this.use=use;setOpaque(false);
-        JPanel tools=DeckersSwing.panel();tools.setLayout(new FlowLayout(FlowLayout.LEFT));
-        tools.add(StudioWorkspaceShell.button("Pair staff phone / QR…",this::issue));
-        tools.add(StudioWorkspaceShell.button("Paired phones…",this::phones));
-        tools.add(StudioWorkspaceShell.button("Refresh",this::reload));
-        tools.add(StudioWorkspaceShell.button("Use in Passport Pictures",this::open));
-        tools.add(StudioWorkspaceShell.button("Use original photo",()->open(true)));
-        tools.add(StudioWorkspaceShell.button("Retry Best cutout",this::prepare));
-        tools.add(StudioWorkspaceShell.button("Delete selected…",this::delete));tools.add(showPrinted);
-        JScrollPane toolbar=new JScrollPane(tools,JScrollPane.VERTICAL_SCROLLBAR_NEVER,JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);tools.setLayout(new BoxLayout(tools,BoxLayout.X_AXIS));toolbar.setBorder(null);toolbar.setPreferredSize(new Dimension(300,58));add(toolbar,BorderLayout.NORTH);
+        StudioRibbon ribbon=new StudioRibbon();ribbon.responsive();
+        JButton usePhoto=StudioRibbon.button(picker?"Insert selected photo":"Use in Passport Pictures",this::open);
+        JButton pair=StudioRibbon.button("Pair staff phone / QR…",this::issue);
+        ribbon.add("Home","Queue",StudioRibbon.button("Refresh",this::reload));
+        ribbon.add("Home","Selected photo",usePhoto);
+        ribbon.add("Home","Selected photo",StudioRibbon.button("Use original photo",()->open(true)));
+        if(!picker){
+            ribbon.add("Home","Selected photo",StudioRibbon.button("Retry Best cutout",this::prepare));
+            ribbon.add("Home","Selected photo",StudioRibbon.button("Delete selected…",this::delete));
+            ribbon.add("Phones","Devices",pair);
+            ribbon.add("Phones","Devices",StudioRibbon.button("Paired phones…",this::phones));
+        }
+        ribbon.add("View","Filters",showPrinted);
+        JPanel primary=new JPanel(new FlowLayout(FlowLayout.RIGHT,8,0));
+        primary.setOpaque(false);
+        JButton shortcut=StudioRibbon.shortcut(usePhoto,usePhoto.getText());
+        StudioVisuals.headerButton(shortcut);primary.add(shortcut);
+        if(!picker){
+            JButton pairShortcut=StudioRibbon.shortcut(pair,pair.getText());
+            StudioVisuals.headerButton(pairShortcut);primary.add(pairShortcut);
+        }
+        ribbon.outputActions(primary);add(ribbon,BorderLayout.NORTH);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);table.setRowHeight(28);table.getAccessibleContext().setAccessibleName("Store photo queue");
         table.setDefaultRenderer(Object.class,new javax.swing.table.DefaultTableCellRenderer(){
             {putClientProperty("html.disable",true);}
@@ -47,7 +63,7 @@ final class StudioPhotoQueuePanel extends JPanel {
         });
         JScrollPane list=new JScrollPane(table);list.setMinimumSize(new Dimension(240,120));
         JSplitPane split=new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,list,preview);split.setResizeWeight(.55);split.setDividerLocation(440);add(split);
-        JPanel footer=DeckersSwing.panel();footer.setLayout(new GridLayout(0,1));footer.add(new JLabel("Shared across this store's paired computers · Printed photos are removed after 24 hours."));footer.add(status);add(footer,BorderLayout.SOUTH);
+        JPanel footer=DeckersSwing.panel();footer.setLayout(new GridLayout(0,1));footer.add(new JLabel("Shared across this store's paired computers · Photos are removed 24 hours after upload, whether printed or not."));footer.add(status);add(footer,BorderLayout.SOUTH);
         showPrinted.addActionListener(e->{lastListing="";reload();});table.getSelectionModel().addListSelectionListener(e->{if(!e.getValueIsAdjusting())preview();});
         refresh=new javax.swing.Timer(4000,e->reload());
         addHierarchyListener(e->{if((e.getChangeFlags()&HierarchyEvent.SHOWING_CHANGED)!=0){if(isShowing()){reload();refresh.start();}else reset();}});
@@ -63,11 +79,12 @@ final class StudioPhotoQueuePanel extends JPanel {
                 for(var entry:data){var row=entry.getAsJsonObject();boolean printed=row.get("printedAt").getAsLong()>0;if(printed&&!showPrinted.isSelected())continue;
                     rows.add(row);String name=row.get("name").getAsString();String state=row.has("backgroundState")?row.get("backgroundState").getAsString():"pending";
                     String readiness=switch(state){case "ready"->"Best cutout ready";case "processing"->"Removing background…";case "failed"->"Original ready · cutout failed";case "disabled"->"Original ready · background removal off";default->"Original ready · Best cutout queued";};
+                    if(row.has("backgroundMessage"))readiness=row.get("backgroundMessage").getAsString();
                     model.addRow(new Object[]{name.isBlank()?"Photo "+row.get("id").getAsString().substring(0,8):name,date(row.get("createdAt").getAsLong()),printed?"Printed · deletes "+date(row.get("deleteAfter").getAsLong()):readiness});
                     if(row.get("id").getAsString().equals(selected))select=rows.size()-1;
                 }
                 if(select>=0)table.setRowSelectionInterval(select,select);else preview.setImage(null);
-                status.setText(rows.size()+" photo(s) · Choose who to print next.");
+                status.setText(rows.size()+" photo(s) · Select a photo to preview and use.");
             }catch(Exception ex){status.setText(message(ex));}}
         }.execute();
     }

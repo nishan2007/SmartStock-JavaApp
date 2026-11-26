@@ -11,8 +11,6 @@ import utils.ImageOptimizationHelper;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -473,6 +471,13 @@ public class ServerCompanyCustomizationRepository {
     }
 
     private static ReceiptSettings loadReceiptSettingsFromDb(int locationId) throws SQLException {
+        try (Connection conn = DB.getConnection()) {
+            return loadReceiptSettings(conn, locationId);
+        }
+    }
+
+    /** Reads store branding on the request connection, without local-file or global-cache dependencies. */
+    public static ReceiptSettings loadReceiptSettings(Connection conn, int locationId) throws SQLException {
         String sql = """
                 SELECT ci.company_name,
                        COALESCE(l.address, '') AS company_address_line1,
@@ -517,9 +522,8 @@ public class ServerCompanyCustomizationRepository {
                 WHERE ci.company_info_id = 1
                 """;
 
-        try (Connection conn = DB.getConnection()) {
-            ensureReceiptSettingsSchema(conn);
-            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+        ensureReceiptSettingsSchema(conn);
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, locationId);
             ps.setInt(2, locationId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -568,7 +572,6 @@ public class ServerCompanyCustomizationRepository {
                                 rs.getBoolean("account_payment_receipt_show_barcode")
                         ), new com.google.gson.Gson().fromJson(rs.getString("sale_receipt_visibility"),SaleReceiptVisibility.class)
                 );
-            }
             }
         }
     }
@@ -1244,14 +1247,7 @@ public class ServerCompanyCustomizationRepository {
     }
 
     private static ReceiptSettings loadLocalReceiptSettings() {
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            } catch (IOException ex) {
-                ex.printStackTrace();
-            }
-        }
+        Properties properties = loadProperties();
 
         return new ReceiptSettings(
                 properties.getProperty("receipt.company_name", "SmartStock"),
@@ -1297,14 +1293,7 @@ public class ServerCompanyCustomizationRepository {
     }
 
     private static CustomOrderSettings loadLocalCustomOrderSettings() {
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            } catch (IOException ex) {
-                ex.printStackTrace();
-            }
-        }
+        Properties properties = loadProperties();
         return new CustomOrderSettings(
                 parsePercent(properties.getProperty("custom_orders.minimum_deposit_percent", "0")),
                 parseMoney(properties.getProperty("custom_orders.refund_approval_limit", "0")),
@@ -1314,14 +1303,7 @@ public class ServerCompanyCustomizationRepository {
     }
 
     private static CustomOrderSlipSettings loadLocalCustomOrderSlipSettings() {
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            } catch (IOException ex) {
-                ex.printStackTrace();
-            }
-        }
+        Properties properties = loadProperties();
         return new CustomOrderSlipSettings(
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.enabled", "true")),
                 Boolean.parseBoolean(properties.getProperty("custom_order_slip.auto_print", "true")),
@@ -1350,14 +1332,7 @@ public class ServerCompanyCustomizationRepository {
     }
 
     private static QuotationInvoicePrintSettings loadLocalQuotationInvoicePrintSettings() {
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            } catch (IOException ex) {
-                ex.printStackTrace();
-            }
-        }
+        Properties properties = loadProperties();
         return new QuotationInvoicePrintSettings(
                 properties.getProperty("quotation_invoice.quotation_title", "QUOTE / NOT FINAL SALE"),
                 properties.getProperty("quotation_invoice.quotation_validity_note", "This is a quote only and is not a final sale. Prices are valid until the valid-until date shown above unless superseded or cancelled."),
@@ -1369,14 +1344,7 @@ public class ServerCompanyCustomizationRepository {
     }
 
     private static SaleSafetySettings loadLocalSaleSafetySettings() {
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            } catch (IOException ex) {
-                ex.printStackTrace();
-            }
-        }
+        Properties properties = loadProperties();
         return new SaleSafetySettings(
                 parsePercent(properties.getProperty("sales.discount_limit_percent", "5")),
                 parseMoney(properties.getProperty("sales.return_approval_limit", "0")),
@@ -1386,14 +1354,7 @@ public class ServerCompanyCustomizationRepository {
     }
 
     private static BadgeTemplateSettings loadLocalBadgeTemplateSettings() {
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            } catch (IOException ex) {
-                ex.printStackTrace();
-            }
-        }
+        Properties properties = loadProperties();
         return new BadgeTemplateSettings(
                 properties.getProperty("badge_template.company_name", properties.getProperty("receipt.company_name", "SmartStock")),
                 firstNonBlank(properties.getProperty("badge_template.logo_path"), properties.getProperty("receipt.logo_path"), ""),
@@ -1421,12 +1382,7 @@ public class ServerCompanyCustomizationRepository {
 
     private static void saveLocalReceiptSettings(ReceiptSettings settings) throws IOException {
         Files.createDirectories(CONFIG_PATH.getParent());
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            }
-        }
+        Properties properties = CompanyPreferenceFile.read(CONFIG_PATH);
         properties.setProperty("receipt.company_name", settings.companyName());
         properties.setProperty("receipt.address_line1", settings.addressLine1());
         properties.setProperty("receipt.address_line2", settings.addressLine2());
@@ -1466,36 +1422,22 @@ public class ServerCompanyCustomizationRepository {
         properties.setProperty("account_payment_receipt.show_balance", String.valueOf(paymentReceiptSettings.showBalance()));
         properties.setProperty("account_payment_receipt.show_barcode", String.valueOf(paymentReceiptSettings.showBarcode()));
 
-        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
-            properties.store(outputStream, "SmartStock company customization settings");
-        }
+        saveProperties(properties);
     }
 
     private static void saveLocalCustomOrderSettings(CustomOrderSettings settings) throws IOException {
         Files.createDirectories(CONFIG_PATH.getParent());
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            }
-        }
+        Properties properties = CompanyPreferenceFile.read(CONFIG_PATH);
         properties.setProperty("custom_orders.minimum_deposit_percent", settings.minimumDepositPercent().toPlainString());
         properties.setProperty("custom_orders.refund_approval_limit", settings.refundApprovalLimit().toPlainString());
         properties.setProperty("custom_orders.round_to_nearest_twenty", String.valueOf(settings.roundToNearestTwenty()));
         properties.setProperty("custom_orders.file_limit_bytes", String.valueOf(settings.fileLimitBytes()));
-        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
-            properties.store(outputStream, "SmartStock company customization settings");
-        }
+        saveProperties(properties);
     }
 
     private static void saveLocalCustomOrderSlipSettings(CustomOrderSlipSettings settings) throws IOException {
         Files.createDirectories(CONFIG_PATH.getParent());
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            }
-        }
+        Properties properties = CompanyPreferenceFile.read(CONFIG_PATH);
         properties.setProperty("custom_order_slip.enabled", String.valueOf(settings.enabled()));
         properties.setProperty("custom_order_slip.auto_print", String.valueOf(settings.autoPrint()));
         properties.setProperty("custom_order_slip.title", settings.title());
@@ -1519,55 +1461,34 @@ public class ServerCompanyCustomizationRepository {
         properties.setProperty("custom_order_slip.show_signatures", String.valueOf(settings.showSignatures()));
         properties.setProperty("custom_order_slip.show_team_member_signature", String.valueOf(settings.showTeamMemberSignature()));
         properties.setProperty("custom_order_slip.show_customer_signature", String.valueOf(settings.showCustomerSignature()));
-        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
-            properties.store(outputStream, "SmartStock company customization settings");
-        }
+        saveProperties(properties);
     }
 
     private static void saveLocalQuotationInvoicePrintSettings(QuotationInvoicePrintSettings settings) throws IOException {
         Files.createDirectories(CONFIG_PATH.getParent());
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            }
-        }
+        Properties properties = CompanyPreferenceFile.read(CONFIG_PATH);
         properties.setProperty("quotation_invoice.quotation_title", settings.quotationTitle());
         properties.setProperty("quotation_invoice.quotation_validity_note", settings.quotationValidityNote());
         properties.setProperty("quotation_invoice.invoice_title", settings.invoiceTitle());
         properties.setProperty("quotation_invoice.delivery_title", settings.deliveryTitle());
         properties.setProperty("quotation_invoice.footer_note", settings.footerNote());
         properties.setProperty("quotation_invoice.show_signatures", String.valueOf(settings.showSignatures()));
-        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
-            properties.store(outputStream, "SmartStock company customization settings");
-        }
+        saveProperties(properties);
     }
 
     private static void saveLocalSaleSafetySettings(SaleSafetySettings settings) throws IOException {
         Files.createDirectories(CONFIG_PATH.getParent());
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            }
-        }
+        Properties properties = CompanyPreferenceFile.read(CONFIG_PATH);
         properties.setProperty("sales.discount_limit_percent", settings.discountLimitPercent().toPlainString());
         properties.setProperty("sales.return_approval_limit", settings.returnApprovalLimit().toPlainString());
         properties.setProperty("inventory.require_cost_price_on_new_item", String.valueOf(settings.requireCostPriceOnNewItem()));
         properties.setProperty("sales.round_to_nearest_twenty", String.valueOf(settings.roundToNearestTwenty()));
-        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
-            properties.store(outputStream, "SmartStock company customization settings");
-        }
+        saveProperties(properties);
     }
 
     private static void saveLocalBadgeTemplateSettings(BadgeTemplateSettings settings) throws IOException {
         Files.createDirectories(CONFIG_PATH.getParent());
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream inputStream = Files.newInputStream(CONFIG_PATH)) {
-                properties.load(inputStream);
-            }
-        }
+        Properties properties = CompanyPreferenceFile.read(CONFIG_PATH);
         properties.setProperty("badge_template.company_name", settings.companyName());
         properties.setProperty("badge_template.logo_path", settings.logoPath());
         properties.setProperty("badge_template.quote", settings.quoteLine());
@@ -1589,9 +1510,7 @@ public class ServerCompanyCustomizationRepository {
         properties.setProperty("badge_template.nfc_writer_command", settings.nfcWriterCommand());
         properties.setProperty("badge_template.nfc_verify_command", settings.nfcVerifyCommand());
         properties.setProperty("badge_template.layout_data", settings.layoutData());
-        try (OutputStream outputStream = Files.newOutputStream(CONFIG_PATH)) {
-            properties.store(outputStream, "SmartStock company customization settings");
-        }
+        saveProperties(properties);
     }
 
     private static java.math.BigDecimal parsePercent(String value) {
@@ -2022,16 +1941,16 @@ public class ServerCompanyCustomizationRepository {
     }
 
     private static Properties loadProperties() {
-        Properties properties = new Properties();
-        if (Files.exists(CONFIG_PATH)) {
-            try (InputStream input = Files.newInputStream(CONFIG_PATH)) { properties.load(input); } catch (IOException ignored) { }
+        try {
+            return CompanyPreferenceFile.read(CONFIG_PATH);
+        } catch (IOException ex) {
+            ex.printStackTrace();
+            return new Properties();
         }
-        return properties;
     }
 
     private static void saveProperties(Properties properties) throws IOException {
-        Files.createDirectories(CONFIG_PATH.getParent());
-        try (OutputStream output = Files.newOutputStream(CONFIG_PATH)) { properties.store(output, "SmartStock company preferences"); }
+        CompanyPreferenceFile.write(CONFIG_PATH, properties);
     }
 
     private static double parseDouble(String value, double fallback) {

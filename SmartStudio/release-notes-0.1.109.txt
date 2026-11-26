@@ -1,0 +1,7 @@
+SmartStudio 0.1.109 - cumulative Windows release and installer
+
+Badge templates contain Front and Back pages in one portable file. Edit either page, import an existing Back design, print either side or both, and export Front then Back as a two-page PDF.
+
+Move and resize inserted tables as a whole, keeping cells, merged cells and borders aligned. Double-click a table to edit its contents. Preserve document object identities and linked print views.
+
+Includes current shared-workspace workspace, document, photo and printing changes. Uses the SmartStock 1.1.145 client libraries. Update store servers first. Existing template pairs on the server require library consolidation separately. AI model weights remain separately managed on the server.

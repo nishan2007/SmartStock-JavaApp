@@ -1,0 +1,55 @@
+<!doctype html><html lang="en"><head><script src="./mobile-management/reconnect.js"></script><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#4c2378"><title>SmartStock Receiving</title><link rel="stylesheet" href="/receiving.css"></head><body>
+<header><div class="masthead"><a href="/"><img src="/inventory-icon.svg" alt=""><span><strong>SmartStock</strong>Receiving</span></a><span class="badge">STORE NETWORK ONLY</span></div></header><main>
+<div class="intro"><h1>Receive inventory</h1></div>
+<p id="notice" role="status" aria-live="polite"></p>
+<section id="auth" class="card"><h2>Employee sign in</h2><p>Open this app from your approved Deckers workspace, then sign in. Device approval and app access are managed in Device Management → Mobile Management.</p><form id="login"><label>Username, email or badge<input id="identifier" autocomplete="username" required maxlength="512"></label><label>Password or PIN<input id="secret" type="password" autocomplete="current-password"></label><button id="loginButton">Sign in</button><button id="retry" type="button" class="secondary">Check connection</button></form></section>
+<section id="workspace" hidden>
+<form id="searchForm" class="search"><button id="scanBarcode" class="secondary" type="button" aria-label="Scan barcode with camera"><i class="icon barcode-icon" aria-hidden="true"></i> Scan</button><input id="query" type="search" aria-label="Search by name, SKU or barcode" maxlength="300" placeholder="Search items" autocomplete="off" required><button id="searchButton">Search</button></form>
+<div id="results" aria-live="polite"></div>
+<div class="layout">
+<div id="selected" hidden>
+<section class="card item-card" aria-labelledby="itemName">
+<h2 id="itemName"></h2><p id="itemDetails" class="item-details"></p>
+<div class="photo-stage">
+<img id="currentPhoto" hidden alt="">
+<p id="photoMessage" role="status"></p>
+<button id="previousPhoto" class="gallery-arrow" type="button" aria-label="Previous photo"><i class="icon previous-icon" aria-hidden="true"></i></button>
+<button id="nextPhoto" class="gallery-arrow" type="button" aria-label="Next photo"><i class="icon next-icon" aria-hidden="true"></i></button>
+<span id="photoCount" aria-live="polite" hidden></span>
+</div>
+<div class="gallery-tools">
+<div id="thumbnails" class="thumbnails" aria-label="Item photos"></div>
+<button id="addPhotos" type="button" class="secondary add-photos"><i class="icon camera-icon" aria-hidden="true"></i>Add photos</button>
+</div>
+<button id="addBarcode" type="button" class="outline add-barcode"><i class="icon barcode-icon" aria-hidden="true"></i><span aria-hidden="true">+</span> Add Barcode</button>
+</section>
+<form id="quantityForm" class="card quantity-card">
+<label for="quantity">Quantity received</label>
+<div class="stepper"><button id="minus" type="button" aria-label="Decrease quantity">−</button><input id="quantity" type="number" inputmode="numeric" min="1" max="1000000" step="1" required value="1"><button id="plus" type="button" aria-label="Increase quantity">+</button></div>
+<button id="addToBatch" type="submit">Add to batch</button>
+</form>
+</div>
+<section id="batch" class="card batch-card"><h2>Receiving batch</h2><form id="batchForm"><div id="lines"></div><div class="batch-summary"><div class="total" id="total" aria-live="polite"></div><button id="review" disabled>Review delivery</button></div></form></section></div>
+<section id="historySection" class="card" hidden><h2>Receiving history</h2><form id="historyForm"><label>Search slips or items<input id="historyQuery" maxlength="300"></label><label>From date<input id="from" type="date"></label><label>To date<input id="to" type="date"></label><button>Load history</button></form><div id="history"></div></section></section>
+<dialog id="confirm"><h2>Post this delivery?</h2><p id="summary"></p><p>This adds the new units to store inventory and creates a receiving slip.</p><button id="post">Post delivery</button><button id="cancel" class="secondary">Keep editing</button></dialog>
+<dialog id="shelfDialog" aria-labelledby="shelfTitle">
+<h2 id="shelfTitle">Add a sales shelf</h2>
+<p id="shelfProgress"></p>
+<p><strong id="shelfItem"></strong><br><small id="shelfItemCode"></small></p>
+<form id="shelfForm">
+<label for="salesShelf">Sales shelf</label>
+<input id="salesShelf" type="text" maxlength="100" autocomplete="off" required autofocus>
+<p id="shelfStatus" role="status"></p>
+<div class="dialog-actions"><button type="submit">Continue</button><button id="cancelShelf" type="button" class="secondary">Back to batch</button></div>
+</form>
+</dialog>
+<dialog id="scanner" aria-labelledby="scannerTitle">
+<h2 id="scannerTitle">Scan item barcode</h2>
+<p id="scannerStatus" role="status"></p>
+<video id="scannerVideo" autoplay muted playsinline hidden></video>
+<div class="dialog-actions"><button id="scanPhoto" type="button" class="secondary">Scan a photo</button><button id="closeScanner" type="button">Close</button></div>
+<input id="barcodePhoto" type="file" accept="image/*" capture="environment" hidden>
+</dialog>
+<dialog id="barcodeDialog"><h2>Add Barcode</h2><form id="barcodeForm"><label for="barcode" id="barcodeLabel"></label><input id="barcode" type="text" maxlength="200" autocomplete="off" required autofocus><p id="barcodeStatus" role="status"></p><div class="dialog-actions"><button id="saveBarcode">Save barcode</button><button id="closeBarcode" type="button" class="secondary">Cancel</button></div></form></dialog>
+<dialog id="photoDialog"><h2>Add photos</h2><p>New photos are added to this item’s gallery.</p><div class="dialog-actions"><button id="takePhoto" type="button"><i class="icon camera-icon" aria-hidden="true"></i> Take photo</button><button id="choosePhotos" type="button" class="secondary">Choose photos</button></div><input id="camera" type="file" accept="image/*" capture="environment" hidden><input id="photoFiles" type="file" accept="image/*" multiple hidden><p id="uploadStatus" role="status"></p><div class="dialog-actions"><button id="retryPhoto" type="button" hidden>Retry upload</button><button id="closePhoto" type="button" class="secondary">Done</button></div></dialog>
+</main><footer><span id="store"></span><button id="logout" class="secondary" hidden>Sign out</button></footer><script src="/orders-barcode.js"></script><script src="/receiving.js"></script></body></html>

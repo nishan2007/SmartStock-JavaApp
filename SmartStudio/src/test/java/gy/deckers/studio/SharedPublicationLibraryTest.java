@@ -11,6 +11,25 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class SharedPublicationLibraryTest {
  @TempDir Path root;
+ @Test void olderServerFingerprintRequiresExactArchiveReadBack()throws Exception{
+  Server server=new Server();
+  var library=new SharedPublicationLibrary(root.resolve("mismatch-cache"),"LABELS",request->{
+   JsonObject reply=server.send(request);if(request.get("action").getAsString().equals("FINISH"))reply.addProperty("contentSha256","different-server-schema");return reply;
+  });library.refresh();Publication draft=new Publication();draft.title="Unsaved synthetic label";
+  draft.mergeColumns.add("number");draft.mergeRows.add(Map.of("number","0001"));
+  var saved=library.save(draft,null,"",()->true);
+  assertTrue(server.reads>=2);assertArrayEquals(server.archives.values().iterator().next(),Files.readAllBytes(saved.file()));
+  var reopened=PublicationFiles.read(Files.readAllBytes(saved.file()));assertEquals(draft.mergeColumns,reopened.mergeColumns);assertEquals(draft.mergeRows,reopened.mergeRows);
+ }
+ @Test void olderServerFingerprintRejectsCorruptReadBack()throws Exception{
+  Server server=new Server();
+  var library=new SharedPublicationLibrary(root.resolve("corrupt-cache"),"LABELS",request->{
+   JsonObject reply=server.send(request);if(request.get("action").getAsString().equals("FINISH")){reply.addProperty("contentSha256","different-server-schema");server.corrupt=true;}return reply;
+  });library.refresh();Publication draft=new Publication();draft.title="Unsaved synthetic label";
+  IOException error=assertThrows(IOException.class,()->library.save(draft,null,"",()->true));
+  assertTrue(error.getMessage().contains("draft is still unsaved"));assertTrue(library.files().isEmpty());assertEquals("Unsaved synthetic label",draft.title);
+ }
+
  @Test void billBooksReachAnotherComputerAndLaterConversionsAreDiscovered()throws Exception{
   Server server=new Server();Path first=local("Bill book one"),later=local("Bill book two");
   var publisher=new SharedPublicationLibrary(root.resolve("publisher"),"BILL_BOOKS",server);
@@ -18,7 +37,7 @@ class SharedPublicationLibraryTest {
   var otherComputer=new SharedPublicationLibrary(root.resolve("other-bill-computer"),"BILL_BOOKS",server);
   otherComputer.refresh();assertEquals(1,otherComputer.files().size());
   var imported=PublicationFiles.read(Files.readAllBytes(otherComputer.files().get(0)));
-  assertEquals("Bill book one",imported.title);assertTrue(imported.mergeRows.isEmpty());
+  assertEquals("Bill book one",imported.title);assertEquals(List.of(Map.of("name","private merge row")),imported.mergeRows);
   publisher.migrate(List.of(first,later),()->true,true);otherComputer.refresh();
   assertEquals(2,otherComputer.files().size());assertEquals(2,server.saves);
   publisher.migrate(List.of(first,later),()->true,true);assertEquals(2,server.saves);
@@ -55,10 +74,10 @@ class SharedPublicationLibraryTest {
   }
  }
  Path local(String name)throws Exception{Path source=root.resolve(name+".sspub");Publication p=new Publication();p.title=name;p.mergeRows.add(Map.of("name","private merge row"));Files.write(source,PublicationFiles.archive(p));return source;}
- @Test void automaticallyMigratesOnceWithoutMergeRecordsOrDuplicatesAcrossComputers()throws Exception{
+ @Test void automaticallyMigratesOnceWithSavedRecordsWithoutDuplicatesAcrossComputers()throws Exception{
   Path source=local("School card");byte[] before=Files.readAllBytes(source);Server server=new Server();var first=new SharedPublicationLibrary(root.resolve("computer-1"),"BUSINESS_CARDS",server);first.refresh();
   assertEquals("Existing templates migrated to the server.",first.migrate(List.of(source),()->true));assertEquals(1,server.saves);assertEquals(1,first.files().size());assertArrayEquals(before,Files.readAllBytes(source));
-  var stored=PublicationFiles.read(server.archives.values().iterator().next());assertTrue(stored.mergeRows.isEmpty());assertNull(stored.orderId);
+  var stored=PublicationFiles.read(server.archives.values().iterator().next());assertEquals(List.of(Map.of("name","private merge row")),stored.mergeRows);assertNull(stored.orderId);
   first.migrate(List.of(source,local("Added later")),()->true);assertEquals(1,server.saves);
   var second=new SharedPublicationLibrary(root.resolve("computer-2"),"BUSINESS_CARDS",server);second.refresh();second.migrate(List.of(source),()->true);assertEquals(1,server.saves);assertEquals(1,second.files().size());
  }

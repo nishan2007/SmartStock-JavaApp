@@ -1,0 +1,1 @@
+Combined quick update across recent chats. Adds copying order attachment files through Copy file, Ctrl+C and the attachment menu, preserving filenames. Includes current Orders, multi-size custom-order, balance-sheet web access, production-stage alignment, due-date, customer-save and other shared SmartStock improvements. Update the server first, then registers.

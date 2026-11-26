@@ -114,6 +114,8 @@ final class StudioDeviceEnrollmentService {
     }
     static boolean allowedPath(String path) {
         return Set.of("/v1/studio/branding","/v1/studio/remove-background","/v1/studio/device-status","/v1/studio/templates","/v1/studio/phone-capture","/v1/studio/photo-queue","/v1/sessions/login","/v1/sessions/logout",
+                "/v1/studio/fonts","/v1/studio/drive-catalog","/v1/studio/progress",
+                StudioPdfOcrService.PATH, StudioPdfOcrService.STATUS_PATH,
                 "/v1/sessions/badge-status","/v1/sessions/badge-pin-setup",
                 "/v1/cloud/update/latest","/v1/cloud/update/sign").contains(path);
     }

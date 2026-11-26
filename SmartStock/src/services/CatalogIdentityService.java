@@ -42,7 +42,7 @@ final class CatalogIdentityService {
     private static String text(JsonObject row,String name){return CrossStoreProductSyncService.text(row,name);}
 
     static int localProductId(Connection c,int sourceLocation,int sourceId,int localLocation)throws SQLException {
-        if(sourceLocation==localLocation)return sourceId;
+        if(sourceLocation==localLocation)return canonicalProductId(c,sourceId);
         try(var p=c.prepareStatement("""
                 SELECT DISTINCT p.product_id FROM catalog_source_ids m
                 JOIN products p ON p.catalog_uid=m.local_uid
@@ -53,9 +53,13 @@ final class CatalogIdentityService {
                 if(!r.next())throw new SQLException("Cross-store restock is waiting for a verified product catalog mapping.");
                 int id=r.getInt(1);
                 if(r.next())throw new SQLException("Cross-store restock product identity is ambiguous; review the catalog mapping.");
-                return id;
+                return canonicalProductId(c,id);
             }
         }
+    }
+
+    static int canonicalProductId(Connection c,int id)throws SQLException {
+        try(var p=c.prepareStatement("SELECT canonical_product_id(?)")){p.setInt(1,id);try(var r=p.executeQuery()){r.next();return r.getInt(1);}}
     }
 
     static JsonObject resolve(Connection c,String table,JsonObject source,int sourceLocation,UUID categoryUid)throws SQLException {

@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /** Suggestions for the custom-order Search / Scan field, without blocking typing. */
-final class CustomOrderItemSearch {
+public final class CustomOrderItemSearch {
     final DefaultListModel<ItemSearchOption> model = new DefaultListModel<>();
     final JList<ItemSearchOption> list = new JList<>(model);
     final JPopupMenu popup = new JPopupMenu();
@@ -27,8 +27,11 @@ final class CustomOrderItemSearch {
     private long generation;
     private boolean selecting;
     private ItemSearchOption chosen;
+    private final Runnable hidePreview;
 
-    CustomOrderItemSearch(JTextField field, Consumer<ItemSearchOption> selection, Runnable lookup) {
+    public CustomOrderItemSearch(JTextField field, Consumer<ItemSearchOption> selection, Runnable lookup) {
+        hidePreview=ui.helpers.TableImageHoverPreview.install(list,option->new ui.helpers.TableImageHoverPreview.Picture(option.imageUrl(),option.label()));
+        scroll.getViewport().addChangeListener(e->hidePreview.run());
         this.field = field;
         this.selection = selection;
         this.lookup = lookup;
@@ -40,7 +43,7 @@ final class CustomOrderItemSearch {
         popup.add(status, BorderLayout.SOUTH);
         popup.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
             public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent e) { }
-            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) { }
+            public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent e) { hidePreview.run(); }
             public void popupMenuCanceled(javax.swing.event.PopupMenuEvent e) { dismiss(); }
         });
         list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -101,6 +104,7 @@ final class CustomOrderItemSearch {
     }
 
     void dismiss() {
+        hidePreview.run();
         generation++;
         debounce.stop();
         popup.setVisible(false);

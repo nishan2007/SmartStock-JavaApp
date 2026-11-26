@@ -1,0 +1,7 @@
+SmartStudio 0.1.68
+
+Task Ribbon navigation across the design and photo workspaces, with separate Home and Insert tabs, grouped tools, contextual formatting tabs, larger labelled controls and visible output actions.
+Adds compact ribbon layouts, bounded task windows, a workspace grid, alignment/distribution and existing merge-field insertion shortcuts. Preserves the current PDF editor and specialist printing/data workflows.
+
+The proposed icon-and-label ribbon refinement is not included in this release.
+AI model weights are excluded. Uses the SmartStock 1.1.80 client library.

@@ -18,6 +18,28 @@ public class HardwareSettingsManager {
     private HardwareSettingsManager() {
     }
 
+    public static boolean hostsSharedLabelPrinter() throws IOException {
+        return Boolean.parseBoolean(loadProperties().getProperty("label.shared.host", "false"));
+    }
+
+    public static synchronized void saveHostsSharedLabelPrinter(boolean enabled) throws IOException {
+        Properties p = loadProperties();
+        p.setProperty("label.shared.host", String.valueOf(enabled));
+        Files.createDirectories(CONFIG_PATH.getParent());
+        try (OutputStream out = Files.newOutputStream(CONFIG_PATH)) { p.store(out, "SmartStock local hardware settings"); }
+    }
+
+    public static boolean useSharedLabelPrinter() throws IOException {
+        return Boolean.parseBoolean(loadProperties().getProperty("label.shared.use", "false"));
+    }
+
+    public static void saveUseSharedLabelPrinter(boolean enabled) throws IOException {
+        Properties p = loadProperties();
+        p.setProperty("label.shared.use", String.valueOf(enabled));
+        Files.createDirectories(CONFIG_PATH.getParent());
+        try (OutputStream out = Files.newOutputStream(CONFIG_PATH)) { p.store(out, "SmartStock local hardware settings"); }
+    }
+
     public static Path getConfigPath() {
         return CONFIG_PATH;
     }

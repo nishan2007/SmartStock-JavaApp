@@ -22,6 +22,8 @@ final class TemplateWorkspace extends JPanel implements Scrollable {
         default void resize(int index,Rectangle2D bounds){}
         default void remove(int index){}
         default boolean locked(int index){return false;}
+        default boolean hidden(int index){return false;}
+        default double rotation(int index){return 0;}
         default String text(int index){return null;}
         default boolean setText(int index,String value){return false;}
         void paint(Graphics2D graphics, double scale) throws Exception;
@@ -102,7 +104,7 @@ final class TemplateWorkspace extends JPanel implements Scrollable {
         getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke("DELETE"),"deleteLayer");
         getActionMap().put("deleteLayer",new AbstractAction(){public void actionPerformed(ActionEvent e){deleteSelection();}});
         getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke("control A"),"selectAllLayers");
-        getActionMap().put("selectAllLayers",new AbstractAction(){public void actionPerformed(ActionEvent e){if(design!=null&&textEditor==null){selectIndices(java.util.stream.IntStream.range(0,design.size()).toArray());notifySelection();}}});
+        getActionMap().put("selectAllLayers",new AbstractAction(){public void actionPerformed(ActionEvent e){if(design!=null&&textEditor==null){selectIndices(java.util.stream.IntStream.range(0,design.size()).filter(i->!design.hidden(i)).toArray());notifySelection();}}});
         MouseAdapter mouse=new MouseAdapter() {
             public void mousePressed(MouseEvent event) {
                 if(SwingUtilities.isMiddleMouseButton(event)&&getParent() instanceof JViewport viewport){panScreen=new Point(event.getXOnScreen(),event.getYOnScreen());panStart=viewport.getViewPosition();return;}
@@ -110,18 +112,18 @@ final class TemplateWorkspace extends JPanel implements Scrollable {
                 if(!finishText(true))return;
                 if(event.getClickCount()==2){
                     double x=(event.getX()-originX)/scale,y=(event.getY()-originY)/scale;
-                    for(int i=design.size()-1;i>=0;i--)if(design.bounds(i).contains(x,y)){select(i);notifySelection();if(!layerActivation.test(i))beginText();return;}
+                    for(int i=design.size()-1;i>=0;i--)if(!design.hidden(i)&&outline(i).contains(x,y)){select(i);notifySelection();if(!layerActivation.test(i))beginText();return;}
                 }
                 resizeHandle=handleAt(event.getPoint());
                 if(resizeHandle>=0){dragged=selected;startBounds=(Rectangle2D)design.bounds(selected).clone();pressed=event.getPoint();requestFocusInWindow();return;}
                 double x=(event.getX()-originX)/scale,y=(event.getY()-originY)/scale;
                 int hit=-1;
-                for(int i=design.size()-1;i>=0;i--)if(design.bounds(i).contains(x,y)){hit=i;break;}
+                for(int i=design.size()-1;i>=0;i--)if(!design.hidden(i)&&outline(i).contains(x,y)){hit=i;break;}
                 boolean add=event.isControlDown()||event.isShiftDown();
                 if(hit>=0){
                     if(add&&selectedItems.contains(hit)){selectedItems.remove(hit);selected=selectedItems.isEmpty()?-1:selectedItems.last();dragged=-1;pressed=null;notifySelection();repaint();return;}
                     if(!add&&!selectedItems.contains(hit))selectedItems.clear();selectedItems.add(hit);selected=hit;dragged=hit;
-                    dragBounds.clear();for(int i:selectedItems)if(!design.locked(i))dragBounds.put(i,(Rectangle2D)design.bounds(i).clone());
+                    dragBounds.clear();for(int i:selectedItems)if(!design.locked(i)&&!design.hidden(i))dragBounds.put(i,(Rectangle2D)design.bounds(i).clone());
                     pressed=event.getPoint();notifySelection();
                 }else{
                     marqueeAdd=add;marqueeStart.clear();if(add)marqueeStart.addAll(selectedItems);else selectedItems.clear();
@@ -133,7 +135,7 @@ final class TemplateWorkspace extends JPanel implements Scrollable {
             public void mouseDragged(MouseEvent event) {
                 if(panScreen!=null&&getParent() instanceof JViewport viewport){Point now=new Point(event.getXOnScreen(),event.getYOnScreen());Dimension extent=viewport.getExtentSize();viewport.setViewPosition(new Point(Math.max(0,Math.min(getWidth()-extent.width,panStart.x+panScreen.x-now.x)),Math.max(0,Math.min(getHeight()-extent.height,panStart.y+panScreen.y-now.y))));return;}
                 if(pressed==null)return;
-                if(marqueeEnd!=null){marqueeEnd=event.getPoint();Rectangle2D box=marquee();selectedItems.clear();if(marqueeAdd)selectedItems.addAll(marqueeStart);for(int i=0;i<design.size();i++)if(box.intersects(design.bounds(i)))selectedItems.add(i);selected=selectedItems.isEmpty()?-1:selectedItems.last();notifySelection();repaint();return;}
+                if(marqueeEnd!=null){marqueeEnd=event.getPoint();Rectangle2D box=marquee();selectedItems.clear();if(marqueeAdd)selectedItems.addAll(marqueeStart);for(int i=0;i<design.size();i++)if(!design.hidden(i)&&outline(i).intersects(box))selectedItems.add(i);selected=selectedItems.isEmpty()?-1:selectedItems.last();notifySelection();repaint();return;}
                 if(dragged<0||dragged>=design.size())return;
                 selected=dragged;
                 if(resizeHandle>=0){Rectangle2D next=resized(startBounds,resizeHandle,(event.getX()-pressed.x)/scale,(event.getY()-pressed.y)/scale,aspectRatioPolicy.apply(dragged),design.maximumSize());double limit=design.constrainSizeToPage()?Math.min(1,Math.min(design.width()/next.getWidth(),design.height()/next.getHeight())):1;if(limit<1){double w=next.getWidth()*limit,h=next.getHeight()*limit;next=new Rectangle2D.Double(resizeHandle==0||resizeHandle==6||resizeHandle==7?startBounds.getMaxX()-w:next.getX(),resizeHandle<=2?startBounds.getMaxY()-h:next.getY(),w,h);}design.resize(dragged,next);changed.run();selected=dragged;repaint();return;}
@@ -155,7 +157,7 @@ final class TemplateWorkspace extends JPanel implements Scrollable {
         getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(key),key);
         getActionMap().put(key,new AbstractAction(){public void actionPerformed(ActionEvent event){
             if(design==null || pressed!=null || selected<0 || selected>=design.size())return;
-            Map<Integer,Rectangle2D> bounds=new LinkedHashMap<>();for(int i:selectedItems)if(!design.locked(i))bounds.put(i,(Rectangle2D)design.bounds(i).clone());
+            Map<Integer,Rectangle2D> bounds=new LinkedHashMap<>();for(int i:selectedItems)if(!design.locked(i)&&!design.hidden(i))bounds.put(i,(Rectangle2D)design.bounds(i).clone());
             if(bounds.isEmpty())return;moveItems(bounds,dx,dy);
             changed.run();revalidate();repaint();
             firePropertyChange("editCompleted",false,true);
@@ -166,19 +168,22 @@ final class TemplateWorkspace extends JPanel implements Scrollable {
         configure(new Design() {
             public double width(){return template.get().widthMm;}
             public double height(){return template.get().heightMm;}
-            public int size(){return template.get().elements.size();}
-            public Rectangle2D bounds(int i){var e=template.get().elements.get(i);return new Rectangle2D.Double(e.x,e.y,e.width,e.height);}
-            public void move(int i,double x,double y){var e=template.get().elements.get(i);e.x=x;e.y=y;}
+            public int size(){return template.get().pageElements().size();}
+            public double rotation(int i){return template.get().pageElements().get(i).rotation;}
+            public boolean hidden(int i){return template.get().pageElements().get(i).hidden;}
+            public Rectangle2D bounds(int i){var e=template.get().pageElements().get(i);return new Rectangle2D.Double(e.x,e.y,e.width,e.height);}
+            public void move(int i,double x,double y){var e=template.get().pageElements().get(i);e.x=x;e.y=y;}
             public boolean canResize(){return true;}
-            public void resize(int i,Rectangle2D b){var e=template.get().elements.get(i);e.x=b.getX();e.y=b.getY();e.width=b.getWidth();e.height=b.getHeight();}
-            public void remove(int i){template.get().elements.remove(i);}
-            public String text(int i){var e=template.get().elements.get(i);return "TEXT".equals(e.type)?(e.field.isEmpty()?e.text:values.get().getOrDefault(e.field,e.text)):null;}
-            public boolean setText(int i,String value){if(value.length()>1000)return false;var e=template.get().elements.get(i);if(!e.field.isEmpty()&&fieldEditor!=null)fieldEditor.accept(e.field,value);else e.text=value;return true;}
+            public void resize(int i,Rectangle2D b){var e=template.get().pageElements().get(i);e.x=b.getX();e.y=b.getY();e.width=b.getWidth();e.height=b.getHeight();}
+            public void remove(int i){template.get().pageElements().remove(i);}
+            public String text(int i){var e=template.get().pageElements().get(i);return "TEXT".equals(e.type)?(e.field.isEmpty()?e.text:values.get().getOrDefault(e.field,e.text)):null;}
+            public boolean setText(int i,String value){if(value.length()>1000)return false;var e=template.get().pageElements().get(i);if(!e.field.isEmpty()&&fieldEditor!=null)fieldEditor.accept(e.field,value);else e.text=value;return true;}
             public void paint(Graphics2D g,double scale)throws Exception{template.get().paintElements(g,values.get(),photo.get(),scale);}
         },selection,changed);
     }
     void select(int index){selectIndices(index<0?new int[0]:new int[]{index});}
     void selectIndices(int[] indices){if(notifyingSelection||pressed!=null)return;finishText(true);selectedItems.clear();if(design!=null)for(int i:indices)if(i>=0&&i<design.size())selectedItems.add(i);selected=selectedItems.isEmpty()?-1:selectedItems.last();repaint();}
+    private Shape outline(int index){Rectangle2D b=design.bounds(index);return java.awt.geom.AffineTransform.getRotateInstance(Math.toRadians(design.rotation(index)),b.getCenterX(),b.getCenterY()).createTransformedShape(b);}
     private Rectangle2D marquee(){double x=(Math.min(pressed.x,marqueeEnd.x)-originX)/scale,y=(Math.min(pressed.y,marqueeEnd.y)-originY)/scale;return new Rectangle2D.Double(x,y,Math.abs(pressed.x-marqueeEnd.x)/scale,Math.abs(pressed.y-marqueeEnd.y)/scale);}
     private void moveItems(Map<Integer,Rectangle2D> bounds,double dx,double dy){
         double maximum=design.maximumSize();
@@ -191,7 +196,7 @@ final class TemplateWorkspace extends JPanel implements Scrollable {
         double minX=-design.width()*padding,minY=-design.height()*padding,maxX=design.width()*(1+padding),maxY=design.height()*(1+padding);
         // Freeze the view during dragging so pointer movement keeps a stable coordinate system.
         if(pressed==null && textEditor==null){
-            for(int i=0;i<design.size();i++){Rectangle2D b=design.bounds(i);minX=Math.min(minX,b.getMinX()-10);minY=Math.min(minY,b.getMinY()-10);maxX=Math.max(maxX,b.getMaxX()+10);maxY=Math.max(maxY,b.getMaxY()+10);}
+            for(int i=0;i<design.size();i++){if(design.hidden(i))continue;Rectangle2D b=outline(i).getBounds2D();minX=Math.min(minX,b.getMinX()-10);minY=Math.min(minY,b.getMinY()-10);maxX=Math.max(maxX,b.getMaxX()+10);maxY=Math.max(maxY,b.getMaxY()+10);}
             Dimension view=getParent() instanceof JViewport viewport?viewport.getExtentSize():getSize();
             if(view.width<=24 || view.height<=24)view=getSize();
             scale=zoom*Math.min((view.width-24)/(maxX-minX),(view.height-24)/(maxY-minY));
@@ -200,14 +205,16 @@ final class TemplateWorkspace extends JPanel implements Scrollable {
         }
         Graphics2D g=(Graphics2D)graphics.create();
         try {
-            g.setColor(new Color(225,228,233));g.fillRect(0,0,getWidth(),getHeight());
+            g.setColor(new Color(233,235,239));g.fillRect(0,0,getWidth(),getHeight());
             g.translate(originX,originY);
             Rectangle2D page=new Rectangle2D.Double(0,0,design.width()*scale,design.height()*scale);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);
+            for(int shadow=7;shadow>0;shadow--){g.setColor(new Color(40,30,50,4));g.fill(new Rectangle2D.Double(-shadow,2-shadow,page.getWidth()+2*shadow,page.getHeight()+2*shadow));}
             g.setColor(Color.WHITE);g.fill(page);
             g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);
             design.paint(g,scale);
-            g.setColor(new Color(90,95,105));g.setStroke(new BasicStroke(1.5f));g.draw(page);
-            for(int item:selectedItems)if(item>=0 && item<design.size()){
+            g.setColor(new Color(0xBDBBC2));g.setStroke(new BasicStroke(1f));g.draw(page);
+            for(int item:selectedItems)if(item>=0 && item<design.size()&&!design.hidden(item)){
                 Rectangle2D b=design.bounds(item);g.setColor(DeckersPalette.PURPLE);
                 g.draw(new Rectangle2D.Double(b.getX()*scale,b.getY()*scale,b.getWidth()*scale,b.getHeight()*scale));
                 if(design.canResize()&&selectedItems.size()==1&&!design.locked(item))for(int i=0;i<8;i++){Point.Double point=handlePoint(b,i);Rectangle2D box=new Rectangle2D.Double(point.x*scale-HANDLE/2.,point.y*scale-HANDLE/2.,HANDLE,HANDLE);g.setColor(DeckersPalette.surface());g.fill(box);g.setColor(DeckersPalette.PURPLE);g.draw(box);}
@@ -225,7 +232,7 @@ final class TemplateWorkspace extends JPanel implements Scrollable {
         firePropertyChange("layerDeleted",false,true);firePropertyChange("editCompleted",false,true);revalidate();repaint();
     }
     void beginText(){
-        if(design==null||selectedItems.size()!=1||selected<0||selected>=design.size()||design.locked(selected)||textEditor!=null)return;
+        if(design==null||selectedItems.size()!=1||selected<0||selected>=design.size()||design.locked(selected)||design.hidden(selected)||textEditor!=null)return;
         String value=design.text(selected);if(value==null)return;
         editing=selected;textEditor=new JTextArea(value);textEditor.setLineWrap(true);textEditor.setWrapStyleWord(true);
         Rectangle2D b=design.bounds(selected);
@@ -253,7 +260,7 @@ final class TemplateWorkspace extends JPanel implements Scrollable {
         return new Point.Double(xs[handle],ys[handle]);
     }
     private int handleAt(Point point){
-        if(design==null || selectedItems.size()!=1 || !design.canResize() || selected<0 || selected>=design.size()||design.locked(selected))return -1;
+        if(design==null || selectedItems.size()!=1 || !design.canResize() || selected<0 || selected>=design.size()||design.locked(selected)||design.hidden(selected))return -1;
         Rectangle2D bounds=design.bounds(selected);
         // Corners take precedence when a very small object has overlapping handles.
         for(int i:new int[]{0,2,4,6,1,3,5,7}){Point.Double h=handlePoint(bounds,i);if(Math.abs(point.x-originX-h.x*scale)<=HANDLE/2.+2&&Math.abs(point.y-originY-h.y*scale)<=HANDLE/2.+2)return i;}

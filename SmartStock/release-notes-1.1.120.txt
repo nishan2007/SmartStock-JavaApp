@@ -1,0 +1,7 @@
+SmartStock 1.1.120 - Sequential shared ad review with rejection reasons
+
+Open Inventory > Review Product Ads to review pending ads in one shared list across products and square, portrait, story and landscape formats. Approve ad and next or Reject ad and next automatically advances after a successful decision. Browse approved or rejected ads and import corrected replacements.
+
+Rejection now requires a correction reason, saved on the store server and visible from authorized registers. New replacements clear the previous reason and return to pending review. Stale register revisions cannot silently overwrite or approve changed previews. Failed decisions do not skip the image. Approval remains explicit.
+
+Cumulative model-free Windows quick update. Update the store server before registers. Preserves installed runtime and profile models; no AI API integration or billing. Physical hardware and live multi-register verification remain separate.

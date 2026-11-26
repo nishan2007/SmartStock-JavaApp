@@ -54,7 +54,15 @@ export async function verifyHostedModelCatalogue() {
   const work = await mkdtemp(join(tmpdir(), 'smartstock-hosting-check-'));
   try {
     await verifyModelHosting(args => execute(process.execPath, [wrangler, ...args], {cwd: worker, windowsHide: true}), work);
-  } catch { throw Error('Publish and verify the independent AI models and catalogue before publishing this application release; check Cloudflare operator access'); }
+  } catch {
+    // The R2 management API can return transient 5xx responses while the private
+    // download Worker remains healthy. Verify the identical bytes via the normal
+    // signed client path; this still requires an exact immutable snapshot match.
+    const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+    try {
+      await verifyModelHosting(args=>execute('java',['-cp',`${join(root,'target/classes')}${process.platform==='win32'?';':':'}${join(root,'target/dependency/*')}`,join(root,'tools/ReadModelCatalogue.java'),args[3].replace(/^smartstock-updates\//,''),args[args.indexOf('--file')+1]],{windowsHide:true}),work);
+    }catch{throw Error('Publish and verify the independent AI models and catalogue before publishing this application release; check Cloudflare operator and signed-download access');}
+  }
   finally { await rm(work, {recursive: true, force: true}); }
 }
 

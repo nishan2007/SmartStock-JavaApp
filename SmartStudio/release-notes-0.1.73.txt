@@ -1,0 +1,4 @@
+SmartStudio 0.1.73
+
+Banners: Print now sends artwork directly through an installed Windows printer driver, including Canon large-format queues. Select the printer, configure a matching custom roll/page size, and confirm actual-size output. Unsupported page sizes are rejected. PDF export remains available.
+Physical Canon printing and driver-specific media settings require verification on the printing computer.

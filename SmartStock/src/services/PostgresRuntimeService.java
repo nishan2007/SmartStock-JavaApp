@@ -792,6 +792,15 @@ public final class PostgresRuntimeService {
         String script = windowsProductionInstallScript(
                 jar, dependencies, serviceExecutable, useNativeLauncher,
                 project.url(), project.publishableKey(), selected.id(), cleanSubnet, logPath);
+        if(selected==EnvironmentProfile.PRODUCTION){
+            script=script.replace("# VERIFY_SMARTSTOCK_FIREWALL",StoreNetworkProvisioning.remoteAdministratorInstaller()
+                +"\ntry { Install-SmartStockRemoteAdministrator -ServiceUser $ServiceUser -ServiceHome $ServiceHome } catch { "
+                +"$NetworkRoot=Join-Path $ServiceHome '.smartstock\\network-provisioning'; "
+                +"New-Item -ItemType Directory -Force -Path $NetworkRoot | Out-Null; "
+                +"'Remote maintenance needs administrator attention; local store services remain available.' | "
+                +"Set-Content -LiteralPath (Join-Path $NetworkRoot 'remote-admin.pending') -Encoding UTF8; "
+                +"Write-Output 'Remote maintenance needs separate verification.' }\n# VERIFY_SMARTSTOCK_FIREWALL");
+        }
         Files.writeString(scriptPath, script, StandardCharsets.UTF_8);
         utils.SecureFilePermissions.restrictFileToOwner(scriptPath);
         utils.SecureFilePermissions.restrictFileToOwner(logPath);
@@ -803,7 +812,7 @@ public final class PostgresRuntimeService {
                 + "exit $p.ExitCode";
         CommandResult elevated;
         try {
-            elevated = runPowerShell(elevate, Duration.ofMinutes(5));
+            elevated = runPowerShell(elevate, Duration.ofMinutes(selected==EnvironmentProfile.PRODUCTION?15:5));
             String log = Files.isRegularFile(logPath)
                     ? Files.readString(logPath, StandardCharsets.UTF_8).trim() : "";
             String output = log.isBlank() ? elevated.output() : log;

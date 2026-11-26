@@ -46,6 +46,8 @@ public final class WorkflowSyncIdentitySchemaInstaller {
 
     private static final List<String> SYNC_UUID_TABLES = List.of(
             "sales",
+            "sales_tasks", "sales_task_payments", "sales_task_events", "sales_task_files",
+            "phone_minutes_sales",
             "sale_items",
             "sale_returns",
             "sale_return_items",
@@ -54,6 +56,8 @@ public final class WorkflowSyncIdentitySchemaInstaller {
             "customer_accounts",
             "customer_account_transactions",
             "customer_account_payment_allocations",
+            "phone_minutes_credit_uses",
+            "phone_minutes_web_requests",
             "custom_order_lines",
             "custom_orders",
             "custom_order_line_print_addons",

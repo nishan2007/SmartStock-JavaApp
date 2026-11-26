@@ -7,7 +7,7 @@ import java.util.*;
 import services.CustomOrderDataService.PrintAddonRequest;
 import utils.CurrencyFormatter;
 
-/** Pricing of existing orders: never creates lines or repeats inventory movements. */
+/** Transactional final pricing; existing lines are preserved and only new units consume stock. */
 public final class CustomOrderPricingService {
     private CustomOrderPricingService() {}
     public record PricingLine(long lineId, BigDecimal width, BigDecimal length, BigDecimal rate,
@@ -19,7 +19,83 @@ public final class CustomOrderPricingService {
             boolean customerSupplied, List<PrintAddonRequest> addons) {}
     public record PricingDetails(BigDecimal paid, boolean applyCustomerDiscount, List<Snapshot> lines,
             String customerName, boolean requireChargeAuthorization, BigDecimal customerDiscountPercent, boolean roundToNearestTwenty,
-            List<CustomOrderDataService.PrintMaterialOption> materials,List<CustomOrderDataService.PrintSizePresetOption> presets) {}
+            List<CustomOrderDataService.PrintMaterialOption> materials,List<CustomOrderDataService.PrintSizePresetOption> presets,
+            String orderNotes,List<AdditionOption> additionOptions) {
+        public PricingDetails(BigDecimal paid,boolean apply,List<Snapshot> lines,String name,boolean auth,BigDecimal discount,boolean round,List<CustomOrderDataService.PrintMaterialOption> materials,List<CustomOrderDataService.PrintSizePresetOption> presets){this(paid,apply,lines,name,auth,discount,round,materials,presets,"",List.of());}
+    }
+    public record AdditionOption(Long itemId,Long variantId,String name,String variant,String size,String color,String pricingType,BigDecimal rate,String dimensionUnit,String areaUnit,BigDecimal maximumWidth,Integer productId) {
+        public AdditionOption(Long itemId,Long variantId,String name,String variant,String size,String color,String pricingType,BigDecimal rate,String dimensionUnit,String areaUnit,BigDecimal maximumWidth){this(itemId,variantId,name,variant,size,color,pricingType,rate,dimensionUnit,areaUnit,maximumWidth,null);}
+        public String toString(){return name+(variant==null?"":" / "+variant)+(size==null||size.isBlank()?"":" / "+size)+(color==null||color.isBlank()?"":" / "+color)+(productId==null?"":" [Inventory]");}
+        public Snapshot snapshot(long id){return new Snapshot(id,itemId,variantId,name,variant,pricingType,dimensionUnit,areaUnit,maximumWidth,rate,rate,null,null,false,List.of());}
+    }
+    public record AddedLine(long temporaryId,Long itemId,Long variantId,String itemName,String size,String color,String instructions,Integer productId) {}
+
+    public static void updatePendingNotes(Connection c,long orderId,int location,String expected,String notes,int actor,String actorName,String device,String deviceName)throws SQLException {
+        expected=Objects.toString(expected,"");notes=Objects.toString(notes,"");
+        if(notes.length()>5000)throw new SQLException("Order notes must be 5000 characters or fewer.");
+        try(var p=c.prepareStatement("UPDATE custom_orders SET order_notes=?,updated_at=now() WHERE custom_order_id=? AND location_id=? AND pricing_state='PENDING' AND COALESCE(order_notes,'')=?")){
+            p.setString(1,notes);p.setLong(2,orderId);p.setInt(3,location);p.setString(4,expected);
+            if(p.executeUpdate()!=1)throw new SQLException("Order notes changed. Reload before finalizing.");
+        }
+        if(!expected.equals(notes))audit(c,orderId,"UPDATE_NOTES","order_notes",expected,notes,"Notes updated during final pricing",actor,actorName,device,deviceName);
+    }
+
+    public static List<AdditionOption> additionOptions(Connection c)throws SQLException {
+        List<AdditionOption> options=new ArrayList<>();
+        for(var item:ServerCustomOrderDataService.listActiveItems(c)){
+            if(item.hasVariants())for(var variant:ServerCustomOrderDataService.listActiveVariants(c,item.customItemId()))
+                options.add(new AdditionOption(item.customItemId(),variant.variantId(),item.name(),variant.name(),variant.effectiveSize(),variant.effectiveColor(),item.pricingType(),"AREA".equals(item.pricingType())?item.areaPrice():variant.fixedPrice()==null?item.fixedPrice():variant.fixedPrice(),item.dimensionUnit(),item.areaPriceUnit(),item.maxWidth()));
+            else options.add(new AdditionOption(item.customItemId(),null,item.name(),null,item.size(),item.color(),item.pricingType(),"AREA".equals(item.pricingType())?item.areaPrice():item.fixedPrice(),item.dimensionUnit(),item.areaPriceUnit(),item.maxWidth()));
+        }
+        try(var p=c.prepareStatement("SELECT product_id,name,size,color,price FROM products WHERE is_active AND COALESCE(product_type,'INVENTORY')='INVENTORY' ORDER BY name");var r=p.executeQuery()){while(r.next())options.add(new AdditionOption(null,null,r.getString(2),null,r.getString(3),r.getString(4),"FIXED",r.getBigDecimal(5),null,null,null,r.getInt(1)));}
+        return options;
+    }
+
+    public static Map<Long,Long> appendPendingLines(Connection c,long orderId,int location,List<AddedLine> additions,int actor,String actorName,String device,String deviceName)throws SQLException {
+        if(additions.size()>500)throw new SQLException("Add no more than 500 units at once.");
+        if(!pending(c,orderId,location))throw new SQLException("This order already has a final price.");
+        if(!additions.isEmpty())try(var p=c.prepareStatement("SELECT status,invoice_billed FROM custom_orders WHERE custom_order_id=? AND location_id=? FOR UPDATE")){
+            p.setLong(1,orderId);p.setInt(2,location);try(var r=p.executeQuery()){
+                if(!r.next()||List.of("CANCELLED","DELIVERED").contains(r.getString(1))||r.getBoolean(2))throw new SQLException("Items cannot be added to a cancelled, delivered or invoiced order.");
+            }
+        }
+        List<AdditionOption> options=additions.isEmpty()?List.of():additionOptions(c);
+        Map<Long,Long> mapped=new LinkedHashMap<>();
+        Set<Long> ids=new HashSet<>();
+        for(var added:additions){
+            if(added==null||added.temporaryId()>=0||!ids.add(added.temporaryId()))throw new SQLException("Invalid new item identifier.");
+            AdditionOption option;
+            if(added.itemId()!=null||added.productId()!=null){option=options.stream().filter(o->Objects.equals(o.itemId(),added.itemId())&&Objects.equals(o.variantId(),added.variantId())&&Objects.equals(o.productId(),added.productId())).findFirst().orElseThrow(()->new SQLException("The selected catalogue item is no longer available."));}
+            else {if(added.variantId()!=null||added.itemName()==null||added.itemName().isBlank()||added.itemName().length()>200)throw new SQLException("Enter a valid manual item description.");option=new AdditionOption(null,null,added.itemName().trim(),null,added.size(),added.color(),"VARIABLE",null,null,null,null);}
+            if(added.instructions()!=null&&added.instructions().length()>5000)throw new SQLException("Item instructions are too long.");
+            if(option.itemId()!=null)try(var p=c.prepareStatement("SELECT COALESCE(product_type,'INVENTORY'),0,is_active,is_archived FROM custom_order_items WHERE custom_item_id=? FOR UPDATE")){
+                p.setLong(1,option.itemId());try(var r=p.executeQuery()){
+                    if(!r.next()||!r.getBoolean(3)||r.getBoolean(4))throw new SQLException("The catalogue item is no longer available.");
+                    if("INVENTORY".equals(r.getString(1))){
+                        BigDecimal quantity=CustomItemStockService.quantity(c,option.itemId(),option.variantId(),location);
+                        if(option.variantId()!=null)try(var v=c.prepareStatement("SELECT custom_variant_id FROM custom_order_item_variants WHERE custom_variant_id=? AND custom_item_id=? AND is_active FOR UPDATE")){v.setLong(1,option.variantId());v.setLong(2,option.itemId());try(var vr=v.executeQuery()){if(!vr.next())throw new SQLException("The selected variant is no longer available.");quantity=CustomItemStockService.quantity(c,option.itemId(),option.variantId(),location);}}
+                        if(quantity==null||quantity.compareTo(BigDecimal.ONE)<0)throw new SQLException("Insufficient stock for the new order item.");
+                    }
+                }
+            }
+            long lineId;
+            try(var p=c.prepareStatement("INSERT INTO custom_order_lines(custom_order_id,custom_item_id,custom_variant_id,item_name,variant_name,item_size,item_color,pricing_type,unit_price,line_total,base_item_price,area_price,dimension_unit,area_unit,customization_details,order_instructions,inventory_product_id,sort_order) VALUES(?,?,?,?,?,?,?,?,0,0,0,?,?,?,?,?,?,(SELECT COALESCE(MAX(sort_order),0)+1 FROM custom_order_lines WHERE custom_order_id=?)) RETURNING custom_order_line_id")){
+                p.setLong(1,orderId);p.setObject(2,option.itemId());p.setObject(3,option.variantId());p.setString(4,option.name());p.setString(5,option.variant());p.setString(6,option.size());p.setString(7,option.color());p.setString(8,option.pricingType());p.setBigDecimal(9,option.rate());p.setString(10,option.dimensionUnit());p.setString(11,option.areaUnit());p.setString(12,option.productId()!=null?"Inventory item":option.itemId()==null?"Manual entry":"Added during price finalization");p.setString(13,added.instructions());p.setObject(14,option.productId());p.setLong(15,orderId);try(var r=p.executeQuery()){r.next();lineId=r.getLong(1);}
+            }
+            mapped.put(added.temporaryId(),lineId);
+            CustomOrderInventoryService.consume(c,orderId,lineId,option.productId(),location,actor,actorName,device,deviceName);
+            if(option.itemId()!=null){
+                try(var p=c.prepareStatement("INSERT INTO custom_order_inventory_reservations(custom_order_id,custom_order_line_id,custom_item_id,custom_variant_id,item_name,variant_name,reserved_qty,status) SELECT ?,?,?,?, ?,?,1,'RESERVED' FROM custom_order_items WHERE custom_item_id=? AND COALESCE(product_type,'INVENTORY')='INVENTORY'")){p.setLong(1,orderId);p.setLong(2,lineId);p.setLong(3,option.itemId());p.setObject(4,option.variantId());p.setString(5,option.name());p.setString(6,option.variant());p.setLong(7,option.itemId());p.executeUpdate();}
+                CustomItemStockService.consume(c,option.itemId(),option.variantId(),location,true);
+            }
+            audit(c,orderId,"ADD_LINE","item_name",null,option.name(),"Line "+lineId+" added during final pricing",actor,actorName,device,deviceName);
+        }
+        if(!additions.isEmpty()){
+            CustomOrderDesignService.createForOrder(c,orderId);
+            LanCustomOrderWorkflowService.refreshProductionOrderStatus(c,orderId,location,actor,actorName,device,deviceName);
+        }
+        return mapped;
+    }
     public record AuthorizedLine(Snapshot saved,PricingLine input,Calculated price,Integer discountBy,
             String discountByName,Integer priceBy,String priceByName) {}
     public record Calculated(BigDecimal area, BigDecimal base, BigDecimal addons, BigDecimal original,
@@ -64,8 +140,8 @@ public final class CustomOrderPricingService {
         List<CustomOrderDataService.PrintMaterialOption> materials=new ArrayList<>();List<CustomOrderDataService.PrintSizePresetOption> presets=new ArrayList<>();
         try(var p=c.prepareStatement("SELECT print_material_id,material_name FROM custom_order_print_materials WHERE is_active ORDER BY material_name");var r=p.executeQuery()){while(r.next())materials.add(new CustomOrderDataService.PrintMaterialOption(r.getLong(1),r.getString(2)));}
         try(var p=c.prepareStatement("SELECT print_size_preset_id,print_material_id,preset_name,pricing_mode,fixed_price FROM custom_order_print_size_presets WHERE is_active ORDER BY preset_name");var r=p.executeQuery()){while(r.next())presets.add(new CustomOrderDataService.PrintSizePresetOption(r.getLong(1),r.getLong(2),r.getString(3),r.getString(4),r.getBigDecimal(5)));}
-        try(var p=c.prepareStatement("SELECT o.customer_name,COALESCE(a.require_charge_authorization,FALSE),CASE WHEN a.custom_order_discount_enabled THEN a.custom_order_discount_percent ELSE 0 END,COALESCE(cc.round_custom_orders_to_nearest_twenty,TRUE) FROM custom_orders o JOIN customer_accounts a ON a.customer_id=o.customer_id LEFT JOIN company_customization cc ON cc.location_id=o.location_id WHERE o.custom_order_id=?")) {
-            p.setLong(1,id);try(var r=p.executeQuery()){if(!r.next())throw new SQLException("Customer was not found.");return new PricingDetails(paid,discount,lines,r.getString(1),r.getBoolean(2),discount?r.getBigDecimal(3):BigDecimal.ZERO,r.getBoolean(4),materials,presets);}
+        try(var p=c.prepareStatement("SELECT o.customer_name,COALESCE(a.require_charge_authorization,FALSE),CASE WHEN a.custom_order_discount_enabled THEN a.custom_order_discount_percent ELSE 0 END,COALESCE(cc.round_custom_orders_to_nearest_twenty,TRUE),o.order_notes FROM custom_orders o LEFT JOIN customer_accounts a ON a.customer_id=o.customer_id LEFT JOIN company_customization cc ON cc.location_id=o.location_id WHERE o.custom_order_id=?")) {
+            p.setLong(1,id);try(var r=p.executeQuery()){if(!r.next())throw new SQLException("Customer was not found.");return new PricingDetails(paid,discount,lines,r.getString(1),r.getBoolean(2),discount?r.getBigDecimal(3):BigDecimal.ZERO,r.getBoolean(4),materials,presets,r.getString(5),additionOptions(c));}
         }
     }
     public static Calculated calculate(Snapshot saved,PricingLine line,BigDecimal customerRate,boolean round) {
@@ -107,11 +183,19 @@ public final class CustomOrderPricingService {
     }
     public static void finalizePrice(Connection c,long id,int location,PricingDetails details,List<AuthorizedLine> lines,
             CustomerChargeAuthorizationService.Authorization authorization,int actor,String actorName,String device,String deviceName)throws SQLException {
+        finalizePrice(c,id,location,details,lines,authorization,actor,actorName,device,deviceName,CustomOrderCredit::reject);
+    }
+
+    static <E extends Exception> void finalizePrice(Connection c,long id,int location,PricingDetails details,
+            List<AuthorizedLine> lines,CustomerChargeAuthorizationService.Authorization authorization,
+            int actor,String actorName,String device,String deviceName,CustomOrderCredit.Approver<E> approver)
+            throws SQLException,E {
         if(!pending(c,id,location))throw new SQLException("This order already has a final price.");
         BigDecimal total=CurrencyFormatter.customOrderTotal(lines.stream().map(l->l.price().total()).reduce(BigDecimal.ZERO,BigDecimal::add),details.roundToNearestTwenty());
-        BigDecimal balance=finalBalance(total,details.paid());int customer;
-        try(var p=c.prepareStatement("SELECT customer_id FROM custom_orders WHERE custom_order_id=? AND location_id=? FOR UPDATE")){p.setLong(1,id);p.setInt(2,location);try(var r=p.executeQuery()){if(!r.next())throw new SQLException("Order was not found.");customer=r.getInt(1);}}
-        if(balance.signum()>0)CustomerChargeAuthorizationService.validateRequired(c,customer,authorization);
+        BigDecimal balance=finalBalance(total,details.paid());Integer customer;
+        try(var p=c.prepareStatement("SELECT customer_id FROM custom_orders WHERE custom_order_id=? AND location_id=? FOR UPDATE")){p.setLong(1,id);p.setInt(2,location);try(var r=p.executeQuery()){if(!r.next())throw new SQLException("Order was not found.");customer=(Integer)r.getObject(1);}}
+        CustomOrderCredit.Charge charge = CustomOrderCredit.check(c,customer,location,balance,false,approver);
+        if(customer!=null&&balance.signum()>0)CustomerChargeAuthorizationService.validateRequired(c,customer,authorization);
         for(var l:lines) {
             var input=l.input();var price=l.price();
             try(var p=c.prepareStatement("""
@@ -135,12 +219,16 @@ public final class CustomOrderPricingService {
         }
         BigDecimal required=BigDecimal.ZERO;
         try(var p=c.prepareStatement("SELECT COALESCE(custom_order_minimum_deposit_percent,0) FROM company_customization WHERE location_id=?")){p.setInt(1,location);try(var r=p.executeQuery()){if(r.next())required=CurrencyFormatter.normalize(total.multiply(r.getBigDecimal(1)).divide(BigDecimal.valueOf(100),6,RoundingMode.HALF_UP));}}
-        try(var p=c.prepareStatement("SELECT custom_order_deposit_exempt FROM customer_accounts WHERE customer_id=? AND is_active=TRUE")){p.setInt(1,customer);try(var r=p.executeQuery()){if(r.next()&&r.getBoolean(1))required=BigDecimal.ZERO;}}
-        try(var p=c.prepareStatement("UPDATE custom_orders SET pricing_state='FINAL',total_amount=?,balance_due=?,payment_status=?,pricing_finalized_at=now(),pricing_finalized_by_user_id=?,pricing_finalized_by_name=?,minimum_deposit_required=?,customer_discount_percent=?,customer_discount_applied=?,customer_discount_amount=?,updated_at=now() WHERE custom_order_id=? AND location_id=? AND pricing_state='PENDING'")) {
-            p.setBigDecimal(1,total);p.setBigDecimal(2,balance);p.setString(3,balance.signum()==0?"PAID":details.paid().signum()==0?"UNPAID":"PARTIAL");p.setInt(4,actor);p.setString(5,actorName);p.setBigDecimal(6,required);p.setBigDecimal(7,details.customerDiscountPercent());p.setBoolean(8,details.customerDiscountPercent().signum()>0);p.setBigDecimal(9,lines.stream().map(l->l.price().discountAmount().subtract(calculate(l.saved(),l.input(),BigDecimal.ZERO,details.roundToNearestTwenty()).discountAmount()).max(BigDecimal.ZERO)).reduce(BigDecimal.ZERO,BigDecimal::add));p.setLong(10,id);p.setInt(11,location);if(p.executeUpdate()!=1)throw new SQLException("The price was already finalized. Reload the order.");
+        if(customer!=null)try(var p=c.prepareStatement("SELECT custom_order_deposit_exempt FROM customer_accounts WHERE customer_id=? AND is_active=TRUE")){p.setInt(1,customer);try(var r=p.executeQuery()){if(r.next()&&r.getBoolean(1))required=BigDecimal.ZERO;}}
+        try(var p=c.prepareStatement("UPDATE custom_orders SET pricing_state='FINAL',total_amount=?,balance_due=?,payment_status=?,pricing_finalized_at=now(),pricing_finalized_by_user_id=?,pricing_finalized_by_name=?,minimum_deposit_required=?,customer_discount_percent=?,customer_discount_applied=?,customer_discount_amount=?,payment_method=CASE WHEN ? THEN 'ACCOUNT' ELSE payment_method END,updated_at=now() WHERE custom_order_id=? AND location_id=? AND pricing_state='PENDING'")) {
+            p.setBigDecimal(1,total);p.setBigDecimal(2,balance);p.setString(3,balance.signum()==0?"PAID":details.paid().signum()==0?"UNPAID":"PARTIAL");p.setInt(4,actor);p.setString(5,actorName);p.setBigDecimal(6,required);p.setBigDecimal(7,details.customerDiscountPercent());p.setBoolean(8,details.customerDiscountPercent().signum()>0);p.setBigDecimal(9,lines.stream().map(l->l.price().discountAmount().subtract(calculate(l.saved(),l.input(),BigDecimal.ZERO,details.roundToNearestTwenty()).discountAmount()).max(BigDecimal.ZERO)).reduce(BigDecimal.ZERO,BigDecimal::add));p.setBoolean(10,charge!=null);p.setLong(11,id);p.setInt(12,location);if(p.executeUpdate()!=1)throw new SQLException("The price was already finalized. Reload the order.");
         }
-        if(balance.signum()>0)try(var p=c.prepareStatement("INSERT INTO customer_account_transactions(customer_id,custom_order_id,location_id,amount,transaction_type,note,user_name,device_id,device_name) VALUES(?,?,?,?,'CUSTOM_ORDER_BALANCE','Custom order pricing finalized',?,?,?) RETURNING transaction_id")) {
+        if(customer!=null&&balance.signum()>0)try(var p=c.prepareStatement("INSERT INTO customer_account_transactions(customer_id,custom_order_id,location_id,amount,transaction_type,note,user_name,device_id,device_name) VALUES(?,?,?,?,'CUSTOM_ORDER_BALANCE','Custom order pricing finalized',?,?,?) RETURNING transaction_id")) {
             p.setInt(1,customer);p.setLong(2,id);p.setInt(3,location);p.setBigDecimal(4,balance);p.setString(5,actorName);p.setString(6,device);p.setString(7,deviceName);try(var r=p.executeQuery()){r.next();CustomerChargeAuthorizationService.insert(c,r.getLong(1),customer,location,"CUSTOM_ORDER",id,authorization,actor,actorName,UUID.fromString(device),deviceName);}
+        }
+        if (charge != null) {
+            CustomerAccountLedgerService.repairCustomerBalance(c, customer);
+            charge.audit(c,id,balance,actor,actorName,device,deviceName);
         }
         audit(c,id,"FINALIZE_PRICE","pricing_state","PENDING","FINAL","Final total: "+total+"; deposits: "+details.paid()+"; balance: "+balance,actor,actorName,device,deviceName);
         LanCustomOrderWorkflowService.reconcileSettledDelivery(c,id,location,actor,actorName,device,deviceName);

@@ -80,6 +80,33 @@ class StudioSubmissionQueueDatabaseTest {
         assertThrows(IllegalArgumentException.class,()->call(StudioSubmissionQueue.object("action","LIST","session",session.get("session"))));
         var wrong=StudioSubmissionQueue.object("action","INFO","token",LanSecurity.randomToken());assertThrows(SecurityException.class,()->StudioSubmissionQueue.publicRequest(c,wrong,(s,t)->{fail("Invalid token must not read templates");return null;}));
     }
+    @Test void templateSourceCutoverKeepsLinksCodesSessionsAndPendingSubmissions()throws Exception {
+        JsonObject session=setup();UUID submission=UUID.randomUUID();submit(session,submission,payload());
+        String linkHash,codeHash;
+        try(var s=c.createStatement();var r=s.executeQuery("SELECT token_hash,code_hash FROM studio_template_submission_links")){
+            r.next();linkHash=r.getString(1);codeHash=r.getString(2);
+        }
+        JsonObject design=JsonParser.parseString(head.get("content").getAsString()).getAsJsonObject();
+        design.addProperty("name","Renamed SmartDrive design");
+        design.add("smartDrive",StudioSubmissionQueue.object("id",template.toString(),"storageStoreId","17","kind","BADGE"));
+        head.addProperty("content",design.toString());head.addProperty("name","Renamed SmartDrive design");
+        head.addProperty("sha256",LanSecurity.sha256(design.toString()));head.addProperty("storageStoreId",17);
+        head.addProperty("ownerStoreId",18);head.add("sharedStoreIds",new JsonArray());
+        SmartDriveLibraryGateway.verifyTemplate(head,17,template);
+        JsonObject form=call(StudioSubmissionQueue.object("action","FORM","session",session.get("session"))).getAsJsonObject("form");
+        assertEquals("Renamed SmartDrive design",form.get("name").getAsString());
+        assertEquals(head.get("sha256").getAsString(),form.get("templateRevision").getAsString());
+        assertNotNull(login("organization-code").get("session"));
+        var pending=staff(3,StudioSubmissionQueue.object("action","QUEUE_LIST")).getAsJsonArray("submissions");
+        assertEquals(1,pending.size());assertEquals(submission.toString(),pending.get(0).getAsJsonObject().get("id").getAsString());
+        var request=StudioSubmissionQueue.object("action","FORM","token",token,"session",session.get("session"));
+        assertThrows(java.io.IOException.class,()->StudioSubmissionQueue.publicRequest(c,request,(store,id)->{throw new java.io.IOException("Synthetic SmartDrive outage");}));
+        assertNotNull(call(request).get("form"));
+        try(var s=c.createStatement();var r=s.executeQuery("SELECT token_hash,code_hash FROM studio_template_submission_links")){
+            r.next();assertEquals(linkHash,r.getString(1));assertEquals(codeHash,r.getString(2));
+        }
+        assertEquals(1,count("studio_template_submissions"));
+    }
     @Test void claimsPreventDuplicatePrintsAndPrinterAcceptanceLinksDurableRecord()throws Exception{
         var session=setup();UUID id=UUID.randomUUID();submit(session,id,payload());
         var request=StudioSubmissionQueue.object("action","QUEUE_CLAIM","submissionId",id.toString());JsonObject claim=staff(3,request);

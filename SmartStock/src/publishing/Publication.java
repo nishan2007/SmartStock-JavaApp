@@ -10,6 +10,7 @@ public final class Publication {
   public String title = "Untitled publication", displayUnit = "MM";
   public double width = 90, height = 50;
   public boolean template;
+  public StudioDriveIdentity smartDrive;
   public Long orderId, lineId;
   public List<Page> pages = new ArrayList<>();
   public List<Page> masters = new ArrayList<>();
@@ -19,6 +20,8 @@ public final class Publication {
   public transient Map<String, String> assets = new LinkedHashMap<>();
   /** Local immutable source files; never serialized as machine paths. */
   public transient Map<String, java.nio.file.Path> assetFiles = new LinkedHashMap<>();
+  /** Optional job-only decoded images. Soft references allow reclamation before large exports. */
+  public transient Map<String, java.lang.ref.SoftReference<java.awt.image.BufferedImage>> decodedAssets = new LinkedHashMap<>();
   public Set<String> assetIds(){Set<String> ids=new LinkedHashSet<>(assets.keySet());ids.addAll(assetFiles.keySet());return ids;}
   public java.io.InputStream openAsset(String id)throws java.io.IOException {
     if(assetFiles.containsKey(id))return java.nio.file.Files.newInputStream(assetFiles.get(id));
@@ -31,9 +34,11 @@ public final class Publication {
     return (long)encoded.length()/4*3-(encoded.endsWith("==")?2:encoded.endsWith("=")?1:0);
   }
   public byte[] assetBytes(String id)throws java.io.IOException {
-    try(var input=openAsset(id)){byte[] value=input.readNBytes(100*1024*1024+1);if(value.length>100*1024*1024)throw new java.io.IOException("Image exceeds 100 MiB.");return value;}
+    try(var input=openAsset(id)){return input.readAllBytes();}
   }
   public List<Map<String, String>> mergeRows = new ArrayList<>();
+  /** Ordered user-defined fields, including fields with no records yet. */
+  public List<String> mergeColumns = new ArrayList<>();
   public SheetLayout.Settings print = new SheetLayout.Settings();
 
   public Publication() {
@@ -71,7 +76,10 @@ public final class Publication {
     public String font = "SansSerif", fill = "#ffffff", color = "#222222", stroke = "#222222";
     public double x = 5, y = 5, width = 60, height = 15, rotation, fontSize = 12, strokeWidth = .25;
     public double cropX, cropY, cropWidth = 1, cropHeight = 1;
-    public boolean bold, italic, underline, strike, textOutline, locked;
+    /** An image slot may be saved and printed before it has a photo. */
+    public boolean photoPlaceholder;
+    public boolean bold, italic, underline, strike, textOutline, locked, hidden;
+    public TextAlignment textAlignment;
     public String textOutlineColor="#000000";
     public double textOutlineWidth=.2;
     /** Geometry text stretches to its original Publisher field; imported text artwork is optional. */
@@ -99,6 +107,7 @@ public final class Publication {
     Publication p = JSON.fromJson(JSON.toJson(this), Publication.class);
     p.assets = new LinkedHashMap<>(assets);
     p.assetFiles = new LinkedHashMap<>(assetFiles);
+    p.decodedAssets = new LinkedHashMap<>(decodedAssets);
     return p;
   }
 
@@ -143,6 +152,7 @@ public final class Publication {
   }
 
   public void validate() {
+    if(smartDrive!=null)smartDrive.validate();
     if (version != 1 && version != 2)
       throw new IllegalArgumentException("Unsupported publication version: " + version);
     positive(width);
@@ -223,6 +233,7 @@ public final class Publication {
             || (!e.story.isBlank() && !stories.containsKey(e.story)))
           throw new IllegalArgumentException("Duplicate object identifier or invalid style/story.");
         if (e.transparency<0||e.transparency>100)throw new IllegalArgumentException("Invalid image transparency.");
+        if (e.photoPlaceholder && !e.type.equals("IMAGE")) throw new IllegalArgumentException("Only images can be photo placeholders.");
         if (!Double.isFinite(e.x + e.y + e.rotation + e.strokeWidth)
             || e.text == null
             || e.text.length() > 100000
@@ -247,6 +258,9 @@ public final class Publication {
     for (var story : stories.entrySet())
       if (story.getKey() == null || story.getValue() == null || story.getValue().length() > 1000000)
         throw new IllegalArgumentException("Invalid text story.");
+    if(mergeColumns==null||mergeColumns.size()>200||new HashSet<>(mergeColumns).size()!=mergeColumns.size()
+        ||mergeColumns.stream().anyMatch(key->key==null||!key.matches("[A-Za-z][A-Za-z0-9_]{0,99}")))
+      throw new IllegalArgumentException("Invalid merge columns.");
     for (var row : mergeRows)
       if (row == null
           || row.size() > 200

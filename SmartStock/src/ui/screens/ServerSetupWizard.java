@@ -49,6 +49,8 @@ public final class ServerSetupWizard extends JFrame {
     private final JButton backButton = new JButton("Back");
     private final JButton nextButton = new JButton("Continue");
     private final JButton advancedButton = new JButton("Advanced Settings");
+    private final JComboBox<services.StoreNetworkProvisioning.NetworkChoice> networkAddress=new JComboBox<>();
+    private boolean detectingNetwork;
 
     private final JTextField projectUrl = new JTextField();
     private final JTextField publishableKey = new JTextField();
@@ -265,10 +267,18 @@ public final class ServerSetupWizard extends JFrame {
         finalChecks.setFont(new Font("Monospaced", Font.PLAIN, 14));
         finalChecks.setBorder(new EmptyBorder(18, 18, 18, 18));
         finalChecks.setText("Ready to install and verify server services.");
-        page.add(note("SmartStock installs automatic startup, starts the LAN and sync "
+        JPanel introduction=DeckersSwing.panel();introduction.setLayout(new BorderLayout(0,12));
+        introduction.add(note("SmartStock installs automatic startup, starts the LAN and sync "
                 + "services, verifies local and cloud access, and uses LocalSubnet for "
-                + "the Windows firewall rule. You will then complete the first online login."),
+                + "the Windows firewall rule. Approved production servers also prepare protected "
+                + "remote maintenance with administrator sign-in and approved keys. You will then complete the first online login."),
                 BorderLayout.NORTH);
+        JPanel network=DeckersSwing.panel();network.setLayout(new BorderLayout(12,0));
+        network.add(new JLabel("Store network address"),BorderLayout.WEST);
+        networkAddress.setToolTipText("Choose the reserved, statically configured address used by store phones and registers.");
+        network.add(networkAddress,BorderLayout.CENTER);
+        introduction.add(network,BorderLayout.SOUTH);
+        page.add(introduction,BorderLayout.NORTH);
         page.add(new JScrollPane(finalChecks), BorderLayout.CENTER);
         return page;
     }
@@ -388,6 +398,7 @@ public final class ServerSetupWizard extends JFrame {
         if (step == 3) refreshLocalState();
         if (step == 4) loadStores();
         if (step == 5) refreshAdministratorState();
+        if (step == 6) refreshNetworkChoices();
     }
 
     private void performCurrentStep() {
@@ -795,6 +806,11 @@ public final class ServerSetupWizard extends JFrame {
     }
 
     private void finishServer() {
+        if(detectingNetwork){statusLabel.setText("Wait for store network detection to finish.");return;}
+        var selectedNetwork=(services.StoreNetworkProvisioning.NetworkChoice)networkAddress.getSelectedItem();
+        if(networkAddress.getItemCount()>1&&selectedNetwork==null){
+            JOptionPane.showMessageDialog(this,"Choose the network address used by store phones and registers.");return;
+        }
         setBusy(true, "Installing, starting, and checking server services...");
         finalChecks.setText("… Checking local database\n… Checking Supabase sync API\n"
                 + "… Installing background service\n… Starting LAN service\n");
@@ -802,6 +818,8 @@ public final class ServerSetupWizard extends JFrame {
             @Override
             protected String doInBackground() throws Exception {
                 StringBuilder result = new StringBuilder();
+                if(selectedNetwork!=null&&EnvironmentProfile.active()==EnvironmentProfile.PRODUCTION&&PostgresRuntimeService.isWindowsRuntime())
+                    services.StoreNetworkProvisioning.saveAddress(selectedNetwork.address());
                 services.ServerSetupGuardService.Activation activation =
                         services.ServerSetupGuardService.prepareToStart();
                 result.append("✓ ").append(activation.message()).append("\n");
@@ -874,6 +892,25 @@ public final class ServerSetupWizard extends JFrame {
             }
         };
         worker.execute();
+    }
+
+    private void refreshNetworkChoices(){
+        if(detectingNetwork)return;detectingNetwork=true;networkAddress.setEnabled(false);
+        new SwingWorker<List<services.StoreNetworkProvisioning.NetworkChoice>,Void>(){
+            private String saved;
+            @Override protected List<services.StoreNetworkProvisioning.NetworkChoice> doInBackground()throws Exception{
+                saved=services.StoreNetworkProvisioning.savedAddress();return services.StoreNetworkProvisioning.networkChoices();
+            }
+            @Override protected void done(){
+                try{
+                    var choices=get();networkAddress.removeAllItems();
+                    for(var choice:choices)networkAddress.addItem(choice);
+                    if(choices.size()>1)networkAddress.setSelectedIndex(-1);
+                    for(var choice:choices)if(choice.address().equals(saved))networkAddress.setSelectedItem(choice);
+                }catch(Exception ex){statusLabel.setText("Store network detection is unavailable; secure access setup will wait.");}
+                finally{detectingNetwork=false;networkAddress.setEnabled(networkAddress.getItemCount()>0);}
+            }
+        }.execute();
     }
 
     private void completeWizard() {

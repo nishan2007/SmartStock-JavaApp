@@ -110,6 +110,8 @@ public class AppMenuBar {
         JMenuItem newItemItem = new JMenuItem("New Item");
         JMenuItem editItemItem = new JMenuItem("Edit Item");
         JMenuItem photoStudioItem = new JMenuItem("Create Product Photos…");
+        JMenuItem imageCoverageItem = new JMenuItem("Product Image Coverage…");
+        JMenuItem adReviewsItem = new JMenuItem("Review Product Ads…");
         JMenuItem employeeMgmtItem = new JMenuItem("Employee Management");
         JMenuItem timeClockItem = new JMenuItem("Time Clock");
         JMenuItem sessionTimeClockItem = new JMenuItem("Time Clock");
@@ -159,7 +161,8 @@ public class AppMenuBar {
         boolean canCustomOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER");
         boolean canOrders = PermissionManager.hasPermission("CREATE_CUSTOM_ORDER")
                 || PermissionManager.hasPermission("MANAGE_CUSTOM_ORDERS")
-                || PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS");
+                || PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS")
+                || PermissionManager.hasPermission("MANAGE_SALES_TASKS");
 
         boolean canEmployeeMgmt = PermissionManager.hasPermission("EMPLOYEE_MANAGEMENT");
         boolean canTimeClock = PermissionManager.hasPermission("TIME_CLOCK");
@@ -173,7 +176,9 @@ public class AppMenuBar {
         boolean canWorkstationPreferences = hasWorkstationPreferencesPermission();
         boolean canChangeStore = DatabaseConfig.load().mode() == DatabaseMode.REMOTE_ADMIN
                 || (PermissionManager.hasPermission("CHANGE_STORE") && !isStoreLockedToConfiguredLocation());
-        boolean canOpenMainMenu = canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canReports || canOrdersManagerDashboard || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canQuotationsInvoices || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canViewEmployeeSchedule || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
+        boolean canOpenMainMenu = PermissionManager.hasPermission("STORE_KEYS_SELF") || PermissionManager.hasPermission("STORE_KEYS_ASSIST")
+                || PermissionManager.hasPermission("STORE_KEYS_CONFIGURE") || PermissionManager.hasPermission("STORE_KEYS_FORCE_RETURN")
+                || PermissionManager.hasPermission("STORE_KEYS_HISTORY") || canMakeSale || canProcessReturns || canBalanceDrawer || canBalanceSheet || canReports || canOrdersManagerDashboard || canNewItem || canEditItem || canEnterInventory || canReceivingHistory || canStoreTransfer || canCustomOrderItems || canDepartmentManagement || canVendorManagement || canMaintenanceManagement || canViewSales || canViewInventory || canCustomerAccounts || canQuotationsInvoices || canCustomOrders || canOrders || canEmployeeMgmt || canTimeClock || canPayrollDashboard || canViewEmployeeSchedule || canRoleManagement || canDeviceManagement || canMachineManagement || canPartsManagement || canCompanyCustomization || canWorkstationPreferences;
         String screenKey = currentScreen == null ? "" : currentScreen.trim();
         if (!canOpenMainMenu || "MainMenu".equalsIgnoreCase(screenKey)) {
             mainMenuItem.setEnabled(false);
@@ -454,9 +459,19 @@ public class AppMenuBar {
             }
         });
         photoStudioItem.setVisible(canEditItem);
+        imageCoverageItem.setVisible(canEditItem);
+        adReviewsItem.setVisible(canEditItem);
+        adReviewsItem.addActionListener(e -> {
+            if(PermissionManager.requirePermission("EDIT_ITEM",parent,"Review Product Ads"))
+                new ui.screens.ProductAdReviewDialog(parent).setVisible(true);
+        });
         photoStudioItem.addActionListener(e -> {
             if (PermissionManager.requirePermission("EDIT_ITEM", parent, "Create Product Photos"))
                 new ui.screens.CatalogPhotoStudioDialog(parent).setVisible(true);
+        });
+        imageCoverageItem.addActionListener(e -> {
+            if (PermissionManager.requirePermission("EDIT_ITEM", parent, "View Product Image Coverage"))
+                new ui.screens.ProductImageCoverageDialog(parent).setVisible(true);
         });
 
         ViewSalesItem.addActionListener(new ActionListener() {
@@ -674,6 +689,10 @@ public class AppMenuBar {
         pointOfSaleMenu.add(mainMenuItem);
         pointOfSaleMenu.addSeparator();
         pointOfSaleMenu.add(makeSaleItem);
+        JMenuItem salesTasksItem=new JMenuItem("Sales Tasks");
+        salesTasksItem.setEnabled(PermissionManager.hasPermission("MANAGE_SALES_TASKS")&&!"SalesTasks".equalsIgnoreCase(screenKey));
+        salesTasksItem.addActionListener(e->{if(PermissionManager.requirePermission("MANAGE_SALES_TASKS",parent,"Sales Tasks"))NavigationManager.openSalesTasks(parent);});
+        pointOfSaleMenu.add(salesTasksItem);
         pointOfSaleMenu.add(returnSaleItem);
         pointOfSaleMenu.add(ViewSalesItem);
         pointOfSaleMenu.add(customerAccountsItem);
@@ -683,6 +702,10 @@ public class AppMenuBar {
         operationsMenu.add(reportsItem);
         operationsMenu.add(maintenanceManagementItem);
 
+        JMenuItem workQueueItem=new JMenuItem("Work Queue");
+        workQueueItem.setEnabled(!"WorkQueue".equalsIgnoreCase(screenKey)&&(PermissionManager.hasPermission("MANAGE_SALES_TASKS")||PermissionManager.hasPermission("VIEW_ASSIGNED_CUSTOM_ORDERS")||canOrders||canOrdersManagerDashboard));
+        workQueueItem.addActionListener(e->NavigationManager.openWorkQueue(parent));
+        ordersMenu.add(workQueueItem);
         ordersMenu.add(ordersManagerDashboardItem);
         ordersMenu.add(invoicesItem);
         ordersMenu.add(customOrdersItem);
@@ -699,9 +722,18 @@ public class AppMenuBar {
         inventoryMenu.add(newItemItem);
         inventoryMenu.add(editItemItem);
         inventoryMenu.add(photoStudioItem);
+        inventoryMenu.add(imageCoverageItem);
+        inventoryMenu.add(adReviewsItem);
 
         employeeMenu.add(employeeMgmtItem);
         employeeMenu.add(timeClockItem);
+        if (PermissionManager.hasPermission("STORE_KEYS_SELF") || PermissionManager.hasPermission("STORE_KEYS_ASSIST")
+                || PermissionManager.hasPermission("STORE_KEYS_CONFIGURE") || PermissionManager.hasPermission("STORE_KEYS_FORCE_RETURN")
+                || PermissionManager.hasPermission("STORE_KEYS_HISTORY")) {
+            JMenuItem storeKeysItem=new JMenuItem("Store Keys");
+            storeKeysItem.addActionListener(e->{Integer location=managers.SessionManager.getCurrentLocationId();if(location!=null)new ui.screens.StoreKeysDialog(parent,location).setVisible(true);});
+            employeeMenu.add(storeKeysItem);
+        }
         employeeMenu.add(payrollDashboardItem);
         employeeMenu.add(weeklyScheduleItem);
 
@@ -723,6 +755,7 @@ public class AppMenuBar {
         JMenuItem syncStatusItem = new JMenuItem("Sync Status");
         JMenuItem remoteQueueItem = new JMenuItem("Remote Change Status");
         JMenuItem mobileItemWebItem = new JMenuItem("Mobile Item Web App…");
+        JMenuItem receivingWebItem = new JMenuItem("Receiving Inventory Web App…");
         JMenuItem storefrontStatusItem = new JMenuItem("Website Status…");
         JMenuItem schedulerWebItem = new JMenuItem("Scheduler Web App…");
         JMenuItem employeeWebItem = new JMenuItem("Employee Web App…");
@@ -777,6 +810,11 @@ public class AppMenuBar {
         mobileItemWebItem.setVisible(canViewMobileWeb || canControlMobileWeb);
         mobileItemWebItem.setEnabled(canViewMobileWeb || canControlMobileWeb);
         mobileItemWebItem.addActionListener(e -> new MobileItemWebDialog(parent).setVisible(true));
+        boolean canViewReceivingWeb = mobileWebMode != DatabaseMode.REMOTE_ADMIN
+                && PermissionManager.hasPermission("RECEIVING_INVENTORY");
+        receivingWebItem.setVisible(canViewReceivingWeb || canControlMobileWeb);
+        receivingWebItem.setEnabled(canViewReceivingWeb || canControlMobileWeb);
+        receivingWebItem.addActionListener(e -> new MobileItemWebDialog(parent,"receiving=1").setVisible(true));
         boolean canViewSchedulerWeb = mobileWebMode != DatabaseMode.REMOTE_ADMIN
                 && PermissionManager.hasPermission("ACCESS_SCHEDULER_WEB")
                 && PermissionManager.hasPermission("VIEW_EMPLOYEE_SCHEDULE");
@@ -838,6 +876,7 @@ public class AppMenuBar {
         statusMenu.add(syncStatusItem);
         statusMenu.add(remoteQueueItem);
         statusMenu.add(mobileItemWebItem);
+        statusMenu.add(receivingWebItem);
         statusMenu.add(schedulerWebItem);
         statusMenu.add(employeeWebItem);
         storefrontStatusItem.setVisible(PermissionManager.hasPermission("VIEW_SALES"));

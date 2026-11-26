@@ -80,7 +80,7 @@ class CustomerCustomOrderDepositExemptionTest {
         Object device = JSON.fromJson("{deviceId:'00000000-0000-0000-0000-000000000001'}", types[1]);
         Object session = JSON.fromJson("{userId:1,locationId:1}", types[2]);
         Object user = JSON.fromJson("{userId:1,username:'test',fullName:'Test',locationId:1,locationName:'Test'}", types[3]);
-        return (ServerCustomOrderDataService.OrderSaveRequest) method.invoke(server, db.connection(), device, session, user, request);
+        return (ServerCustomOrderDataService.OrderSaveRequest) method.invoke(server, db.connection(), device, session, user, request,false);
     }
 
     /** Narrow JDBC fixture: no application configuration or live database access. */
@@ -95,7 +95,7 @@ class CustomerCustomOrderDepositExemptionTest {
             return proxy(PreparedStatement.class, (p,m,a) -> {
                 if (m.getName().startsWith("set")) { args.put((Integer)a[0], a[1]); return null; }
                 if (m.getName().equals("executeUpdate")) {
-                    if (sql.startsWith("UPDATE customer_accounts SET account_number")) savedExempt = (Boolean)args.get(25);
+                    if (sql.startsWith("UPDATE customer_accounts SET account_number")) savedExempt = (Boolean)args.get(24);
                     return 1;
                 }
                 if (!m.getName().equals("executeQuery")) return zero(m.getReturnType());
@@ -103,12 +103,14 @@ class CustomerCustomOrderDepositExemptionTest {
                 if (sql.contains("JOIN role_permissions")) {
                     boolean allowed = "CUSTOMER_ACCOUNTS".equals(args.get(2)) || (canExempt && "CUSTOM_ORDER_DEPOSIT_OVERRIDE".equals(args.get(2)));
                     return rows(allowed ? List.of(1) : null);
-                } else if (sql.contains("SELECT EXISTS(SELECT 1 FROM customer_phone_ownership")) {
+                } else if (sql.contains("SELECT EXISTS(SELECT 1 FROM customer_accounts")) {
                     row = List.of(false);
+                } else if (sql.startsWith("SELECT additional_phone_1")) {
+                    row = Arrays.asList(null,null,null,null,null);
                 } else if (sql.startsWith("SELECT account_number,credit_limit")) {
                     row = Arrays.asList("CA42", BigDecimal.ZERO, "", false, BigDecimal.ZERO, false, BigDecimal.ZERO, false, BigDecimal.ZERO, exempt);
                 } else if (sql.contains("INSERT INTO customer_accounts")) {
-                    savedExempt = (Boolean)args.get(22); row = List.of(42,"CA42");
+                    savedExempt = (Boolean)args.get(21); row = List.of(42,"CA42");
                 } else if (sql.contains("SELECT customer_id,name")) {
                     row = List.of(42,"Customer","CA42","",false,false,BigDecimal.ZERO,exempt);
                 } else if (sql.contains("round_custom_orders_to_nearest_twenty")) row = List.of(false);

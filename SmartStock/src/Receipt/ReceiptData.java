@@ -8,6 +8,9 @@ import java.util.List;
 
 public class ReceiptData {
     private String loyaltySummary="";
+    private String taskPaymentSummary="";
+    public String getTaskPaymentSummary(){return taskPaymentSummary;}
+    public ReceiptData withTaskPaymentSummary(String summary){taskPaymentSummary=summary==null?"":summary;return this;}
     public String getLoyaltySummary(){return loyaltySummary;}
     public ReceiptData withLoyaltySummary(String summary){loyaltySummary=summary==null?"":summary;return this;}
     private final int saleId;

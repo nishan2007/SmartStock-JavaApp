@@ -44,7 +44,7 @@ public class ServerAccountPaymentReceiptBuilder {
     private static AccountPaymentReceiptData loadPaymentHeader(Connection conn, int customerId, long transactionId) throws SQLException {
         String sql = """
                 SELECT t.transaction_id,
-                       COALESCE(t.payment_id, 'PAY-' || LPAD(t.transaction_id::text, 6, '0')) AS payment_id,
+                       (CASE WHEN EXISTS(SELECT 1 FROM invoice_audit_log a WHERE a.invoice_id=t.invoice_id AND a.action_type='PAYMENT_CANCELLED' AND a.field_name='cancelled_document_id' AND a.old_value=t.transaction_id::text) THEN 'CANCELLED - ' ELSE '' END) || COALESCE(t.payment_id, 'PAY-' || LPAD(t.transaction_id::text, 6, '0')) AS payment_id,
                        t.location_id,
                        (t.created_at AT TIME ZONE ?) AS payment_time,
                        COALESCE(l.name, 'Unknown Store') AS store_name,
@@ -106,17 +106,19 @@ public class ServerAccountPaymentReceiptBuilder {
                            WHEN a.sale_id IS NOT NULL THEN 'Sale ' || COALESCE(NULLIF(s.receipt_number, ''), a.sale_id::text)
                            WHEN a.custom_order_id IS NOT NULL THEN 'Custom Order ' || COALESCE(NULLIF(co.order_number, ''), a.custom_order_id::text)
                            WHEN a.invoice_id IS NOT NULL THEN 'Invoice ' || COALESCE(NULLIF(i.invoice_number, ''), a.invoice_id::text)
+                           WHEN a.minutes_id IS NOT NULL THEN 'Minutes MIN-' || a.minutes_id || COALESCE(' / ' || NULLIF(m.destination_phone, ''), '')
                            ELSE 'Account Balance'
                        END AS target_label,
                        COALESCE(a.amount, 0) AS applied_amount,
-                       COALESCE(s.total_amount, co.total_amount, i.total_amount, 0) AS charge_total,
-                       COALESCE(s.amount_paid, co.amount_paid, i.amount_paid, 0) AS charge_paid,
-                       COALESCE(s.payment_status, co.payment_status, i.payment_status, '') AS payment_status,
-                       (COALESCE(s.created_at, co.created_at, i.created_at) AT TIME ZONE ?) AS charge_date
+                       COALESCE(s.total_amount, co.total_amount, i.total_amount, m.amount, 0) AS charge_total,
+                       COALESCE(s.amount_paid, co.amount_paid, i.amount_paid, m.amount_paid, 0) AS charge_paid,
+                       COALESCE(s.payment_status, co.payment_status, i.payment_status, CASE WHEN m.reversed_at IS NOT NULL THEN 'REVERSED' WHEN m.amount_paid>=m.amount THEN 'PAID' ELSE 'PARTIAL' END, '') AS payment_status,
+                       (COALESCE(s.created_at, co.created_at, i.created_at, m.created_at) AT TIME ZONE ?) AS charge_date
                 FROM customer_account_payment_allocations a
                 LEFT JOIN sales s ON s.sale_id = a.sale_id
                 LEFT JOIN custom_orders co ON co.custom_order_id = a.custom_order_id
                 LEFT JOIN invoices i ON i.invoice_id = a.invoice_id
+                LEFT JOIN phone_minutes_sales m ON m.minutes_id = a.minutes_id
                 WHERE a.payment_transaction_id = ?
                 ORDER BY a.allocation_id ASC
                 """;

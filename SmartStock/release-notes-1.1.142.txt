@@ -1,0 +1,1 @@
+Fix SmartStudio queued photo background removal being skipped after printing. Show missing-model and server-memory wait reasons while retaining automatic retry.

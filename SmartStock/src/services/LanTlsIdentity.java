@@ -128,6 +128,12 @@ public final class LanTlsIdentity {
         return hostname.endsWith(".local") ? hostname : hostname + ".local";
     }
 
+    static String mobileWebRevision() throws Exception {
+        String host=configuredMobileWebHost();
+        Path path=host.isBlank()?KEYSTORE:KEYSTORE.getParent().resolve("mobile-web-"+host+".p12");
+        return host+":"+(Files.isRegularFile(path)?HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path))):"missing");
+    }
+
     static String validateMobileWebHost(String value) {
         String host = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
         if (host.isBlank()) return "";

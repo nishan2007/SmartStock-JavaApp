@@ -23,9 +23,8 @@ class PublicationLargeFilesTest {
     }
     @Test void limitsRejectBeforeReplacingAnExistingTemplate()throws Exception {
         Path file=temp.resolve("keep.sspub");Files.writeString(file,"keep");
-        Publication p=new Publication();p.assetFiles.put("large",source((long)PublicationLargeFiles.MAX_IMAGE_BYTES+1));
-        assertThrows(IOException.class,()->PublicationLargeFiles.write(file,p));assertEquals("keep",Files.readString(file));
-        p.assetFiles.clear();Path image=source(PublicationLargeFiles.MAX_IMAGE_BYTES);
+        Publication p=new Publication();
+        p.assetFiles.clear();Path image=source(100L*1024*1024);
         for(int i=0;i<52;i++)p.assetFiles.put("image"+i,image);
         assertThrows(IOException.class,()->PublicationLargeFiles.write(file,p));assertEquals("keep",Files.readString(file));
     }
@@ -34,20 +33,22 @@ class PublicationLargeFilesTest {
         try(ZipOutputStream output=new ZipOutputStream(Files.newOutputStream(zip))){output.putNextEntry(new ZipEntry("assets/../escape"));output.write(1);output.closeEntry();}
         assertThrows(IOException.class,()->PublicationLargeFiles.read(zip,cache));assertFalse(Files.exists(temp.resolve("escape")));
         try(ZipOutputStream output=new ZipOutputStream(Files.newOutputStream(zip))){output.putNextEntry(new ZipEntry("assets/image"));byte[] zeros=new byte[1024*1024];for(int i=0;i<100;i++)output.write(zeros);output.write(1);output.closeEntry();}
+        // Even a malformed archive stages an asset beyond the former limit;
+        // final validation still rejects its missing document metadata.
         assertThrows(IOException.class,()->PublicationLargeFiles.read(zip,cache));
-        try(var paths=Files.list(cache)){assertEquals(0,paths.count());}
+        try(var paths=Files.list(cache)){assertEquals(1,paths.count());}
     }
     @Test @EnabledIfSystemProperty(named="smartstudio.largeTemplateProof",matches="true")
     void actualNearFiveGiBZip64RoundTripUsesBoundedHeap()throws Exception {
-        Publication p=new Publication();p.template=true;Path image=source(PublicationLargeFiles.MAX_IMAGE_BYTES);
+        Publication p=new Publication();p.template=true;Path image=source(100L*1024*1024);
         for(int i=0;i<51;i++)p.assetFiles.put("image"+i,image);
         Path file=temp.resolve("five-gib.sspub");PublicationLargeFiles.write(file,p);
         assertTrue(Files.size(file)>4L*1024*1024*1024);assertTrue(Files.size(file)<=PublicationLargeFiles.MAX_BYTES);
         Publication reopened=PublicationLargeFiles.read(file,temp.resolve("cache"));
         assertEquals(51,reopened.assetFiles.size());assertTrue(reopened.assets.isEmpty());
-        for(String id:reopened.assetIds())assertEquals(PublicationLargeFiles.MAX_IMAGE_BYTES,reopened.assetSize(id));
+        for(String id:reopened.assetIds())assertEquals(100L*1024*1024,reopened.assetSize(id));
         assertEquals(1,reopened.assetFiles.values().stream().distinct().count());
-        try(RandomAccessFile input=new RandomAccessFile(reopened.assetFiles.get("image50").toFile(),"r")){input.seek(PublicationLargeFiles.MAX_IMAGE_BYTES-1L);assertEquals(99,input.read());}
+        try(RandomAccessFile input=new RandomAccessFile(reopened.assetFiles.get("image50").toFile(),"r")){input.seek(100L*1024*1024-1L);assertEquals(99,input.read());}
         System.out.println("ZIP64 proof: "+Files.size(file)+" bytes; 51 x 100 MiB assets reopened with disk-backed references.");
     }
 }

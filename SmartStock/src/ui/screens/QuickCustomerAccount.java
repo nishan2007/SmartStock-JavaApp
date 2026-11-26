@@ -21,18 +21,52 @@ public class QuickCustomerAccount extends JFrame {
     private JTextField accountNumberField;
     private JTextField nameField;
     private JTextField phoneField;
+    private final JTextField additionalPhone1Field = new JTextField();
+    private final JTextField additionalPhone2Field = new JTextField();
+
+    private final JTextField phoneLabelField = phoneLabelField("Main number type");
+    private final JTextField additionalPhone1LabelField = phoneLabelField("Additional number 1 type");
+    private final JTextField additionalPhone2LabelField = phoneLabelField("Additional number 2 type");
+
+    private static JTextField phoneLabelField(String name) {
+        JTextField field = new JTextField(8);
+        field.putClientProperty("JTextField.placeholderText", "Type");
+        field.setToolTipText("Optional type, e.g. Personal, Business, Home or Work");
+        field.getAccessibleContext().setAccessibleName(name);
+        return field;
+    }
+
+    private JPanel phoneNumbersPanel() {
+        JPanel panel = new JPanel(new java.awt.GridBagLayout());
+        panel.setOpaque(false);
+        JTextField[] numbers = {phoneField, additionalPhone1Field, additionalPhone2Field};
+        JTextField[] types = {phoneLabelField, additionalPhone1LabelField, additionalPhone2LabelField};
+        String[] labels = {"Main:", "Additional 1:", "Additional 2:"};
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.insets = new Insets(2, 3, 2, 3);
+        for (int row = 0; row < numbers.length; row++) {
+            constraints.gridy = row;
+            constraints.gridx = 0; constraints.weightx = 0;
+            panel.add(new JLabel(labels[row]), constraints);
+            constraints.gridx = 1; constraints.weightx = 0.65;
+            panel.add(numbers[row], constraints);
+            constraints.gridx = 2; constraints.weightx = 0.35;
+            panel.add(types[row], constraints);
+        }
+        return panel;
+    }
     private JTextField emailField;
     private CustomerTypeSelector customerTypeSelector;
     private JTextField creditLimitField;
     private JTextArea accountNotesArea;
-    private JCheckBox businessAccountCheckBox;
 
     public QuickCustomerAccount(Runnable afterSave) {
         this.afterSave = afterSave;
         this.canSetCreditLimit = PermissionManager.hasPermission("SET_CREDIT_LIMIT");
 
         setTitle("New Customer Account");
-        setSize(460, canSetCreditLimit ? 500 : 450);
+        setSize(460, canSetCreditLimit ? 570 : 520);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout(12, 12));
@@ -76,7 +110,6 @@ public class QuickCustomerAccount extends JFrame {
         phoneField = new JTextField();
         emailField = new JTextField();
         customerTypeSelector = new CustomerTypeSelector();
-        businessAccountCheckBox = new JCheckBox("Business Account");
         creditLimitField = new JTextField("0");
         accountNotesArea = new JTextArea(4, 20);
         accountNotesArea.setLineWrap(true);
@@ -86,23 +119,15 @@ public class QuickCustomerAccount extends JFrame {
         addField(formPanel, gbc, 0, "Account #:", accountNumberField);
         addField(formPanel, gbc, 1, "Name:", nameField);
         addField(formPanel, gbc, 2, "Customer Type:", customerTypeSelector);
-        addField(formPanel, gbc, 3, "Phone:", phoneField);
+        addField(formPanel, gbc, 3, "Phone numbers:", phoneNumbersPanel());
         addField(formPanel, gbc, 4, "Email:", emailField);
 
-        gbc.gridx = 0;
-        gbc.gridy = 5;
-        gbc.weightx = 0;
-        formPanel.add(new JLabel("Account Type:"), gbc);
-        gbc.gridx = 1;
-        gbc.weightx = 1;
-        formPanel.add(businessAccountCheckBox, gbc);
-
         if (canSetCreditLimit) {
-            addField(formPanel, gbc, 6, "Credit Limit:", creditLimitField);
+            addField(formPanel, gbc, 5, "Credit Limit:", creditLimitField);
         }
         JScrollPane notesScrollPane = new JScrollPane(accountNotesArea);
         notesScrollPane.setPreferredSize(new Dimension(0, 82));
-        addField(formPanel, gbc, canSetCreditLimit ? 7 : 6, "Notes:", notesScrollPane);
+        addField(formPanel, gbc, canSetCreditLimit ? 6 : 5, "Notes:", notesScrollPane);
 
         return formPanel;
     }
@@ -139,7 +164,7 @@ public class QuickCustomerAccount extends JFrame {
         if (customerTypeId == null && !customerTypeSelector.getSelectedCustomerTypeName().isBlank()) {
             return;
         }
-        boolean businessAccount = businessAccountCheckBox.isSelected();
+
         BigDecimal creditLimit = BigDecimal.ZERO;
 
         if (name.isEmpty()) {
@@ -160,7 +185,7 @@ public class QuickCustomerAccount extends JFrame {
 
         try {
             LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(
-                    null,"",name,customerTypeId,phone,email,creditLimit,businessAccount,true,accountNotes);
+                    null,"",name,customerTypeId,phone,email,creditLimit,true,accountNotes).withAdditionalPhones(additionalPhone1Field.getText(),additionalPhone2Field.getText()).withPhoneLabels(phoneLabelField.getText(),additionalPhone1LabelField.getText(),additionalPhone2LabelField.getText());
             String fingerprint=request.toString();
             if(pendingSaveKey==null||!fingerprint.equals(pendingFingerprint)){
                 pendingFingerprint=fingerprint;pendingSaveKey=UUID.randomUUID().toString();

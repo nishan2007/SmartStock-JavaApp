@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Payroll · Deckers</title><link rel="stylesheet" href="payroll.css"><script src="payroll.js" defer></script></head><body>
+<main class="payroll-app" aria-label="Payroll">
+<div class="payroll-filters"><label><span>Store</span><select id="payrollStore" aria-label="Store"><option value="0">All stores</option></select></label><label><span>Pay period</span><select id="payrollPeriod" aria-label="Pay period"><option value="">Loading pay periods…</option></select></label></div>
+<p id="payrollStatus" role="status" aria-live="polite">Loading payroll…</p>
+<div id="payrollEmployees" class="payroll-employees"></div>
+<div id="payrollTotals" class="payroll-totals" hidden></div>
+<p id="payrollScope" class="payroll-scope" hidden>Store selection filters employees. Their totals and payment balance cover the entire pay period across stores.</p>
+<button id="payrollRefresh" class="payroll-refresh" type="button">Refresh payroll</button>
+</main></body></html>

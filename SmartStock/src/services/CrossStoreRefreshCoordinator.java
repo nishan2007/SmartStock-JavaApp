@@ -76,7 +76,15 @@ final class CrossStoreRefreshCoordinator {
         try {
             var response=SupabaseServerApi.postRpc(operation,body);
             CloudTransferMetrics.record(c,operation,location,body.toString(),response.body());
-            if(!response.successful())throw new SQLException("Changed-row cloud sync failed (HTTP "+response.statusCode()+"). Check cloud migration capability.");
+            if(!response.successful()) {
+                if(response.statusCode()==400 && body.has("p_table_name") &&
+                        CrossStoreDelta.ORDER_DETAIL_TABLES.contains(body.get("p_table_name").getAsString())) {
+                    JsonObject error=JsonParser.parseString(response.body()).getAsJsonObject();
+                    if(error.has("message") && "Unsupported cross-store table".equals(error.get("message").getAsString()))
+                        throw new SQLException("Optional cross-store order details are unavailable.","0A000");
+                }
+                throw new SQLException("Changed-row cloud sync failed (HTTP "+response.statusCode()+"). Check cloud migration capability.");
+            }
             return JsonParser.parseString(response.body()).getAsJsonObject();
         }catch(InterruptedException ex){Thread.currentThread().interrupt();throw new SQLException("Cross-store download interrupted.",ex);}
         catch(java.io.IOException|RuntimeException ex){throw new SQLException("Cross-store download unavailable.",ex);}
@@ -127,7 +135,7 @@ final class CrossStoreRefreshCoordinator {
                     ? CrossStoreInventoryService.rebuild(c,store,source):count(c,"sync_cross_store_inventory_cache",store.locationId());
             int sales=affected(download,"products","sales","sale_items","sale_returns","sale_return_items")
                     ? CrossStoreSalesService.rebuild(c,store,source):count(c,"sync_cross_store_sales_cache",store.locationId());
-            int history=affected(download,"sales","customer_account_transactions","custom_orders","quotations","invoices")
+            int history=affected(download,"sales","customer_account_transactions","custom_orders","quotations","invoices","phone_minutes_sales")
                     ? CrossStoreCustomerHistoryService.rebuild(c,store,source):count(c,"sync_cross_store_customer_history_cache",store.locationId());
             mark(c,store,"inventory",inventory,"CURRENT",null,manifest.completedAt());
             mark(c,store,"sales",sales,"CURRENT",null,manifest.completedAt());

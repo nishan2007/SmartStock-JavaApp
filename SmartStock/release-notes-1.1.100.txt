@@ -1,0 +1,5 @@
+SmartStock 1.1.100
+
+Custom service items now open a photo detail view with main/additional/active-variant galleries, thumbnail navigation, and colour, size or linked variant selectors. Selecting an option displays its corresponding photo. Plaque details include related plaque shapes and access to template-ready designers. Compact service sections remain grouped by main Item Type. Missing-template sublimation designers remain on hold.
+
+Update POS-SERVER before registers and deploy matching website assets. Existing AI models remain separate and preserved. Physical hardware requires installed-system verification.

@@ -7,11 +7,21 @@ import java.util.function.*;
 
 /** Physical picture dimensions; ratio locking is on by default for each selected picture. */
 final class ImageFormattingToolbar extends JPanel {
-    record Picture(Object key,double width,double height,int transparency){Picture(Object key,double width,double height){this(key,width,height,0);}}
+    record Picture(Object key,double width,double height,int transparency,double rotation){Picture(Object key,double width,double height,int transparency){this(key,width,height,transparency,0);}Picture(Object key,double width,double height){this(key,width,height,0,0);}}
     record Size(double width,double height){}
     final JSpinner width=new JSpinner(new SpinnerNumberModel(25.,.01,2000.,.5)),height=new JSpinner(new SpinnerNumberModel(25.,.01,2000.,.5));
     final JSpinner transparency=new JSpinner(new SpinnerNumberModel(0,0,100,5));
     void setTransparencyEditor(IntConsumer action){add(new JLabel("Transparency %"));add(transparency);transparency.setToolTipText("0% is solid; 100% is invisible.");transparency.addChangeListener(e->{if(!updating&&selection.get()!=null){action.accept((Integer)transparency.getValue());refresh();}});refresh();}
+    final JSpinner angle=new JSpinner(new SpinnerNumberModel(0.,-360.,360.,1.));
+    private DoubleConsumer rotatePicture;
+    static double normalized(double degrees){if(!Double.isFinite(degrees))throw new IllegalArgumentException("Enter a finite rotation angle.");return ((degrees%360)+360)%360;}
+    void setRotationEditor(DoubleConsumer action){
+        rotatePicture=action;
+        add(StudioWorkspaceShell.button("Left 90°",()->turn(-90)));add(StudioWorkspaceShell.button("Right 90°",()->turn(90)));add(StudioWorkspaceShell.button("Rotate 180°",()->turn(180)));
+        add(new JLabel("Rotation °"));angle.setPreferredSize(new Dimension(90,40));angle.setEditor(new JSpinner.NumberEditor(angle,"0.##"));angle.getAccessibleContext().setAccessibleName("Picture rotation in degrees");angle.setToolTipText("Enter an angle such as 30 or 45 degrees. Rotation is clockwise around the picture centre.");add(angle);
+        angle.addChangeListener(e->{if(!updating&&selection.get()!=null){rotatePicture.accept(normalized(((Number)angle.getValue()).doubleValue()));refresh();}});refresh();
+    }
+    private void turn(double degrees){var picture=selection.get();if(picture!=null&&rotatePicture!=null){rotatePicture.accept(normalized(picture.rotation()+degrees));refresh();}}
     final JCheckBox locked=new JCheckBox("Lock aspect ratio",true);
     final JComboBox<String> units=new JComboBox<>(new String[]{"mm","inches"});
     private final Supplier<Picture> selection;private final Consumer<Size> apply;private Object key;private boolean updating;
@@ -21,19 +31,19 @@ final class ImageFormattingToolbar extends JPanel {
         this(selection,apply,null);
     }
     ImageFormattingToolbar(Supplier<Picture> selection,Consumer<Size> apply,Runnable recolour){
-        super(new FlowLayout(FlowLayout.LEFT,6,2));setOpaque(false);this.selection=selection;this.apply=apply;
+        super(new FlowLayout(FlowLayout.LEFT,6,2));setOpaque(false);this.selection=selection;this.apply=apply;units.setSelectedIndex(1);units.setPreferredSize(new Dimension(92,40));
         add(new JLabel("Picture size"));add(new JLabel("Width"));add(width);add(new JLabel("Height"));add(height);add(units);add(locked);locked.setOpaque(false);
         for(var spinner:new JSpinner[]{width,height}){spinner.setPreferredSize(new Dimension(100,28));spinner.setEditor(new JSpinner.NumberEditor(spinner,"0.###"));}
         locked.setToolTipText("Locked: changing either size adjusts the other to preserve this picture's current proportions.");
         width.addChangeListener(e->resize(true));height.addChangeListener(e->resize(false));units.addActionListener(e->refresh());refresh();
         if(recolour!=null){JButton button=StudioWorkspaceShell.button("Recolour picture…",recolour);add(button);refresh();}
     }
-    void refresh(){Picture picture=selection.get();updating=true;try{
+    void refresh(){Picture picture=selection.get();putClientProperty("studio.selection.available",picture!=null);updating=true;try{
         for(Component c:getComponents())c.setEnabled(picture!=null);if(picture==null)return;
         if(!Objects.equals(key,picture.key())){key=picture.key();locked.setSelected(true);}
         double factor=units.getSelectedIndex()==1?25.4:1;
         for(var spinner:new JSpinner[]{width,height}){var model=(SpinnerNumberModel)spinner.getModel();model.setMinimum(.01/factor);model.setMaximum(maximumMm/factor);model.setStepSize(factor==1?.5:.01);}
-        transparency.setValue(picture.transparency());
+        transparency.setValue(picture.transparency());angle.setValue(normalized(picture.rotation()));
         width.setValue(picture.width()/factor);height.setValue(picture.height()/factor);
     }finally{updating=false;}}
     static Size resized(Picture picture,boolean changeWidth,double value,boolean lock){

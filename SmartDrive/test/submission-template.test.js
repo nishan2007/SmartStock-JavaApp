@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { once } from 'node:events';
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { fileLibrary } from '../src/files.js';
+import { driveServer } from '../src/server.js';
+
+test('serves current badge revisions for authorized customer links while enforcing employee store scope', async t => {
+    const root = await mkdtemp(join(tmpdir(), 'smartdrive-submission-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const stores = { 1: join(root, '1'), 2: join(root, '2') };
+    await mkdir(stores[1]);
+    const parts = ['Studio Jobs', 'BADGE', 'Access-2', 'Original.sstbadge'];
+    await mkdir(join(stores[2], ...parts.slice(0, -1)), { recursive: true });
+    const identity = { id: '11111111-1111-4111-8111-111111111111', storageStoreId: '1', kind: 'BADGE' };
+    const document = { name: 'School intake', savePrintRecords: true, elements: [{ type: 'TEXT', field: 'Student', label: 'Student name' }], smartDrive: identity };
+    const original = join(stores[2], ...parts);
+    await writeFile(original, JSON.stringify(document));
+    const library = fileLibrary({ storeRoots: stores, fileIdKey: Buffer.alloc(32, 5),
+        migrationRecords: [{ legacy: identity, store: '2', parts }] });
+    await assert.rejects(library.templateHead({ storeIds: ['1'] }, '1', identity.id), /unavailable/u);
+    const renamed = join(stores[2], ...parts.slice(0, -1), 'Renamed.sstbadge');
+    await rename(original, renamed);
+    document.elements.push({ type: 'TEXT', field: 'Class', label: 'Class' });
+    const content = JSON.stringify(document);
+    await writeFile(renamed, content);
+    const head = await library.linkedTemplate('1', identity.id);
+    assert.equal(head.id, identity.id);
+    assert.equal(head.storageStoreId, 1);
+    assert.equal(head.ownerStoreId, 2);
+    assert.equal(head.content, content);
+    assert.equal(head.sha256, createHash('sha256').update(content).digest('hex'));
+    assert.equal((await library.templateHead({ storeIds: ['2'] }, '1', identity.id)).sha256, head.sha256);
+    const token = 'a'.repeat(64);
+    const server = driveServer({ library, employeeSession: async () => null,
+        studioBridge: { token, server: 'DECKERSDRIVE', share: 'DeckersDrive' } });
+    server.listen(0, '127.0.0.1');await once(server, 'listening');
+    t.after(() => new Promise(resolve => server.close(resolve)));
+    const endpoint = `http://127.0.0.1:${server.address().port}/internal/studio/template`;
+    const body = { store: '1', id: identity.id, storeIds: ['1'], linkAuthorized: true };
+    const options = { method: 'POST', headers: { 'X-SmartDrive-Service': token }, body: JSON.stringify(body) };
+    assert.equal((await fetch(endpoint, { ...options, headers: {} })).status, 404);
+    assert.equal((await fetch(endpoint, { ...options, body: JSON.stringify({ ...body, linkAuthorized: false }) })).status, 404);
+    const allowed = await fetch(endpoint, options);
+    assert.equal(allowed.status, 200);
+    assert.equal((await allowed.json()).content, content);
+});

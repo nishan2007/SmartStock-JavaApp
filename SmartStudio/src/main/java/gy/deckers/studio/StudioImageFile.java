@@ -12,7 +12,7 @@ final class StudioImageFile {
         Loaded(byte[] bytes,BufferedImage image,String name){this(bytes,image,name,image.getWidth(),image.getHeight());}
     }
     static final int PHOTO_MAX_BYTES=20*1024*1024;
-    static final int ARTWORK_MAX_BYTES=100*1024*1024;
+    static final int ARTWORK_MAX_BYTES=Integer.MAX_VALUE-8;
     static Loaded loadArtwork(Path path)throws Exception {
         byte[] bytes;
         try(InputStream stream=Files.newInputStream(path)){bytes=stream.readNBytes(ARTWORK_MAX_BYTES+1);}
@@ -20,7 +20,7 @@ final class StudioImageFile {
         return artwork(bytes,path.getFileName().toString());
     }
     static Loaded artwork(byte[] bytes,String name)throws IOException {
-        if(bytes.length==0||bytes.length>ARTWORK_MAX_BYTES)throw new IOException("Banner artwork supports PNG/JPEG files up to 100 MiB. The complete local banner template can contain up to 5 GiB of assets and design data.");
+        if(bytes.length==0||bytes.length>ARTWORK_MAX_BYTES)throw new IOException("Artwork exceeds the in-memory import capacity. Use a smaller encoded PNG/JPEG.");
         try(var input=new MemoryCacheImageInputStream(new ByteArrayInputStream(bytes))){
             var readers=ImageIO.getImageReaders(input);if(!readers.hasNext())throw new IOException("Choose a valid PNG or JPEG image.");
             var reader=readers.next();try{

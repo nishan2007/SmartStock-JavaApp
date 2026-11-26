@@ -56,7 +56,7 @@ final class CrossStoreTransferSyncService {
     static int applyInbox(Connection connection, int locationId) throws SQLException {
         List<InboxEvent> events = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement("""
-                SELECT cloud_sequence,event_type,payload
+                SELECT cloud_sequence,event_type,payload,origin_location_id
                 FROM sync_inbox
                 WHERE event_type IN ('STORE_TRANSFER_CREATED','STORE_TRANSFER_RECEIVED')
                   AND status IN ('RECEIVED','FAILED')
@@ -64,7 +64,7 @@ final class CrossStoreTransferSyncService {
                 """)) {
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    events.add(new InboxEvent(rs.getLong(1), rs.getString(2), rs.getString(3)));
+                    events.add(new InboxEvent(rs.getLong(1), rs.getString(2), rs.getString(3),rs.getInt(4)));
                 }
             }
         }
@@ -74,6 +74,10 @@ final class CrossStoreTransferSyncService {
             connection.setAutoCommit(false);
             try {
                 JsonObject payload = JsonParser.parseString(event.payload()).getAsJsonObject();
+                if(payload.has("change_action")) {
+                    int owner=requiredPositive(payload,CREATED.equals(event.eventType())?"source_location_id":"destination_location_id");
+                    if(owner!=event.originLocationId())throw new SQLException("Transfer change origin does not match its owning store.");
+                }
                 if (CREATED.equals(event.eventType())
                         && (!payload.has("transfer_uuid") || !payload.has("items"))) {
                     mark(connection,event.sequence(),"IGNORED_LEGACY",
@@ -122,6 +126,109 @@ final class CrossStoreTransferSyncService {
                 SyncOutboxService.recordJsonEvent(connection, RECEIVED, payload, locationId,
                         deviceId.toString(), userId);
             }
+        }
+    }
+
+    static JsonObject changeEnvelope(Connection c,long id,int locationId)throws SQLException {
+        return transferPayload(c,id,locationId);
+    }
+
+    static void requestChange(Connection c,JsonObject payload,int locationId,UUID deviceId,int userId)throws SQLException {
+        // Use the existing source-to-destination envelope and destination-to-source acknowledgement routes.
+        SyncOutboxService.recordJsonEvent(c,CREATED,payload,locationId,deviceId.toString(),userId);
+    }
+
+    private static void applyChange(Connection c,JsonObject payload,int locationId)throws SQLException {
+        UUID uuid=requiredUuid(payload,"transfer_uuid");
+        UUID request=requiredUuid(payload,"change_request_id");
+        // A retried envelope must never overwrite a later edit or recreate cancelled stock.
+        try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM sync_outbox WHERE event_type='STORE_TRANSFER_RECEIVED' AND payload->>'change_request_id'=? LIMIT 1")) {
+            ps.setString(1,request.toString());try(ResultSet rs=ps.executeQuery()){if(rs.next())return;}
+        }
+        String action=text(payload,"change_action",20);
+        if(!java.util.Set.of("EDIT","CANCEL").contains(action))throw new SQLException("Invalid transfer change action.");
+        long id;String status;
+        try(PreparedStatement ps=c.prepareStatement("SELECT transfer_id,status,from_location_id FROM store_transfers WHERE transfer_uuid=? AND to_location_id=? FOR UPDATE")) {
+            ps.setObject(1,uuid);ps.setInt(2,locationId);
+            try(ResultSet rs=ps.executeQuery()) {
+                if(!rs.next())throw new SQLException("Incoming transfer must synchronize before its change request.");
+                if(rs.getInt(3)!=requiredPositive(payload,"source_location_id"))throw new SQLException("Transfer source mismatch.");
+                id=rs.getLong(1);status=rs.getString(2);
+            }
+        }
+        boolean accepted="PENDING".equalsIgnoreCase(status);
+        if(accepted) {
+            if("EDIT".equals(action))replaceItems(c,id,payload);
+            try(PreparedStatement ps=c.prepareStatement("UPDATE store_transfers SET status=?,note=? WHERE transfer_id=?")) {
+                ps.setString(1,"CANCEL".equals(action)?"CANCELLED":"PENDING");
+                ps.setString(2,text(payload,"note",1000));ps.setLong(3,id);ps.executeUpdate();
+            }
+        }
+        JsonObject ack=payload.deepCopy();ack.addProperty("change_accepted",accepted);
+        ack.addProperty("destination_status",status);
+        SyncOutboxService.recordJsonEvent(c,RECEIVED,ack,locationId,null,null);
+    }
+
+    private static void applyChangeAcknowledgement(Connection c,JsonObject payload,int locationId)throws SQLException {
+        UUID uuid=requiredUuid(payload,"transfer_uuid");
+        String expected="CHANGE_PENDING:"+requiredUuid(payload,"change_request_id");
+        long id;
+        try(PreparedStatement ps=c.prepareStatement("SELECT transfer_id,status,to_location_id FROM store_transfers WHERE transfer_uuid=? AND from_location_id=? FOR UPDATE")) {
+            ps.setObject(1,uuid);ps.setInt(2,locationId);
+            try(ResultSet rs=ps.executeQuery()) {
+                if(!rs.next())throw new SQLException("Source transfer is unavailable for change acknowledgement.");
+                if(rs.getInt(3)!=requiredPositive(payload,"destination_location_id"))throw new SQLException("Transfer destination mismatch.");
+                if(!expected.equals(rs.getString(2)))return; // Duplicate or superseded acknowledgement.
+                id=rs.getLong(1);
+            }
+        }
+        boolean accepted=payload.get("change_accepted").getAsBoolean();
+        String action=text(payload,"change_action",20);
+        if(!java.util.Set.of("EDIT","CANCEL").contains(action))throw new SQLException("Invalid transfer change acknowledgement.");
+        if(accepted) {
+            java.util.Map<Integer,Integer> deltas=new java.util.TreeMap<>();
+            try(PreparedStatement ps=c.prepareStatement("SELECT product_id,quantity FROM store_transfer_items WHERE transfer_id=? ORDER BY product_id")) {
+                ps.setLong(1,id);try(ResultSet rs=ps.executeQuery()){while(rs.next())deltas.merge(rs.getInt(1),rs.getInt(2),Integer::sum);}
+            }
+            if("EDIT".equals(action))for(JsonElement row:payload.getAsJsonArray("items")) {
+                JsonObject item=row.getAsJsonObject();deltas.merge(requiredPositive(item,"product_id"),-requiredPositive(item,"quantity"),Integer::sum);
+            }
+            try(PreparedStatement stock=c.prepareStatement("UPDATE inventory SET quantity_on_hand=quantity_on_hand+? WHERE product_id=? AND location_id=?");
+                PreparedStatement movement=c.prepareStatement("INSERT INTO inventory_movements(product_id,location_id,change_qty,reason,note,user_name,user_id,device_id) VALUES(?,?,?,?,?,?,?,?)")) {
+                for(var entry:deltas.entrySet()) {
+                    if(entry.getValue()==0)continue;
+                    stock.setInt(1,entry.getValue());stock.setInt(2,entry.getKey());stock.setInt(3,locationId);
+                    if(stock.executeUpdate()!=1)throw new SQLException("Source inventory is unavailable for transfer adjustment.");
+                    movement.setInt(1,entry.getKey());movement.setInt(2,locationId);movement.setInt(3,entry.getValue());
+                    movement.setString(4,"TRANSFER_OUT");movement.setString(5,"transfer_id="+id+"; action="+action+"; request="+requiredUuid(payload,"change_request_id"));
+                    movement.setString(6,text(payload,"change_user_name",300));movement.setInt(7,requiredPositive(payload,"change_user_id"));
+                    movement.setString(8,requiredUuid(payload,"change_device_id").toString());movement.executeUpdate();
+                }
+            }
+            if("EDIT".equals(action))replaceItems(c,id,payload);
+        }
+        String status=accepted&&"CANCEL".equals(action)?"CANCELLED":
+                !accepted&&"RECEIVED".equalsIgnoreCase(text(payload,"destination_status",100))?"RECEIVED":"PENDING";
+        try(PreparedStatement ps=c.prepareStatement("UPDATE store_transfers SET status=?,note=CASE WHEN ? THEN ? ELSE note END WHERE transfer_id=?")) {
+            ps.setString(1,status);ps.setBoolean(2,accepted);ps.setString(3,text(payload,"note",1000));ps.setLong(4,id);ps.executeUpdate();
+        }
+        SyncOutboxService.recordEvent(c,"INVENTORY_MOVEMENT_CREATED",java.util.Map.of("source","STORE_TRANSFER_CHANGE","transfer_id",id,"accepted",accepted),locationId,null,null);
+    }
+
+    private static void replaceItems(Connection c,long id,JsonObject payload)throws SQLException {
+        JsonArray rows=payload.getAsJsonArray("items");
+        if(rows==null||rows.isEmpty()||rows.size()>300)throw new SQLException("Invalid transfer change items.");
+        java.util.Set<Integer> seen=new java.util.HashSet<>();
+        try(PreparedStatement delete=c.prepareStatement("DELETE FROM store_transfer_items WHERE transfer_id=?")) {
+            delete.setLong(1,id);delete.executeUpdate();
+        }
+        try(PreparedStatement insert=c.prepareStatement("INSERT INTO store_transfer_items(transfer_id,product_id,quantity) VALUES(?,?,?)")) {
+            for(JsonElement element:rows) {
+                JsonObject row=element.getAsJsonObject();int product=requiredPositive(row,"product_id"),quantity=requiredPositive(row,"quantity");
+                if(!seen.add(product)||quantity>1_000_000)throw new SQLException("Invalid transfer change quantity.");
+                insert.setLong(1,id);insert.setInt(2,product);insert.setInt(3,quantity);insert.addBatch();
+            }
+            insert.executeBatch();
         }
     }
 
@@ -181,6 +288,7 @@ final class CrossStoreTransferSyncService {
                 ? payload.getAsJsonArray("items") : new JsonArray();
         if (items.isEmpty() || items.size() > 300) throw new SQLException("Transfer event has invalid items.");
 
+        if(payload.has("change_action")) { applyChange(c,payload,locationId);return; }
         Long existing = localTransferId(c, transferUuid);
         if (existing != null) return;
         long localId;
@@ -225,11 +333,20 @@ final class CrossStoreTransferSyncService {
         UUID transferUuid = requiredUuid(payload, "transfer_uuid");
         int source = requiredPositive(payload, "source_location_id");
         if (source != locationId) throw new SQLException("Receipt event is not addressed to this store.");
+        if(payload.has("change_action")) { applyChangeAcknowledgement(c,payload,locationId);return; }
+        // Delivery can reorder a receipt ahead of an accepted edit acknowledgement.
+        // Apply the stock delta first; retry this receipt on the next inbox pass.
+        try(PreparedStatement ps=c.prepareStatement("SELECT status FROM store_transfers WHERE transfer_uuid=? AND from_location_id=? FOR UPDATE")) {
+            ps.setObject(1,transferUuid);ps.setInt(2,locationId);
+            try(ResultSet rs=ps.executeQuery()) {
+                if(rs.next()&&rs.getString(1).startsWith("CHANGE_PENDING:"))throw new SQLException("Awaiting transfer change acknowledgement before applying receipt.");
+            }
+        }
         try (PreparedStatement ps = c.prepareStatement("""
                 UPDATE store_transfers
                 SET status='RECEIVED',received_at=?,received_by_user_id=?,received_by_name=?
                 WHERE transfer_uuid=? AND from_location_id=?
-                  AND UPPER(COALESCE(status,'PENDING'))='PENDING'
+                  AND UPPER(COALESCE(status,'PENDING')) IN ('PENDING','RECEIVED')
                 """)) {
             ps.setTimestamp(1, Timestamp.from(requiredInstant(payload, "received_at")));
             if (payload.has("received_by_user_id") && !payload.get("received_by_user_id").isJsonNull())
@@ -292,5 +409,5 @@ final class CrossStoreTransferSyncService {
         String value=ex.getMessage()==null?ex.getClass().getSimpleName():ex.getMessage();
         return value.substring(0,Math.min(value.length(),1000));
     }
-    private record InboxEvent(long sequence,String eventType,String payload) { }
+    private record InboxEvent(long sequence,String eventType,String payload,int originLocationId) { }
 }

@@ -1,0 +1,3 @@
+SmartStudio 0.1.92
+
+Includes all combined Studio workspace changes and the SmartStock 1.1.96 client dependency, with shared label-printing support and receipt/invoice fixes. Save open drafts before updating. AI models remain separate from application updates.

@@ -15,6 +15,7 @@ final class CrossStoreProductSyncService {
 
     interface CatalogSource {
         Instant completedAt();
+        default boolean hasTags(){return false;}
         List<JsonObject> rows(String table) throws SQLException;
     }
     interface SourceLoader { CatalogSource load(int locationId) throws SQLException; }
@@ -27,6 +28,7 @@ final class CrossStoreProductSyncService {
                 return new CatalogSource() {
                     final Map<String,List<JsonObject>> tables = new HashMap<>();
                     public Instant completedAt() { return manifest.completedAt(); }
+                    public boolean hasTags(){return manifest.hasTable("product_tags")&&manifest.hasTable("product_tag_definitions");}
                     public List<JsonObject> rows(String table) throws SQLException {
                         if (!manifest.hasTable(table)) throw new SQLException("Product source snapshot lacks " + table + ".");
                         if (!tables.containsKey(table)) {
@@ -135,7 +137,14 @@ final class CrossStoreProductSyncService {
         // Categories must precede item types even when the type carries a different category.
         List<Map.Entry<String,JsonObject>> ordered = new ArrayList<>(dependencies.entrySet());
         ordered.sort(Comparator.comparing(e -> !e.getKey().startsWith("categories:")));
-        return new ProductPlan(product.deepCopy(),ordered,assets,barcodes);
+        JsonObject tagged=product.deepCopy();
+        JsonArray tags=new JsonArray();
+        if(source.hasTags()) for(JsonObject assignment:source.rows("product_tags")) {
+            if(Integer.toString(productId).equals(text(assignment,"product_id")))
+                tags.add(find(source,"product_tag_definitions","tag_id",text(assignment,"tag_id")).deepCopy());
+        }
+        if(source.hasTags())tagged.add("_tagSnapshot",tags);
+        return new ProductPlan(tagged,ordered,assets,barcodes);
     }
 
     private static JsonObject addReference(CatalogSource source, Map<String,JsonObject> deps,
@@ -153,6 +162,7 @@ final class CrossStoreProductSyncService {
 
     static boolean applyPlan(Connection c, ProductPlan plan, int sourceLocation) throws SQLException {
         JsonObject incoming = plan.product().deepCopy();
+        JsonArray tags=incoming.has("_tagSnapshot")?incoming.remove("_tagSnapshot").getAsJsonArray():null;
         if ("SMARTSTOCK-MISC".equals(text(incoming,"sku"))) return false;
         // Download is complete before this short, serialized catalog transaction.
         try (var s=c.createStatement()) { s.execute("SELECT pg_advisory_xact_lock(728493,0)"); }
@@ -195,16 +205,46 @@ final class CrossStoreProductSyncService {
         }
         incoming=CatalogIdentityService.resolve(c,"products",incoming,sourceLocation,null);
         String id=text(incoming,"product_id");
+        // Delayed catalog snapshots may contain the retired row and its old
+        // barcode ownership. The permanent alias wins over every stale snapshot.
+        if(CatalogIdentityService.canonicalProductId(c,Integer.parseInt(id))!=Integer.parseInt(id))return false;
         JsonObject existing=localRow(c,"products",id);
+        for (JsonObject asset : plan.assets()) {
+            if (ProductImageIdentity.existing(c,asset) == null) insertOrUpdate(c,"image_assets",asset,false);
+        }
+        incoming=ProductImageIdentity.photos(c,incoming);
         if(existing!=null) {
             if("SMARTSTOCK-MISC".equals(text(existing,"sku")))throw new SQLException("Product identity belongs to this store's system item.");
             if(timestamp(existing,"updated_at").isAfter(timestamp(incoming,"updated_at")))return false;
         }
-        for (JsonObject asset : plan.assets()) {
-            // Existing local image presence and download state belong to this server.
-            if (localRow(c,"image_assets",text(asset,"asset_id")) == null) insertOrUpdate(c,"image_assets",asset,false);
-        }
         insertOrUpdate(c,"products",incoming,true);
+        if(tags!=null) {
+            StorefrontService.execute(c,"DELETE FROM product_tags WHERE product_id=?",Integer.parseInt(id));
+            for(JsonElement element:tags) {
+                JsonObject tag=element.getAsJsonObject();
+                UUID localId;
+                // Resolve the UUID first so a rename updates the same shared tag.
+                StorefrontService.execute(c,"UPDATE product_tag_definitions SET name=?,is_public=?,updated_at=?::timestamptz WHERE tag_id=?::uuid AND updated_at<?::timestamptz AND NOT EXISTS (SELECT 1 FROM product_tag_definitions other WHERE lower(btrim(other.name))=lower(btrim(?)) AND other.tag_id<>?::uuid)",text(tag,"name"),tag.get("is_public").getAsBoolean(),text(tag,"updated_at"),text(tag,"tag_id"),text(tag,"updated_at"),text(tag,"name"),text(tag,"tag_id"));
+                try(var existingTag=c.prepareStatement("SELECT tag_id FROM product_tag_definitions WHERE tag_id=?::uuid")) {
+                    existingTag.setString(1,text(tag,"tag_id"));try(var row=existingTag.executeQuery()) {
+                        if(row.next()){StorefrontService.execute(c,"INSERT INTO product_tags(product_id,tag_id) VALUES(?,?) ON CONFLICT DO NOTHING",Integer.parseInt(id),row.getObject(1));continue;}
+                    }
+                }
+                try(var p=c.prepareStatement("""
+                    INSERT INTO product_tag_definitions(tag_id,name,is_public,created_at,updated_at)
+                    VALUES(?::uuid,?,?,?::timestamptz,?::timestamptz)
+                    ON CONFLICT (lower(btrim(name))) DO UPDATE SET
+                    is_public=CASE WHEN EXCLUDED.updated_at>product_tag_definitions.updated_at THEN EXCLUDED.is_public ELSE product_tag_definitions.is_public END,
+                    updated_at=GREATEST(EXCLUDED.updated_at,product_tag_definitions.updated_at)
+                    RETURNING tag_id
+                    """)) {
+                    p.setString(1,text(tag,"tag_id"));p.setString(2,text(tag,"name"));p.setBoolean(3,tag.get("is_public").getAsBoolean());
+                    p.setString(4,text(tag,"created_at"));p.setString(5,text(tag,"updated_at"));
+                    try(var r=p.executeQuery()){r.next();localId=r.getObject(1,UUID.class);}
+                }
+                StorefrontService.execute(c,"INSERT INTO product_tags(product_id,tag_id) VALUES(?,?) ON CONFLICT DO NOTHING",Integer.parseInt(id),localId);
+            }
+        }
         Set<String> desiredBarcodes = new HashSet<>();
         for (JsonObject row : plan.barcodes()) desiredBarcodes.add(text(row,"barcode"));
         List<String> removed = new ArrayList<>();

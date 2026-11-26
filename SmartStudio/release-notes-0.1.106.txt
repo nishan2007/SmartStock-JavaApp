@@ -1,0 +1,5 @@
+SmartStudio 0.1.106 - faster banner resampling
+
+Reuses unchanged resampling results across jobs and prepared decoded pixels, processes independent images within a memory budget, and records per-stage timings. Resampling dimensions, bicubic quality and lossless pixels are preserved. Uses SmartStock 1.1.139 shared client libraries.
+
+Save open designs before updating. Windows quick update only; no live installation or service restart. Physical printer/cutter verification remains outstanding. AI model weights remain separate.

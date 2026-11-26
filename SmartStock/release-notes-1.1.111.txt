@@ -1,0 +1,3 @@
+Receiving Inventory can scan item barcodes with the rear camera on iPhone and iPad. Tap Scan to search automatically when the barcode is read, or scan a photo.
+
+Delivery review prompts for each product missing a sales shelf at the receiving store. Posting the delivery saves those shelf assignments with the received quantities.

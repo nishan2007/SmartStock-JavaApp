@@ -1,0 +1,7 @@
+SmartStock 1.1.78 - Edit Items web app
+
+Dedicated mobile-friendly Edit Items app with its own home-screen icon, inventory/custom item tabs, camera barcode search, grouped item details, primary and additional barcode editing, and unsaved-change protection. Store identity comes from the authenticated local store server. Access requires the store network, an activated browser, and employee permissions.
+
+Includes current Orders web app presentation and branding refinements. Open Status > Mobile Item Web App, activate the browser, sign in, then choose Edit Items.
+
+Build 101078. Update the store server before registers. AI models remain separate. This update does not deploy the Orders cloud gateway.

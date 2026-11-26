@@ -8,6 +8,22 @@ const env=()=>({
   UPDATE_BUCKET:{get:async key=>key.startsWith('installers/latest/')?null:({size:3,customMetadata:{sha256:'a'.repeat(64)},body:'exe'})}
 });
 const request=(path='/',method='GET')=>new Request('https://downloads.deckers.gy'+path,{method});
+
+test('Windows update service manifest exposes only verified public release metadata',async()=>{
+  const e=env(),a={platform:'windows',version:'1.1.101',buildNumber:101101,size:3,sha256:'a'.repeat(64),filename:'smartstock-windows-setup-1.1.101.exe'};
+  a.key=`installers/windows/${a.version}/${a.sha256}/${a.filename}`;
+  e.INSTALLERS_JSON=JSON.stringify({windows:a});
+  e.UPDATE_BUCKET.head=async()=>({size:3,customMetadata:{sha256:a.sha256}});
+  const response=await portal.fetch(request('/manifest/windows'),e);
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{platform:'windows',version:a.version,buildNumber:101101,size:3,sha256:a.sha256});
+  assert.match(response.headers.get('Cache-Control'),/no-store/);
+  assert.equal(await (await portal.fetch(request('/manifest/windows','HEAD'),e)).text(),'');
+  for(const object of [null,{size:4,customMetadata:{sha256:a.sha256}},{size:3,customMetadata:{sha256:'b'.repeat(64)}}]){
+    e.UPDATE_BUCKET.head=async()=>object;
+    assert.equal((await portal.fetch(request('/manifest/windows'),e)).status,503);
+  }
+});
 test('SmartStudio has a separate verified public download',async()=>{
   const e=env(),a={kind:'studio',platform:'windows',version:'0.1.7',buildNumber:1007,size:3,sha256:'a'.repeat(64),filename:'SmartStudio-setup-0.1.7.exe'};
   a.key=`smartstudio/windows/${a.version}/${a.sha256}/${a.filename}`;

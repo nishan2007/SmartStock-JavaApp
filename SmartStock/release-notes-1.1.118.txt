@@ -1,0 +1,5 @@
+SmartStock 1.1.118 - matching photos across storage migrations
+
+Pending inventory merges can now reuse a photo that one store migrated to OneDrive while another still uses Supabase, when the storage object identity and full SHA-256 match. The local storage provider, files and cloud state remain unchanged. Missing or conflicting content checksums still block cross-provider substitution.
+
+Existing approved merges retry through normal catalogue synchronization. No second merge, database migration or photo upload is needed.

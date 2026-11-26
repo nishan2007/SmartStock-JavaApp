@@ -22,7 +22,15 @@ final class CrossStoreCustomerHistoryService {
         List<Event> events=new ArrayList<>();
         for(JsonObject x:source.get("customer_account_transactions")){
             if(integer(x,"location_id")!=store.locationId())continue;
-            long id=longValue(x,"transaction_id");Long sourceId=firstLong(x,"invoice_id","custom_order_id","sale_id","sales_order_id");
+            long id=longValue(x,"transaction_id");
+            String transactionType=text(x,"transaction_type");
+            Long sourceId=switch(transactionType) {
+                case "SALE_CREDIT","SALE_PAID" -> firstLong(x,"sale_id");
+                case "CUSTOM_ORDER_CREDIT","CUSTOM_ORDER_PAID","CUSTOM_ORDER_BALANCE" -> firstLong(x,"custom_order_id");
+                case "INVOICE_CREDIT","INVOICE_PAID" -> firstLong(x,"invoice_id");
+                case "MINUTES_CREDIT","MINUTES_PAID" -> firstLong(x,"minutes_id");
+                default -> firstLong(x,"invoice_id","custom_order_id","sale_id","sales_order_id");
+            };
             String number=firstText(x,"payment_id","payment_reference");
             events.add(new Event("LEDGER:"+id,integer(x,"customer_id"),text(x,"transaction_type"),sourceId,number,
                     time(text(x,"created_at")),text(x,"user_name"),firstText(x,"device_name","device_id"),text(x,"cash_drawer_name"),
@@ -32,6 +40,12 @@ final class CrossStoreCustomerHistoryService {
         addDocuments(events,store,source,"custom_orders","CUSTOM_ORDER","custom_order_id","order_number","total_amount","payment_status","status","taken_by_name","created_at");
         addDocuments(events,store,source,"quotations","QUOTATION","quotation_id","quotation_number","total_amount",null,"status","created_by_name","created_at");
         addDocuments(events,store,source,"invoices","INVOICE","invoice_id","invoice_number","total_amount","payment_status","status","created_by_name","created_at");
+        for(JsonObject x:source.getOrDefault("phone_minutes_sales",List.of())) {
+            if(integer(x,"location_id")!=store.locationId()||integer(x,"customer_id")<=0)continue;
+            boolean reversed=!text(x,"reversed_at").isBlank();BigDecimal total=decimal(x,"amount"),paid=decimal(x,"amount_paid");
+            BigDecimal due=!reversed&&"CREDIT".equals(text(x,"payment_method"))?total.subtract(paid):BigDecimal.ZERO;
+            events.add(new Event("MINUTES:"+longValue(x,"minutes_id"),integer(x,"customer_id"),"MINUTES",longValue(x,"minutes_id"),"MIN-"+longValue(x,"minutes_id")+(text(x,"destination_phone").isBlank()?"":" / "+text(x,"destination_phone")),time(text(x,"created_at")),text(x,"user_name"),text(x,"device_name"),text(x,"cash_drawer_name"),text(x,"payment_method"),"",total,BigDecimal.ZERO,due.signum()>0?"UNPAID":"PAID",reversed?"REVERSED":"ACTIVE",total,due,text(x,"reversal_reason")));
+        }
         boolean auto=c.getAutoCommit();c.setAutoCommit(false);try{
             try(PreparedStatement ps=c.prepareStatement("DELETE FROM sync_cross_store_customer_history_cache WHERE source_location_id=?")){ps.setInt(1,store.locationId());ps.executeUpdate();}
             try(PreparedStatement ps=c.prepareStatement("""
@@ -57,7 +71,7 @@ final class CrossStoreCustomerHistoryService {
             out.add(new Event(type+":"+id,integer(x,"customer_id"),type,id,text(x,numberKey),time(text(x,createdKey)),text(x,userKey),
                     firstText(x,"device_name","device_id"),text(x,"cash_drawer_name"),text(x,"payment_method"),text(x,"payment_reference"),
                     total,BigDecimal.ZERO,paymentStatusKey==null?"":text(x,paymentStatusKey),text(x,statusKey),total,
-                    "CUSTOM_ORDER".equals(type)?decimal(x,"balance_due"):BigDecimal.ZERO,firstText(x,"invoice_notes","quotation_notes","order_notes")));
+                    "CUSTOM_ORDER".equals(type)&&!"true".equalsIgnoreCase(text(x,"invoice_billed"))?decimal(x,"balance_due"):BigDecimal.ZERO,firstText(x,"invoice_notes","quotation_notes","order_notes")));
         }
     }
 
@@ -68,7 +82,7 @@ final class CrossStoreCustomerHistoryService {
             FROM sync_cross_store_customer_history_cache WHERE customer_id=? AND source_location_id<>? ORDER BY source_created_at DESC,event_key
             """)){ps.setInt(1,customerId);ps.setInt(2,currentLocationId);try(ResultSet rs=ps.executeQuery()){while(rs.next()){
                 Map<String,Object> m=new LinkedHashMap<>();m.put("locationId",rs.getInt(1));m.put("eventId","REMOTE:"+rs.getInt(1)+":"+rs.getString(2));m.put("transactionType",rs.getString(3));
-                m.put("transactionId",null);m.put("paymentId","");String eventType=rs.getString(3);m.put("documentType",List.of("SALE","CUSTOM_ORDER","QUOTATION","INVOICE").contains(eventType)?eventType:"ACCOUNT");m.put("documentId",rs.getObject(4));m.put("documentNumber",rs.getString(5));m.put("createdAtEpochMillis",epoch(rs.getTimestamp(6)));
+                m.put("transactionId",null);m.put("paymentId","");String eventType=rs.getString(3);m.put("documentType",List.of("SALE","CUSTOM_ORDER","QUOTATION","INVOICE","MINUTES").contains(eventType)?eventType:"ACCOUNT");m.put("documentId",rs.getObject(4));m.put("documentNumber",rs.getString(5));m.put("createdAtEpochMillis",epoch(rs.getTimestamp(6)));
                 m.put("storeName",rs.getString(7));m.put("userName",rs.getString(8));m.put("deviceName",rs.getString(9));m.put("cashDrawerName",rs.getString(10));
                 m.put("paymentMethod",rs.getString(11));m.put("paymentReference",rs.getString(12));m.put("amount",rs.getBigDecimal(13));m.put("paymentStatus",rs.getString(14));
                 m.put("documentStatus",rs.getString(15));m.put("chargeTotal",rs.getBigDecimal(16));m.put("note",rs.getString(17));m.put("remote",true);out.add(m);

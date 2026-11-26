@@ -1,0 +1,5 @@
+Deckers Account screen
+
+Centered employee photo and grouped profile information, matching the selected design. Employee photo, name, email and phone are read-only. Missing photos fall back to initials, including the header avatar. Employees can set, edit or remove their own nickname and change their password using their current password and enrolled authenticator. Profile responses exclude all pay information. Device/app access and re-pair remain available below the account controls.
+
+Requires installing this update on the store server; publication alone does not change the running server.

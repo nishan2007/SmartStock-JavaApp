@@ -21,7 +21,7 @@ final class CustomOrderSizeSetEditor extends JPanel {
     private final JLabel summary = new JLabel();
     private List<VariantOption> choices = List.of();
     private List<SizeQuantity> sizes = List.of();
-    private Long itemId;
+    private boolean customerMode; private Long itemId;
     private String colour;
     private Function<VariantOption, BigDecimal> price = v -> BigDecimal.ZERO;
     private Runnable changed = () -> {};
@@ -49,17 +49,22 @@ final class CustomOrderSizeSetEditor extends JPanel {
             && ("FIXED".equals(item.pricingType()) || "VARIABLE".equals(item.pricingType()));
     }
     void configure(CustomItemOption item, List<VariantOption> variants, VariantOption selected, Function<VariantOption, BigDecimal> unitPrice) {
-        Long nextId = item == null ? null : item.customItemId();
+        customerMode = false; Long nextId = item == null ? null : item.customItemId();
         String nextColour = selected == null ? null : selected.effectiveColor();
         if (!Objects.equals(itemId, nextId) || !Objects.equals(colour, nextColour)) reset();
         itemId = nextId; colour = nextColour; choices = eligible(item, variants, selected); price = unitPrice;
         button.setEnabled(choices.size() > 1); refresh();
     }
+    void configureCustomer(String color, Function<VariantOption, BigDecimal> unitPrice) {
+        if (!customerMode || !Objects.equals(colour, color)) reset();
+        customerMode = true; itemId = null; colour = color; price = unitPrice;
+        button.setEnabled(true); refresh();
+    }
     List<SizeQuantity> selections() { return sizes; }
     void restore(List<SizeQuantity> selected) { sizes = List.copyOf(selected); refresh(); changed.run(); }
     void reset() { sizes = List.of(); refresh(); changed.run(); }
     private void refresh() {
-        String hint = choices.size() > 1 ? "Choose quantities for each size."
+        String hint = customerMode ? "Enter sizes and quantities for customer items." : choices.size() > 1 ? "Choose quantities for each size."
             : "Needs two sizes in the selected colour.";
         summary.setText(sizes.isEmpty() ? hint : breakdown(sizes));
         button.setToolTipText(hint);
@@ -74,17 +79,18 @@ final class CustomOrderSizeSetEditor extends JPanel {
     record Content(JTable table, DefaultTableModel model, JPanel panel) {}
     Content content() {
         DefaultTableModel model = new DefaultTableModel(new Object[]{"Size", "Quantity", "Unit price + add-ons", "Subtotal"}, 0) {
-            @Override public boolean isCellEditable(int row, int col) { return col == 1; }
+            @Override public boolean isCellEditable(int row, int col) { return col == 1 || (customerMode && col == 0); }
         };
-        for (VariantOption v : choices) {
+        for (VariantOption v : customerMode ? sizes.stream().map(SizeQuantity::variant).toList() : choices) {
             int count = sizes.stream().filter(s -> Objects.equals(s.variant().variantId(), v.variantId())).mapToInt(SizeQuantity::quantity).sum();
             BigDecimal each = price.apply(v);
             model.addRow(new Object[]{v.effectiveSize(), count, each == null ? "Price pending" : each.toPlainString(), each == null ? "Price pending" : each.multiply(BigDecimal.valueOf(count)).toPlainString()});
         }
+        if (customerMode) for (int i=0;i<12;i++) model.addRow(new Object[]{"",0,price.apply(null),""});
         model.addTableModelListener(e -> {
             if (e.getColumn() != 1 || e.getFirstRow() < 0) return;
             int row = e.getFirstRow();
-            try { BigDecimal each = price.apply(choices.get(row)); model.setValueAt(each == null ? "Price pending" : each.multiply(BigDecimal.valueOf(quantity(model.getValueAt(row, 1)))).toPlainString(), row, 3); }
+            try { BigDecimal each = price.apply(customerMode ? null : choices.get(row)); model.setValueAt(each == null ? "Price pending" : each.multiply(BigDecimal.valueOf(quantity(model.getValueAt(row, 1)))).toPlainString(), row, 3); }
             catch (IllegalArgumentException ex) { model.setValueAt("Invalid quantity", row, 3); }
         });
         JTable table = new JTable(model); table.setRowHeight(30);
@@ -106,7 +112,14 @@ final class CustomOrderSizeSetEditor extends JPanel {
             if (table.isEditing() && !table.getCellEditor().stopCellEditing()) continue;
             try {
                 List<SizeQuantity> result = new ArrayList<>(); int total = 0;
-                for (int row = 0; row < choices.size(); row++) { int n = quantity(model.getValueAt(row, 1)); total += n; if (n > 0) result.add(new SizeQuantity(choices.get(row), n)); }
+                java.util.Set<String> seen = new java.util.HashSet<>();
+                for (int row=0;row<model.getRowCount();row++) {
+                    int n=quantity(model.getValueAt(row,1)); total+=n; if(n==0)continue;
+                    String size=String.valueOf(model.getValueAt(row,0)).trim();
+                    if(customerMode && (size.isBlank() || !seen.add(size.toLowerCase(java.util.Locale.ROOT)))) throw new IllegalArgumentException("Enter a distinct size for each quantity.");
+                    var variant=customerMode?new VariantOption(-(long)(row+1),size,size,colour,size,colour,null,BigDecimal.ZERO):choices.get(row);
+                    result.add(new SizeQuantity(variant,n));
+                }
                 if (total == 0 || total > 5000) throw new IllegalArgumentException("Select between 1 and 5,000 shirts in the set.");
                 restore(result); return;
             } catch (IllegalArgumentException ex) { JOptionPane.showMessageDialog(this, ex.getMessage()); }

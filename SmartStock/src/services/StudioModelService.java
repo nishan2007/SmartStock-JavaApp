@@ -101,7 +101,7 @@ public final class StudioModelService {
         }
     }
 
-    private static ScheduledFuture<?> closeAfter(InputStream input, Duration duration) {
+    static ScheduledFuture<?> closeAfter(InputStream input, Duration duration) {
         return DEADLINES.schedule(() -> { try { input.close(); } catch (IOException ignored) { } },
                 duration.toMillis(), TimeUnit.MILLISECONDS);
     }

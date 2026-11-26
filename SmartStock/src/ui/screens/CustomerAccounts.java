@@ -11,6 +11,8 @@ import ui.helpers.WindowHelper;
 import ui.helpers.UiTaskRunner;
 import ui.helpers.ResponsiveTask;
 import ui.helpers.CustomerCardActions;
+import ui.design.DeckersPalette;
+import managers.CompanyCustomizationManager;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -33,6 +35,41 @@ public class CustomerAccounts extends JFrame {
     private JTextField accountNumberField;
     private JTextField nameField;
     private JTextField phoneField;
+    private final JTextField additionalPhone1Field = new JTextField();
+    private final JTextField additionalPhone2Field = new JTextField();
+
+    private final JTextField phoneLabelField = phoneLabelField("Main number type");
+    private final JTextField additionalPhone1LabelField = phoneLabelField("Additional number 1 type");
+    private final JTextField additionalPhone2LabelField = phoneLabelField("Additional number 2 type");
+
+    private static JTextField phoneLabelField(String name) {
+        JTextField field = new JTextField(8);
+        field.putClientProperty("JTextField.placeholderText", "Type");
+        field.setToolTipText("Optional type, e.g. Personal, Business, Home or Work");
+        field.getAccessibleContext().setAccessibleName(name);
+        return field;
+    }
+
+    private JPanel phoneNumbersPanel() {
+        JPanel panel = new JPanel(new java.awt.GridBagLayout());
+        panel.setOpaque(false);
+        JTextField[] numbers = {phoneField, additionalPhone1Field, additionalPhone2Field};
+        JTextField[] types = {phoneLabelField, additionalPhone1LabelField, additionalPhone2LabelField};
+        String[] labels = {"Main:", "Additional 1:", "Additional 2:"};
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.insets = new Insets(2, 3, 2, 3);
+        for (int row = 0; row < numbers.length; row++) {
+            constraints.gridy = row;
+            constraints.gridx = 0; constraints.weightx = 0;
+            panel.add(new JLabel(labels[row]), constraints);
+            constraints.gridx = 1; constraints.weightx = 0.65;
+            panel.add(numbers[row], constraints);
+            constraints.gridx = 2; constraints.weightx = 0.35;
+            panel.add(types[row], constraints);
+        }
+        return panel;
+    }
     private JTextField emailField;
     private JTextField customerSinceField;
     private CustomerTypeSelector customerTypeSelector;
@@ -40,17 +77,12 @@ public class CustomerAccounts extends JFrame {
     private JTextField balanceField;
     private JTextArea accountNotesArea;
     private ui.helpers.ProductImageHelper.ImageSelector customerPhotoSelector;
-    private JCheckBox businessAccountCheckBox;
     private JCheckBox activeCheckBox;
     private JCheckBox whatsappOptInCheckBox;
     private JCheckBox requireChargeAuthorizationCheckBox;
     private JCheckBox customOrderDepositExemptBox;
     private JCheckBox salesDiscountEnabledBox,invoiceDiscountEnabledBox,customOrderDiscountEnabledBox;
     private JTextField salesDiscountPercentField,invoiceDiscountPercentField,customOrderDiscountPercentField;
-    private JButton addButton;
-    private JButton updateButton;
-    private JButton clearButton;
-    private JButton refreshButton;
     private JButton addChargeButton;
     private JButton recordPaymentButton;
     private JButton transactionHistoryButton;
@@ -66,35 +98,113 @@ public class CustomerAccounts extends JFrame {
     private String pendingAdjustmentKey;
     private String pendingAdjustmentFingerprint;
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
+    private JLabel customerHeading, customerSubheading, companyFooter;
+    private CustomerAccountsDesign.Avatar customerAvatar;
+    private final JLabel[] accountTotals = new JLabel[5];
+    private JButton saveButton, allFilter, activeFilter, businessFilter;
+    private SalesTaskVisuals.Badge statusBadge;
+    private JTabbedPane accountTabs;
+    private CustomerActivityPanel activityHistory;
+    private long activityGeneration;
+    private Integer activityCustomerId;
+    private String customerFilter = "ALL";
+    private JPanel workspace, directoryArea;
+    private JPanel accountOverview, accountSummary, accountIdentity, saveActions;
+    private final boolean connected;
 
     public CustomerAccounts() {
+        this(true);
+    }
+
+    // Package access lets the visual harness exercise the actual screen without a live store.
+    CustomerAccounts(boolean connected) {
+        this.connected = connected;
         setTitle("Customer Accounts");
-        setSize(1050, 620);
+        setSize(1440, 1024);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         setLayout(new BorderLayout());
-        setJMenuBar(AppMenuBar.create(this, "CustomerAccounts"));
+        if (connected) setJMenuBar(AppMenuBar.create(this, "CustomerAccounts"));
 
-        JPanel mainPanel = new JPanel(new BorderLayout(14, 14));
-        mainPanel.setBorder(new EmptyBorder(15, 15, 15, 15));
+        workspace = CustomerAccountsDesign.panel(new BorderLayout(0, 18));
+        workspace.setBorder(new EmptyBorder(12, 8, 0, 8));
+        JPanel mainPanel = CustomerAccountsDesign.panel(new BorderLayout(20, 0));
 
         mainPanel.add(buildTablePanel(), BorderLayout.CENTER);
         mainPanel.add(buildFormPanel(), BorderLayout.EAST);
-        mainPanel.add(loadingState, BorderLayout.SOUTH);
-
-        add(mainPanel, BorderLayout.CENTER);
-
-        loadCustomers();
-        WindowHelper.configurePosWindow(this);
+        workspace.add(mainPanel, BorderLayout.CENTER);
+        workspace.add(buildFooter(), BorderLayout.SOUTH);
+        add(workspace, BorderLayout.CENTER);
+        clearFields();
+        updateFilterLabels();
+        CustomerAccountsDesign.styleTree(workspace);
+        refreshCustomerHeading();
+        if (connected) {
+            loadCustomers();
+            loadCompanyIdentity();
+            WindowHelper.configurePosWindow(this);
+        }
+        getContentPane().setBackground(DeckersPalette.background());
+        addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override public void componentResized(java.awt.event.ComponentEvent e) {
+                mainPanel.getComponent(1).setPreferredSize(new Dimension(Math.max(420, (int)(mainPanel.getWidth() * .34)), 0));
+                applyWorkspaceDensity();
+                mainPanel.revalidate();
+            }
+        });
     }
 
     private JPanel buildTablePanel() {
-        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        JPanel panel = CustomerAccountsDesign.panel(new BorderLayout(0, 27));
+        JPanel toolbar = CustomerAccountsDesign.panel(new BorderLayout(0, 14));
+        JPanel headingRow = CustomerAccountsDesign.panel(new BorderLayout(12, 0));
+        headingRow.setPreferredSize(new Dimension(100, 64));
+        JPanel heading = CustomerAccountsDesign.panel(new GridLayout(2, 1, 0, 0));
+        JLabel title = CustomerAccountsDesign.label("Customers", 32, true);
+        title.setIcon(SalesTaskVisuals.icon("person", DeckersPalette.PURPLE, 28));
+        title.setIconTextGap(12);
+        heading.add(title);
+        JLabel subtitle = CustomerAccountsDesign.label("Customer accounts and credit", 16, false);
+        subtitle.setBorder(new EmptyBorder(0, 40, 0, 0));
+        heading.add(subtitle);
+        headingRow.add(heading);
+        JPanel actions = CustomerAccountsDesign.panel(new FlowLayout(FlowLayout.RIGHT, 8, 14));
+        JButton newCustomer = CustomerAccountsDesign.button("New Customer", "plus", true);
+        newCustomer.addActionListener(e -> { clearFields(); accountTabs.setSelectedIndex(0); });
+        actions.add(newCustomer);
+        actions.add(moreButton());
+        headingRow.add(actions, BorderLayout.EAST);
+        toolbar.add(headingRow, BorderLayout.NORTH);
 
-        JPanel searchPanel = new JPanel(new BorderLayout(8, 0));
-        searchField = new JTextField();
-        searchPanel.add(new JLabel("Search Customers:"), BorderLayout.WEST);
-        searchPanel.add(searchField, BorderLayout.CENTER);
+        JPanel searchPanel = CustomerAccountsDesign.panel(new BorderLayout(12, 0));
+        searchField = new JTextField() {
+            @Override protected void paintComponent(Graphics graphics) {
+                super.paintComponent(graphics);
+                if (getText().isEmpty() && !hasFocus()) {
+                    Graphics2D g = (Graphics2D)graphics.create();
+                    g.setFont(CustomerAccountsDesign.font(Font.PLAIN, 14));
+                    g.setColor(DeckersPalette.muted());
+                    g.drawString("Find customer by name, account or phone...", 8, (getHeight()-g.getFontMetrics().getHeight())/2+g.getFontMetrics().getAscent());
+                    g.dispose();
+                }
+            }
+        };
+        searchField.setToolTipText("Find customer by name, account or phone");
+        searchField.getAccessibleContext().setAccessibleName("Find customer by name, account or phone");
+        searchField.putClientProperty("JTextField.placeholderText", "Find customer by name, account or phone...");
+        JPanel searchBox = CustomerAccountsDesign.surface(new BorderLayout(10, 0), DeckersPalette.PURPLE);
+        searchBox.setBorder(new EmptyBorder(4, 10, 4, 4));
+        JLabel searchIcon = new JLabel(SalesTaskVisuals.icon("search", DeckersPalette.muted(), 18));
+        searchBox.add(searchIcon, BorderLayout.WEST);
+        searchBox.add(searchField);
+        searchPanel.add(searchBox);
+        JPanel filters = CustomerAccountsDesign.panel(new GridLayout(1, 3, 10, 0));
+        allFilter = filterButton("All customers", "ALL");
+        activeFilter = filterButton("Active", "ACTIVE");
+        businessFilter = filterButton("Business", "BUSINESS");
+        filters.add(allFilter); filters.add(activeFilter); filters.add(businessFilter);
+        searchPanel.add(filters, BorderLayout.EAST);
+        toolbar.add(searchPanel, BorderLayout.SOUTH);
 
         customerModel = new DefaultTableModel(
                 new Object[]{"ID", "Account #", "Name", "Customer Type ID", "Customer Type", "Phone", "Email", "Credit Limit", "Credit Balance", "Custom Order Due", "Total Due", "Available Credit", "Account Type", "Active", "Notes"},
@@ -107,15 +217,26 @@ public class CustomerAccounts extends JFrame {
         };
 
         customerSorter = new TableRowSorter<>(customerModel);
-        customerTable = new JTable(customerModel);
+        customerTable = new JTable(customerModel) {
+            @Override public Color getBackground() { return DeckersPalette.surface(); }
+            @Override public Color getGridColor() { return DeckersPalette.border(); }
+            @Override protected void paintComponent(Graphics graphics) {
+                super.paintComponent(graphics);
+                if (getRowCount() == 0) {
+                    graphics.setColor(DeckersPalette.muted());
+                    graphics.setFont(CustomerAccountsDesign.font(Font.PLAIN, 16));
+                    String message = searchField.getText().isBlank() && "ALL".equals(customerFilter) ? "No customers to display" : "No customers match this search";
+                    graphics.drawString(message, 24, 56);
+                }
+            }
+        };
         customerTable.setRowSorter(customerSorter);
         customerTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        customerTable.setRowHeight(26);
-        customerTable.getColumnModel().getColumn(0).setMaxWidth(60);
-        hideColumn(customerTable, 3);
-        customerTable.getColumnModel().getColumn(12).setMaxWidth(95);
-        customerTable.getColumnModel().getColumn(13).setMaxWidth(70);
-        hideColumn(customerTable, 14);
+        CustomerAccountsDesign.configureTable(customerTable);
+        for (int index : new int[]{7, 8, 9, 10, 11}) customerSorter.setComparator(index,
+                (a,b) -> new BigDecimal(stripMoney(a.toString())).compareTo(new BigDecimal(stripMoney(b.toString()))));
+        customerSorter.setSortKeys(List.of(new RowSorter.SortKey(10, SortOrder.DESCENDING),
+                new RowSorter.SortKey(2, SortOrder.ASCENDING)));
 
         customerTable.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
@@ -147,19 +268,30 @@ public class CustomerAccounts extends JFrame {
             }
         });
 
-        panel.add(searchPanel, BorderLayout.NORTH);
-        panel.add(new JScrollPane(customerTable), BorderLayout.CENTER);
+        panel.add(toolbar, BorderLayout.NORTH);
+        JScrollPane tableScroll = new JScrollPane(customerTable);
+        tableScroll.setBorder(BorderFactory.createLineBorder(DeckersPalette.sectionBorder(DeckersPalette.PURPLE)));
+        tableScroll.getViewport().setBackground(DeckersPalette.surface());
+        directoryArea = new JPanel(null) {
+            @Override public void doLayout() {
+                int contentHeight = customerTable.getTableHeader().getPreferredSize().height + Math.max(1,customerTable.getRowCount()) * customerTable.getRowHeight() + 2;
+                tableScroll.setBounds(0, 0, getWidth(), Math.min(getHeight(),contentHeight));
+            }
+        };
+        directoryArea.setOpaque(false);
+        directoryArea.add(tableScroll);
+        panel.add(directoryArea, BorderLayout.CENTER);
         return panel;
     }
 
     private JPanel buildFormPanel() {
-        JPanel wrapper = new JPanel(new BorderLayout(0, 12));
-        wrapper.setPreferredSize(new Dimension(580, 0));
-        wrapper.setBorder(BorderFactory.createTitledBorder("Account Details"));
+        JPanel wrapper = CustomerAccountsDesign.surface(new BorderLayout(0, 14), DeckersPalette.PURPLE);
+        wrapper.setPreferredSize(new Dimension(480, 0));
+        wrapper.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(3, 0, 0, 0, DeckersPalette.PURPLE), new EmptyBorder(14, 16, 16, 16)));
 
-        JPanel formPanel = new JPanel(new GridBagLayout());
+        JPanel formPanel = CustomerAccountsDesign.panel(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(6, 8, 6, 8);
+        gbc.insets = new Insets(2, 4, 2, 4);
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.anchor = GridBagConstraints.WEST;
 
@@ -170,88 +302,64 @@ public class CustomerAccounts extends JFrame {
         phoneField.setToolTipText("Seven-digit Guyana number or international number with country code, e.g. +5927058194. Saved with +country code and digits.");
         emailField = new JTextField();
         customerSinceField = new JTextField();
-        customerTypeSelector = new CustomerTypeSelector();
+        customerTypeSelector = new CustomerTypeSelector(connected);
         creditLimitField = new JTextField("0");
         balanceField = new JTextField("0");
         balanceField.setEditable(false);
         accountNotesArea = new JTextArea(4, 20);
         accountNotesArea.setLineWrap(true);
         accountNotesArea.setWrapStyleWord(true);
-        businessAccountCheckBox = new JCheckBox("Business Account");
         activeCheckBox = new JCheckBox("Active", true);
         whatsappOptInCheckBox = new JCheckBox("<html>Customer consents to sales documents<br>by WhatsApp</html>");
         requireChargeAuthorizationCheckBox=new JCheckBox("<html>Require representative name and<br>signature for account charges</html>");
-        customOrderDepositExemptBox=new JCheckBox("Allow custom orders without a deposit");
+        customOrderDepositExemptBox=new JCheckBox("<html>Allow custom orders without<br>a deposit</html>");
         customOrderDepositExemptBox.setEnabled(PermissionManager.hasPermission("CUSTOM_ORDER_DEPOSIT_OVERRIDE")||PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES"));
-        salesDiscountEnabledBox=new JCheckBox("Apply to sales");salesDiscountPercentField=new JTextField("0",6);
-        invoiceDiscountEnabledBox=new JCheckBox("Apply to invoices / quotations");invoiceDiscountPercentField=new JTextField("0",6);
-        customOrderDiscountEnabledBox=new JCheckBox("Apply to custom orders");customOrderDiscountPercentField=new JTextField("0",6);
+        salesDiscountEnabledBox=new JCheckBox("Apply");salesDiscountPercentField=new JTextField("0",4);
+        invoiceDiscountEnabledBox=new JCheckBox("Apply");invoiceDiscountPercentField=new JTextField("0",4);
+        customOrderDiscountEnabledBox=new JCheckBox("Apply");customOrderDiscountPercentField=new JTextField("0",4);
         boolean canManageDiscounts=PermissionManager.hasPermission("MANAGE_CUSTOMER_DISCOUNTS");
         for(JComponent component:new JComponent[]{salesDiscountEnabledBox,salesDiscountPercentField,invoiceDiscountEnabledBox,invoiceDiscountPercentField,customOrderDiscountEnabledBox,customOrderDiscountPercentField})component.setEnabled(canManageDiscounts);
 
-        addField(formPanel, gbc, 0, "Account #:", accountNumberField);
-        addField(formPanel, gbc, 1, "Name:", nameField);
-        addField(formPanel, gbc, 2, "Customer Type:", customerTypeSelector);
-        addField(formPanel, gbc, 3, "Phone:", phoneField);
-        addField(formPanel, gbc, 4, "Email:", emailField);
-        addField(formPanel, gbc, 5, "Credit Limit:", creditLimitField);
-        addField(formPanel, gbc, 6, "Balance (All Stores):", balanceField);
-        addField(formPanel, gbc, 7, "Customer Since (year):", customerSinceField);
-        addField(formPanel, gbc, 8, "WhatsApp:", whatsappOptInCheckBox);
-        addField(formPanel,gbc,9,"Account authorization:",requireChargeAuthorizationCheckBox);
-
-        addField(formPanel,gbc,10,"Sales discount:",discountControl(salesDiscountEnabledBox,salesDiscountPercentField));
-        addField(formPanel,gbc,11,"Invoice discount:",discountControl(invoiceDiscountEnabledBox,invoiceDiscountPercentField));
-        addField(formPanel,gbc,12,"Custom-order discount:",discountControl(customOrderDiscountEnabledBox,customOrderDiscountPercentField));
-        addField(formPanel,gbc,13,"Custom-order deposit:",customOrderDepositExemptBox);
-        addField(formPanel, gbc, 14, "Account Type:", businessAccountCheckBox);
-        addField(formPanel, gbc, 15, "Status:", activeCheckBox);
+        addField(formPanel, gbc, 0, "Name:", nameField);
+        addField(formPanel, gbc, 1, "Account #:", accountNumberField);
+        addField(formPanel, gbc, 2, "Phone numbers:", phoneNumbersPanel());
+        addField(formPanel, gbc, 3, "Email:", emailField);
+        addField(formPanel, gbc, 4, "Customer Type:", customerTypeSelector);
+        addField(formPanel, gbc, 5, "WhatsApp:", whatsappOptInCheckBox);
         JScrollPane notesScrollPane = new JScrollPane(accountNotesArea);
-        notesScrollPane.setPreferredSize(new Dimension(240, 96));
-        addField(formPanel, gbc, 16, "Notes:", notesScrollPane);
+        notesScrollPane.setPreferredSize(new Dimension(240, 70));
+        notesScrollPane.setBorder(BorderFactory.createLineBorder(DeckersPalette.border()));
+        addField(formPanel, gbc, 6, "Notes:", notesScrollPane);
         customerPhotoSelector = ui.helpers.ProductImageHelper.createImageSelector(this);
-        addField(formPanel, gbc, 17, "Photo (optional):", customerPhotoSelector);
+        JPanel creditPanel = CustomerAccountsDesign.panel(new GridBagLayout());
+        addField(creditPanel, gbc, 0, "Credit limit:", creditLimitField);
+        addField(creditPanel, gbc, 1, "Credit balance:", balanceField);
+        addField(creditPanel, gbc, 2, "Authorization:", requireChargeAuthorizationCheckBox);
+        addField(creditPanel, gbc, 3, "Sales discount:", discountControl(salesDiscountEnabledBox, salesDiscountPercentField));
+        addField(creditPanel, gbc, 4, "Invoice discount:", discountControl(invoiceDiscountEnabledBox, invoiceDiscountPercentField));
+        addField(creditPanel, gbc, 5, "Order discount:", discountControl(customOrderDiscountEnabledBox, customOrderDiscountPercentField));
+        addField(creditPanel, gbc, 6, "Order deposit:", customOrderDepositExemptBox);
+        addField(creditPanel, gbc, 7, "Customer Since (year):", customerSinceField);
+        addField(creditPanel, gbc, 8, "Status:", activeCheckBox);
+        JButton photoButton = CustomerAccountsDesign.button("Manage photo", "person", false);
+        photoButton.addActionListener(e -> JOptionPane.showMessageDialog(this, customerPhotoSelector, "Customer photo — saved with the account", JOptionPane.PLAIN_MESSAGE));
+        addField(creditPanel, gbc, 9, "Photo:", photoButton);
 
-        JPanel buttonPanel = new JPanel(new GridLayout(0, 2, 8, 8));
-        addButton = new JButton("Add Account");
-        updateButton = new JButton("Update Account");
-        clearButton = new JButton("Clear");
-        refreshButton = new JButton("Refresh");
-        JButton customerTypesButton = new JButton("Customer Types");
-        addChargeButton = new JButton("Add Charge");
-        recordPaymentButton = new JButton("Record Payment");
-        transactionHistoryButton = new JButton("Details");
-        paymentHistoryButton = new JButton("Payments");
-        previewCardButton=new JButton("Preview Card");printCardButton=new JButton("Print Card");pdfCardButton=new JButton("Save Card PDF");
+        addChargeButton = CustomerAccountsDesign.button("Add Charge", "plus", false);
+        recordPaymentButton = CustomerAccountsDesign.button("Record Payment", "payment", false);
+        recordPaymentButton.putClientProperty("taskOutline", true);
+        transactionHistoryButton = CustomerAccountsDesign.button("Details", "orders", false);
+        paymentHistoryButton = CustomerAccountsDesign.button("Payments", "payment", false);
+        previewCardButton=CustomerAccountsDesign.button("Preview Card","person",false);
+        printCardButton=CustomerAccountsDesign.button("Print Card","print",false);
+        pdfCardButton=CustomerAccountsDesign.button("Save Card PDF","pdf",false);
 
-        updateButton.setEnabled(false);
         addChargeButton.setEnabled(false);
         recordPaymentButton.setEnabled(false);
         transactionHistoryButton.setEnabled(false);
         paymentHistoryButton.setEnabled(false);
         previewCardButton.setEnabled(false);printCardButton.setEnabled(false);pdfCardButton.setEnabled(false);
 
-        buttonPanel.add(addButton);
-        buttonPanel.add(updateButton);
-        buttonPanel.add(addChargeButton);
-        buttonPanel.add(recordPaymentButton);
-        buttonPanel.add(transactionHistoryButton);
-        buttonPanel.add(paymentHistoryButton);
-        buttonPanel.add(previewCardButton);buttonPanel.add(printCardButton);buttonPanel.add(pdfCardButton);
-        buttonPanel.add(customerTypesButton);
-        buttonPanel.add(clearButton);
-        buttonPanel.add(refreshButton);
-
-        addButton.addActionListener(e -> addCustomer());
-        updateButton.addActionListener(e -> updateCustomer());
-        customerTypesButton.addActionListener(e -> openCustomerTypes());
-        clearButton.addActionListener(e -> clearFields());
-        refreshButton.addActionListener(e -> loadCustomers());
-        if("ADMIN".equalsIgnoreCase(managers.SessionManager.getCurrentRole())) {
-            JButton mergeDuplicates=new JButton("Merge Duplicates");
-            buttonPanel.add(mergeDuplicates);
-            mergeDuplicates.addActionListener(e->mergeDuplicateAccounts());
-        }
         addChargeButton.addActionListener(e -> adjustBalance(true));
         recordPaymentButton.addActionListener(e -> adjustBalance(false));
         transactionHistoryButton.addActionListener(e -> openAccountDetails());
@@ -260,15 +368,201 @@ public class CustomerAccounts extends JFrame {
         printCardButton.addActionListener(e->CustomerCardActions.run(this,selectedAccount,CustomerCardActions.Action.PRINT));
         pdfCardButton.addActionListener(e->CustomerCardActions.run(this,selectedAccount,CustomerCardActions.Action.PDF));
 
-        JPanel formContent = new JPanel(new BorderLayout());
-        formContent.add(formPanel, BorderLayout.NORTH);
-        JScrollPane formScroll = new JScrollPane(formContent);
-        formScroll.setBorder(BorderFactory.createEmptyBorder());
-        formScroll.getVerticalScrollBar().setUnitIncrement(18);
-        wrapper.add(formScroll, BorderLayout.CENTER);
-        wrapper.add(buttonPanel, BorderLayout.SOUTH);
+        JPanel overview = CustomerAccountsDesign.panel(new BorderLayout(0, 14));
+        accountOverview = overview;
+        overview.add(buildCustomerIdentity(), BorderLayout.NORTH);
+        overview.add(buildAccountSummary(), BorderLayout.CENTER);
+        JPanel paymentActions = CustomerAccountsDesign.panel(new GridLayout(1, 2, 12, 0));
+        paymentActions.add(recordPaymentButton); paymentActions.add(addChargeButton);
+        overview.add(paymentActions, BorderLayout.SOUTH);
+        wrapper.add(overview, BorderLayout.NORTH);
+
+        accountTabs = new JTabbedPane() {
+            @Override public void updateUI() { super.updateUI(); installAccountTabs(this); }
+        };
+        accountTabs.setFont(CustomerAccountsDesign.font(Font.PLAIN, 14));
+        accountTabs.setOpaque(false);
+        accountTabs.addTab("Profile", scrollForm(formPanel));
+        accountTabs.addTab("Credit & terms", scrollForm(creditPanel));
+        JPanel activity = CustomerAccountsDesign.panel(new GridLayout(0, 1, 0, 12));
+        for (JButton button : new JButton[]{transactionHistoryButton, paymentHistoryButton, previewCardButton, printCardButton, pdfCardButton}) {
+            activity.add(button);
+        }
+        activityHistory=new CustomerActivityPanel(()->loadActivity(true),this::openAccountDetails,this::openPaymentHistory);
+        accountTabs.addTab("Activity",activityHistory);
+        accountTabs.addTab("More", scrollForm(activity));
+        accountTabs.addChangeListener(e->{if(accountTabs.getSelectedComponent()==activityHistory)loadActivity(false);});
+        wrapper.add(accountTabs, BorderLayout.CENTER);
+
+        saveActions = CustomerAccountsDesign.panel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        saveActions.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, DeckersPalette.border()), new EmptyBorder(18, 0, 6, 0)));
+        saveButton = CustomerAccountsDesign.button("Save Changes", "save", true);
+        saveButton.setPreferredSize(new Dimension(210, 42));
+        saveButton.addActionListener(e -> { if (selectedCustomerId == null) addCustomer(); else updateCustomer(); });
+        JButton cancel = CustomerAccountsDesign.button("Cancel", null, false);
+        cancel.setPreferredSize(new Dimension(110, 42));
+        cancel.addActionListener(e -> { if (selectedCustomerId != null) loadSelectedCustomer(); else clearFields(); });
+        saveActions.add(saveButton); saveActions.add(cancel);
+        wrapper.add(saveActions, BorderLayout.SOUTH);
         return wrapper;
     }
+
+    private void installAccountTabs(JTabbedPane tabs) {
+        tabs.setUI(new javax.swing.plaf.basic.BasicTabbedPaneUI() {
+            @Override protected void installDefaults() { super.installDefaults(); tabInsets = new Insets(10, 18, 10, 18); contentBorderInsets = new Insets(14, 0, 0, 0); }
+            @Override protected void paintTabBackground(Graphics g, int placement, int index, int x, int y, int w, int h, boolean selected) { g.setColor(selected ? DeckersPalette.surface() : DeckersPalette.background()); g.fillRect(x, y, w, h); }
+            @Override protected void paintTabBorder(Graphics g, int placement, int index, int x, int y, int w, int h, boolean selected) { g.setColor(DeckersPalette.border()); g.drawRect(x, y, w, h); if (selected) { g.setColor(DeckersPalette.ORANGE); g.fillRect(x, y+h-2, w, 3); } }
+            @Override protected void paintContentBorder(Graphics g, int placement, int selectedIndex) { }
+            @Override protected void paintFocusIndicator(Graphics g, int placement, Rectangle[] rects, int index, Rectangle iconRect, Rectangle textRect, boolean selected) { if (selected && tabs.hasFocus()) { g.setColor(DeckersPalette.ORANGE); g.drawRect(rects[index].x+3, rects[index].y+3, rects[index].width-6, rects[index].height-6); } }
+        });
+    }
+
+    private JPanel buildFooter() {
+        JPanel footer = CustomerAccountsDesign.panel(new BorderLayout(12, 0));
+        footer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, DeckersPalette.border()), new EmptyBorder(4, 4, 4, 0)));
+        JPanel identity = CustomerAccountsDesign.panel(new FlowLayout(FlowLayout.LEFT, 22, 0));
+        JLabel theme = CustomerAccountsDesign.label("SmartStock theme: Orange", 14, false);
+        theme.setIcon(SalesTaskVisuals.icon("box", DeckersPalette.ORANGE, 18));
+        identity.add(theme);
+        companyFooter = CustomerAccountsDesign.label("Company", 14, false);
+        identity.add(companyFooter);
+        identity.add(CustomerAccountsDesign.label("SmartStock", 14, false));
+        footer.add(identity, BorderLayout.WEST);
+        footer.add(loadingState, BorderLayout.CENTER);
+        JButton more = moreButton(); more.setText("More");
+        more.setBorder(new EmptyBorder(8,12,8,12));
+        footer.add(more, BorderLayout.EAST);
+        return footer;
+    }
+
+    private JButton moreButton() {
+        JButton more = CustomerAccountsDesign.button("", "more", false);
+        more.setToolTipText("More customer actions");
+        more.getAccessibleContext().setAccessibleName("More customer actions");
+        more.addActionListener(e -> {
+            JPopupMenu menu = new JPopupMenu();
+            menuItem(menu, "Refresh", () -> { SessionDataCache.invalidate("customer-accounts:"); loadCustomers(); }, true);
+            menuItem(menu, "Customer Types", this::openCustomerTypes, true);
+            menuItem(menu, "Clear selection", this::clearFields, true);
+            menu.addSeparator();
+            menuItem(menu, "Details", this::openAccountDetails, selectedCustomerId != null);
+            menuItem(menu, "Payments", this::openPaymentHistory, selectedCustomerId != null);
+            menuItem(menu, "Preview Card", () -> previewCardButton.doClick(), selectedCustomerId != null);
+            menuItem(menu, "Print Card", () -> printCardButton.doClick(), selectedCustomerId != null);
+            menuItem(menu, "Save Card PDF", () -> pdfCardButton.doClick(), selectedCustomerId != null);
+            menu.addSeparator();
+            menuItem(menu, "Customer Management Web App", this::openCustomerWebApp, true);
+            if ("ADMIN".equalsIgnoreCase(managers.SessionManager.getCurrentRole())) menuItem(menu, "Merge Duplicates", this::mergeDuplicateAccounts, true);
+            menu.show(more, 0, more.getHeight());
+        });
+        return more;
+    }
+
+    private void openCustomerWebApp() {
+        try { Desktop.getDesktop().browse(java.net.URI.create("https://customermanagement.deckers.gy")); }
+        catch (Exception ex) { JOptionPane.showMessageDialog(this, "Open https://customermanagement.deckers.gy on your phone or browser."); }
+    }
+
+    private void menuItem(JPopupMenu menu, String title, Runnable action, boolean enabled) {
+        JMenuItem item = new JMenuItem(title);
+        item.setFont(CustomerAccountsDesign.font(Font.PLAIN, 14));
+        item.setEnabled(enabled);
+        item.addActionListener(e -> action.run());
+        menu.add(item);
+    }
+
+    private JButton filterButton(String text, String filter) {
+        JButton button = CustomerAccountsDesign.button(text, null, false);
+        button.addActionListener(e -> { customerFilter = filter; applyCustomerFilter(); });
+        return button;
+    }
+
+    private JScrollPane scrollForm(JPanel form) {
+        JPanel content = CustomerAccountsDesign.panel(new BorderLayout());
+        content.add(form, BorderLayout.NORTH);
+        return CustomerAccountsDesign.scroll(content);
+    }
+
+    private JPanel buildCustomerIdentity() {
+        JPanel identity = CustomerAccountsDesign.panel(new BorderLayout(16, 0));
+        accountIdentity = identity;
+        customerAvatar = new CustomerAccountsDesign.Avatar(66);
+        identity.add(customerAvatar, BorderLayout.WEST);
+        JPanel name = CustomerAccountsDesign.panel(new GridLayout(2, 1));
+        customerHeading = CustomerAccountsDesign.label("New Customer", 26, true);
+        customerSubheading = CustomerAccountsDesign.label("Account created on save", 16, false);
+        name.add(customerHeading); name.add(customerSubheading);
+        identity.add(name);
+        statusBadge = new SalesTaskVisuals.Badge("Active", new Color(25, 155, 55));
+        JPanel status = CustomerAccountsDesign.panel(new GridBagLayout());
+        status.add(statusBadge);
+        identity.add(status, BorderLayout.EAST);
+        return identity;
+    }
+
+    private JPanel buildAccountSummary() {
+        JPanel summary = CustomerAccountsDesign.surface(new BorderLayout(0, 10), DeckersPalette.PURPLE);
+        accountSummary = summary;
+        summary.putClientProperty("customerTint", true);
+        summary.setBorder(new EmptyBorder(10, 16, 12, 16));
+        JPanel upper = CustomerAccountsDesign.panel(new GridLayout(1, 3, 10, 0));
+        JPanel lower = CustomerAccountsDesign.panel(new GridLayout(1, 2, 16, 0));
+        lower.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, DeckersPalette.sectionBorder(DeckersPalette.PURPLE)), new EmptyBorder(8, 0, 0, 0)));
+        String[] titles = {"Credit Limit", "Credit Balance", "Order Due", "Total Due", "Available Credit"};
+        for (int i = 0; i < titles.length; i++) {
+            JPanel amount = CustomerAccountsDesign.panel(new BorderLayout(0, 2));
+            amount.add(CustomerAccountsDesign.label(titles[i], 15, false), BorderLayout.NORTH);
+            accountTotals[i] = CustomerAccountsDesign.label(money(BigDecimal.ZERO), i < 3 ? 22 : 29, true);
+            amount.add(accountTotals[i]);
+            (i < 3 ? upper : lower).add(amount);
+        }
+        summary.add(upper, BorderLayout.NORTH);
+        summary.add(lower, BorderLayout.CENTER);
+        return summary;
+    }
+
+    private void applyWorkspaceDensity() {
+        boolean compact = getHeight() < 880;
+        ((BorderLayout)accountOverview.getLayout()).setVgap(compact ? 7 : 14);
+        int avatarSize = compact ? 48 : 66;
+        customerAvatar.setPreferredSize(new Dimension(avatarSize, avatarSize));
+        accountIdentity.setPreferredSize(new Dimension(100, avatarSize));
+        accountSummary.setBorder(compact ? new EmptyBorder(4,12,4,12) : new EmptyBorder(10,16,12,16));
+        ((BorderLayout)accountSummary.getLayout()).setVgap(compact ? 6 : 10);
+        customerHeading.setFont(CustomerAccountsDesign.font(Font.BOLD, compact ? 22 : 26));
+        for (int i=0;i<accountTotals.length;i++) accountTotals[i].setFont(CustomerAccountsDesign.font(Font.BOLD, compact ? (i<3?18:21) : (i<3?22:29)));
+        saveActions.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1,0,0,0,DeckersPalette.border()),new EmptyBorder(compact?8:18,0,compact?2:6,0)));
+        workspace.revalidate();
+    }
+
+    private void refreshCustomerHeading() {
+        if (customerHeading == null) return;
+        customerHeading.setText(selectedAccount == null ? "New Customer" : selectedAccount.name());
+        customerSubheading.setText(selectedAccount == null ? "Account created on save" : selectedAccount.accountNumber());
+        customerAvatar.setText(selectedAccount == null ? "" : CustomerAccountsDesign.initials(selectedAccount.name()));
+        boolean active = selectedAccount == null || selectedAccount.active();
+        statusBadge.setText(active ? "Active" : "Inactive");
+        statusBadge.tone(active ? new Color(25, 155, 55) : DeckersPalette.muted());
+        BigDecimal[] totals = selectedAccount == null ? new BigDecimal[]{BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO}
+                : new BigDecimal[]{selectedAccount.creditLimit(),selectedAccount.currentBalance(),selectedAccount.customOrderDue(),selectedAccount.totalDue(),selectedAccount.availableCredit()};
+        for (int i = 0; i < totals.length; i++) accountTotals[i].setText(money(totals[i]));
+        accountTotals[3].setForeground(DeckersPalette.CORAL);
+        accountTotals[3].putClientProperty("customerTone", "due");
+        accountTotals[4].setForeground(DeckersPalette.dark() ? new Color(217,180,255) : DeckersPalette.PURPLE);
+        accountTotals[4].putClientProperty("customerTone", "credit");
+        saveButton.setText(selectedCustomerId == null ? "Add Account" : "Save Changes");
+    }
+
+    private void loadCompanyIdentity() {
+        UiTaskRunner.submit(this, "customer-accounts.branding", () -> {
+            var settings = CompanyCustomizationManager.loadReceiptSettings();
+            return settings.companyName();
+        }, identity -> {
+            companyFooter.setText(identity);
+            setTitle("SmartStock – " + identity + " – Customers");
+        }, ignored -> companyFooter.setText("SmartStock"));
+    }
+
 
     private String pendingMergeFingerprint;
     private String pendingMergeKey;
@@ -302,17 +596,12 @@ public class CustomerAccounts extends JFrame {
         gbc.gridy = row;
         gbc.weightx = 0;
         JLabel fieldLabel = new JLabel(label);
+        fieldLabel.setFont(CustomerAccountsDesign.font(Font.PLAIN, 15));
         fieldLabel.setMinimumSize(fieldLabel.getPreferredSize());
         panel.add(fieldLabel, gbc);
         gbc.gridx = 1;
         gbc.weightx = 1;
         panel.add(field, gbc);
-    }
-
-    private void hideColumn(JTable table, int columnIndex) {
-        table.getColumnModel().getColumn(columnIndex).setMinWidth(0);
-        table.getColumnModel().getColumn(columnIndex).setMaxWidth(0);
-        table.getColumnModel().getColumn(columnIndex).setPreferredWidth(0);
     }
 
     private void loadCustomers() {
@@ -331,14 +620,16 @@ public class CustomerAccounts extends JFrame {
                     customerModel.addRow(new Object[]{
                             row.customerId(),row.accountNumber(),row.name(),row.customerTypeId()==null?"":row.customerTypeId(),
                             row.customerTypeName(),row.phone(),row.email(),money(row.creditLimit()),money(row.currentBalance()),
-                            money(row.customOrderDue()),money(row.totalDue()),money(row.availableCredit()),row.business()?"Business":"Personal",row.active(),row.accountNotes()
+                            money(row.customOrderDue()),money(row.totalDue()),money(row.availableCredit()),utils.CustomerAccountTypes.isBusiness(row.customerTypeName())?"Business":"Personal",row.active(),row.accountNotes()
                     });
         }
+        updateFilterLabels();
         if (previousCustomerId != null) {
             for (int row = 0; row < customerModel.getRowCount(); row++) {
                 if (previousCustomerId.equals(customerModel.getValueAt(row, 0))) {
                     int viewRow = customerTable.convertRowIndexToView(row);
                     if (viewRow >= 0) customerTable.setRowSelectionInterval(viewRow, viewRow);
+                    else clearFields();
                     return;
                 }
             }
@@ -360,11 +651,10 @@ public class CustomerAccounts extends JFrame {
         accountNumberField.setEditable(PermissionManager.hasPermission("EDIT_ACCOUNT_NUMBER"));
         nameField.setText(valueAt(modelRow, 2));
         customerTypeSelector.setSelectedCustomerType(parseNullableInt(valueAt(modelRow, 3)), valueAt(modelRow, 4));
-        phoneField.setText(valueAt(modelRow, 5));
+        phoneField.setText(valueAt(modelRow, 5));additionalPhone1Field.setText(selectedAccount.additionalPhone1());additionalPhone2Field.setText(selectedAccount.additionalPhone2());phoneLabelField.setText(selectedAccount.phoneLabel());additionalPhone1LabelField.setText(selectedAccount.additionalPhone1Label());additionalPhone2LabelField.setText(selectedAccount.additionalPhone2Label());
         emailField.setText(valueAt(modelRow, 6));
         creditLimitField.setText(stripMoney(valueAt(modelRow, 7)));
         balanceField.setText(stripMoney(valueAt(modelRow, 8)));
-        businessAccountCheckBox.setSelected("Business".equalsIgnoreCase(valueAt(modelRow, 12)));
         activeCheckBox.setSelected(Boolean.TRUE.equals(customerModel.getValueAt(modelRow, 13)));
         accountNotesArea.setText(valueAt(modelRow, 14));
         customerPhotoSelector.setImageUrl(selectedAccount == null ? "" : selectedAccount.customerPhotoUrl());
@@ -376,12 +666,33 @@ public class CustomerAccounts extends JFrame {
         salesDiscountEnabledBox.setSelected(selectedAccount!=null&&selectedAccount.salesDiscountEnabled());salesDiscountPercentField.setText(discountText(selectedAccount==null?null:selectedAccount.salesDiscountPercent()));
         invoiceDiscountEnabledBox.setSelected(selectedAccount!=null&&selectedAccount.invoiceDiscountEnabled());invoiceDiscountPercentField.setText(discountText(selectedAccount==null?null:selectedAccount.invoiceDiscountPercent()));
         customOrderDiscountEnabledBox.setSelected(selectedAccount!=null&&selectedAccount.customOrderDiscountEnabled());customOrderDiscountPercentField.setText(discountText(selectedAccount==null?null:selectedAccount.customOrderDiscountPercent()));
-        updateButton.setEnabled(true);
         addChargeButton.setEnabled(true);
         recordPaymentButton.setEnabled(true);
         transactionHistoryButton.setEnabled(true);
         paymentHistoryButton.setEnabled(true);
         previewCardButton.setEnabled(true);printCardButton.setEnabled(true);pdfCardButton.setEnabled(true);
+        refreshCustomerHeading();
+        activityCustomerId=null;
+        activityGeneration++;
+        activityHistory.message("Open Activity to view transactions and payments.");
+        if(accountTabs.getSelectedComponent()==activityHistory)loadActivity(false);
+    }
+
+    private void loadActivity(boolean force) {
+        Integer customerId=selectedCustomerId;
+        if(customerId==null){activityHistory.message("Select a customer to view activity.");return;}
+        if(!force&&customerId.equals(activityCustomerId))return;
+        activityCustomerId=customerId;
+        long generation=++activityGeneration;
+        activityHistory.message("Loading transactions and payments…");
+        if(!connected){activityHistory.message("No transactions or payments in this preview.");return;}
+        UiTaskRunner.submit(this,"customer-accounts.activity",()->LanApiClient.loadCustomerTransactions(customerId),result->{
+            if(generation==activityGeneration&&customerId.equals(selectedCustomerId))activityHistory.showHistory(result);
+        },error->{
+            if(generation==activityGeneration&&customerId.equals(selectedCustomerId)){
+                activityCustomerId=null;activityHistory.message("Unable to load activity. Use Refresh to retry.");
+            }
+        });
     }
 
     private void openAccountDetails() {
@@ -390,7 +701,7 @@ public class CustomerAccounts extends JFrame {
             JOptionPane.showMessageDialog(this, "Select a customer first.");
             return;
         }
-        CustomerAccountDetails details = new CustomerAccountDetails(selection.customerId(), this::loadCustomers);
+        CustomerAccountDetails details = new CustomerAccountDetails(selection.customerId(), this::loadCustomers, this);
         WindowHelper.showPosWindow(details, this);
     }
 
@@ -439,7 +750,7 @@ public class CustomerAccounts extends JFrame {
         if (customerTypeId == null && !customerTypeSelector.getSelectedCustomerTypeName().isBlank()) {
             return;
         }
-        boolean businessAccount = businessAccountCheckBox.isSelected();
+
         BigDecimal creditLimit = parseMoney(creditLimitField.getText().trim(), "Credit limit");
         BigDecimal salesDiscount=parseDiscount(salesDiscountPercentField,"Sales"),invoiceDiscount=parseDiscount(invoiceDiscountPercentField,"Invoice"),customOrderDiscount=parseDiscount(customOrderDiscountPercentField,"Custom-order");
         if(salesDiscount==null||invoiceDiscount==null||customOrderDiscount==null)return;
@@ -452,7 +763,7 @@ public class CustomerAccounts extends JFrame {
         }
 
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(null,null,name,customerTypeId,
-                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince,customerPhotoSelector.getImageUrl(),whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),salesDiscountEnabledBox.isSelected(),salesDiscount,invoiceDiscountEnabledBox.isSelected(),invoiceDiscount,customOrderDiscountEnabledBox.isSelected(),customOrderDiscount,customOrderDepositExemptBox.isSelected());
+                phone,email,creditLimit,activeCheckBox.isSelected(),accountNotes,customerSince,customerPhotoSelector.getImageUrl(),whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),salesDiscountEnabledBox.isSelected(),salesDiscount,invoiceDiscountEnabledBox.isSelected(),invoiceDiscount,customOrderDiscountEnabledBox.isSelected(),customOrderDiscount,customOrderDepositExemptBox.isSelected()).withAdditionalPhones(additionalPhone1Field.getText(),additionalPhone2Field.getText()).withPhoneLabels(phoneLabelField.getText(),additionalPhone1LabelField.getText(),additionalPhone2LabelField.getText());
         String fingerprint=request.toString();
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
@@ -484,7 +795,7 @@ public class CustomerAccounts extends JFrame {
         if (customerTypeId == null && !customerTypeSelector.getSelectedCustomerTypeName().isBlank()) {
             return;
         }
-        boolean businessAccount = businessAccountCheckBox.isSelected();
+
         BigDecimal creditLimit = parseMoney(creditLimitField.getText().trim(), "Credit limit");
         BigDecimal salesDiscount=parseDiscount(salesDiscountPercentField,"Sales"),invoiceDiscount=parseDiscount(invoiceDiscountPercentField,"Invoice"),customOrderDiscount=parseDiscount(customOrderDiscountPercentField,"Custom-order");
         if(salesDiscount==null||invoiceDiscount==null||customOrderDiscount==null)return;
@@ -505,7 +816,7 @@ public class CustomerAccounts extends JFrame {
         }
 
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(selectedCustomerId,accountNumber,name,customerTypeId,
-                phone,email,creditLimit,businessAccount,activeCheckBox.isSelected(),accountNotes,customerSince,customerPhotoSelector.getImageUrl(),whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),salesDiscountEnabledBox.isSelected(),salesDiscount,invoiceDiscountEnabledBox.isSelected(),invoiceDiscount,customOrderDiscountEnabledBox.isSelected(),customOrderDiscount,customOrderDepositExemptBox.isSelected());
+                phone,email,creditLimit,activeCheckBox.isSelected(),accountNotes,customerSince,customerPhotoSelector.getImageUrl(),whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),salesDiscountEnabledBox.isSelected(),salesDiscount,invoiceDiscountEnabledBox.isSelected(),invoiceDiscount,customOrderDiscountEnabledBox.isSelected(),customOrderDiscount,customOrderDepositExemptBox.isSelected()).withAdditionalPhones(additionalPhone1Field.getText(),additionalPhone2Field.getText()).withPhoneLabels(phoneLabelField.getText(),additionalPhone1LabelField.getText(),additionalPhone2LabelField.getText());
         String fingerprint=request.toString();
         try {
             if(pendingSaveKey==null||!fingerprint.equals(pendingSaveFingerprint)){pendingSaveKey=UUID.randomUUID().toString();pendingSaveFingerprint=fingerprint;}
@@ -537,8 +848,8 @@ public class CustomerAccounts extends JFrame {
         String photo = ui.helpers.CustomerPhotoHelper.uploadIfNeeded(request.customerPhotoUrl());
         preparedPhotoRequest = new LanApiClient.CustomerAccountSaveRequest(request.customerId(), request.accountNumber(),
                 request.name(), request.customerTypeId(), request.phone(), request.email(), request.creditLimit(),
-                request.business(), request.active(), request.accountNotes(), request.customerSince(), photo,
-                request.whatsappOptIn(), request.requireChargeAuthorization(),request.salesDiscountEnabled(),request.salesDiscountPercent(),request.invoiceDiscountEnabled(),request.invoiceDiscountPercent(),request.customOrderDiscountEnabled(),request.customOrderDiscountPercent(),request.customOrderDepositExempt());
+                request.active(), request.accountNotes(), request.customerSince(), photo,
+                request.whatsappOptIn(), request.requireChargeAuthorization(),request.salesDiscountEnabled(),request.salesDiscountPercent(),request.invoiceDiscountEnabled(),request.invoiceDiscountPercent(),request.customOrderDiscountEnabled(),request.customOrderDiscountPercent(),request.customOrderDepositExempt()).withAdditionalPhones(request.additionalPhone1(),request.additionalPhone2()).withPhoneLabels(request.phoneLabel(),request.additionalPhone1Label(),request.additionalPhone2Label());
         preparedPhotoKey = mutationKey;
         return preparedPhotoRequest;
     }
@@ -565,6 +876,19 @@ public class CustomerAccounts extends JFrame {
         }
         if(amount.stripTrailingZeros().scale()>0){JOptionPane.showMessageDialog(this,"Customer account amounts must use whole GYD values.");return;}
 
+        String description = null;
+        if(addCharge){
+            JTextArea purpose=new JTextArea(4,32);purpose.setLineWrap(true);purpose.setWrapStyleWord(true);
+            purpose.setToolTipText("Describe the goods, service or reason for this charge (up to 1,000 characters).");
+            JPanel details=new JPanel(new BorderLayout(0,8));details.add(new JLabel("What is this charge for? *"),BorderLayout.NORTH);details.add(new JScrollPane(purpose),BorderLayout.CENTER);
+            while(true){
+                if(JOptionPane.showConfirmDialog(this,details,"Charge description",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE)!=JOptionPane.OK_OPTION)return;
+                description=purpose.getText().trim();
+                if(!description.isBlank()&&description.length()<=1000)break;
+                JOptionPane.showMessageDialog(this,description.isBlank()?"Enter what the charge is for.":"Keep the charge description to 1,000 characters or fewer.");
+                purpose.requestFocusInWindow();
+            }
+        }
         String paymentMethod = null;
         String paymentReference = null;
         if (!addCharge) {
@@ -588,7 +912,7 @@ public class CustomerAccounts extends JFrame {
         List<LanApiClient.CustomerPaymentAllocationRequest> allocations=addCharge?List.of():selectPaymentAllocations(amount);
         if(!addCharge&&allocations==null)return;
         LanApiClient.CustomerAccountAdjustmentRequest request=new LanApiClient.CustomerAccountAdjustmentRequest(selectedCustomerId,amount,
-                addCharge?"CHARGE":"PAYMENT",paymentMethod,paymentReference,allocations);String fingerprint=request.toString();
+                addCharge?"CHARGE":"PAYMENT",paymentMethod,paymentReference,allocations,description);String fingerprint=request.toString();
         try {
             if(pendingAdjustmentKey==null||!fingerprint.equals(pendingAdjustmentFingerprint)){pendingAdjustmentKey=UUID.randomUUID().toString();pendingAdjustmentFingerprint=fingerprint;}
             String mutationKey=pendingAdjustmentKey;Integer customerId=selectedCustomerId;
@@ -616,12 +940,15 @@ public class CustomerAccounts extends JFrame {
     }
 
     private void clearFields() {
+        activityGeneration++;
+        activityCustomerId=null;
+        if(activityHistory!=null)activityHistory.message("Select a customer to view activity.");
         selectedCustomerId = null;
         selectedAccount = null;
         accountNumberField.setText("Generated on save");
         accountNumberField.setEditable(false);
         nameField.setText("");
-        phoneField.setText("");
+        phoneField.setText("");additionalPhone1Field.setText("");additionalPhone2Field.setText("");phoneLabelField.setText("");additionalPhone1LabelField.setText("");additionalPhone2LabelField.setText("");
         emailField.setText("");
         customerSinceField.setText("");
         customerTypeSelector.clearSelection();
@@ -629,24 +956,23 @@ public class CustomerAccounts extends JFrame {
         balanceField.setText("0");
         accountNotesArea.setText("");
         customerPhotoSelector.setImageUrl("");
-        businessAccountCheckBox.setSelected(false);
         activeCheckBox.setSelected(true);
         whatsappOptInCheckBox.setSelected(false);
         requireChargeAuthorizationCheckBox.setSelected(false);customOrderDepositExemptBox.setSelected(false);
         salesDiscountEnabledBox.setSelected(false);salesDiscountPercentField.setText("0");invoiceDiscountEnabledBox.setSelected(false);invoiceDiscountPercentField.setText("0");customOrderDiscountEnabledBox.setSelected(false);customOrderDiscountPercentField.setText("0");
-        updateButton.setEnabled(false);
         addChargeButton.setEnabled(false);
         recordPaymentButton.setEnabled(false);
         transactionHistoryButton.setEnabled(false);
         paymentHistoryButton.setEnabled(false);
         previewCardButton.setEnabled(false);printCardButton.setEnabled(false);pdfCardButton.setEnabled(false);
         customerTable.clearSelection();
+        refreshCustomerHeading();
         nameField.requestFocusInWindow();
     }
 
     private Integer parseCustomerSince(String value){String text=value==null?"":value.trim();if(text.isEmpty())return null;try{int year=Integer.parseInt(text),current=java.time.Year.now().getValue();if(text.length()!=4||year<1900||year>current)throw new NumberFormatException();return year;}catch(NumberFormatException ex){JOptionPane.showMessageDialog(this,"Customer Since must be a four-digit year from 1900 through "+java.time.Year.now().getValue()+".");return null;}}
 
-    private JPanel discountControl(JCheckBox enabled,JTextField percent){JPanel p=new JPanel(new FlowLayout(FlowLayout.LEFT,6,0));p.add(enabled);p.add(percent);p.add(new JLabel("%"));return p;}
+    private JPanel discountControl(JCheckBox enabled,JTextField percent){JPanel p=CustomerAccountsDesign.panel(new FlowLayout(FlowLayout.LEFT,6,0));p.add(enabled);p.add(percent);p.add(new JLabel("%"));return p;}
     private String discountText(BigDecimal value){return value==null?"0":value.stripTrailingZeros().toPlainString();}
     private BigDecimal parseDiscount(JTextField field,String label){try{BigDecimal value=new BigDecimal(field.getText().trim().isEmpty()?"0":field.getText().trim());if(value.signum()<0||value.compareTo(BigDecimal.valueOf(100))>0)throw new NumberFormatException();return value;}catch(NumberFormatException ex){JOptionPane.showMessageDialog(this,label+" discount must be between 0 and 100%.");return null;}}
 
@@ -655,11 +981,38 @@ public class CustomerAccounts extends JFrame {
             return;
         }
         String text = searchField == null ? "" : searchField.getText().trim();
-        if (text.isEmpty()) {
-            customerSorter.setRowFilter(null);
-        } else {
-            customerSorter.setRowFilter(RowFilter.regexFilter("(?i)" + Pattern.quote(text)));
+        java.util.List<RowFilter<DefaultTableModel,Integer>> filters = new java.util.ArrayList<>();
+        if (!text.isEmpty()) filters.add(new RowFilter<DefaultTableModel,Integer>() {
+ public boolean include(Entry<? extends DefaultTableModel,? extends Integer> entry) {
+ String query=text.toLowerCase(java.util.Locale.ROOT);
+ for(int col:new int[]{1,2,5,6})if(entry.getStringValue(col).toLowerCase(java.util.Locale.ROOT).contains(query))return true;
+ LanApiClient.CustomerAccountRecord account=customerRecords.get(entry.getValue(0));
+ return account!=null && ((account.additionalPhone1()!=null&&account.additionalPhone1().contains(text)) || (account.additionalPhone2()!=null&&account.additionalPhone2().contains(text)));
+ }
+ });
+        if ("ACTIVE".equals(customerFilter)) filters.add(RowFilter.regexFilter("^true$", 13));
+        if ("BUSINESS".equals(customerFilter)) filters.add(RowFilter.regexFilter("^Business$", 12));
+        customerSorter.setRowFilter(filters.isEmpty() ? null : RowFilter.andFilter(filters));
+        if (selectedCustomerId != null && customerTable.getSelectedRow() < 0) clearFields();
+        updateFilterLabels();
+    }
+
+    private void updateFilterLabels() {
+        if (allFilter == null) return;
+        long active = customerRecords.values().stream().filter(LanApiClient.CustomerAccountRecord::active).count();
+        long business = customerRecords.values().stream().filter(row -> utils.CustomerAccountTypes.isBusiness(row.customerTypeName())).count();
+        allFilter.setText("All customers (" + customerRecords.size() + ")");
+        activeFilter.setText("Active (" + active + ")");
+        businessFilter.setText("Business (" + business + ")");
+        JButton[] buttons = {allFilter,activeFilter,businessFilter};
+        String[] values = {"ALL","ACTIVE","BUSINESS"};
+        for (int i=0;i<buttons.length;i++) {
+            boolean selected = values[i].equals(customerFilter);
+            buttons[i].putClientProperty("taskOutline", selected);
+            buttons[i].getAccessibleContext().setAccessibleDescription(selected ? "Selected filter" : "Filter customers");
+            buttons[i].repaint();
         }
+        if (directoryArea != null) { directoryArea.revalidate(); directoryArea.repaint(); }
     }
 
     private String valueAt(int row, int column) {
@@ -679,10 +1032,10 @@ public class CustomerAccounts extends JFrame {
     }
 
     private String promptForPaymentMethod() {
-        String[] options = {"CASH", "CARD", "CHEQUE", "MMG", "ACCOUNT"};
+        String[] options = {"CASH", "CARD", "CHEQUE", "MMG", "BANK_TRANSFER", "APPLY_CREDIT"};
         Object selected = JOptionPane.showInputDialog(
                 this,
-                "Select payment method:",
+                "Select payment method (APPLY_CREDIT uses released minutes credit):",
                 "Payment Method",
                 JOptionPane.PLAIN_MESSAGE,
                 null,
@@ -702,12 +1055,12 @@ public class CustomerAccounts extends JFrame {
     }
 
     private String stripMoney(String value) {
-        return value == null ? "" : value.replace("$", "").replace(",", "").trim();
+        return value == null ? "" : value.replace("G$", "").replace("$", "").replace(",", "").trim();
     }
 
     private String money(BigDecimal value) {
         value = defaultZero(value);
-        return utils.CurrencyFormatter.format(value);
+        return "G$" + java.text.NumberFormat.getIntegerInstance(java.util.Locale.US).format(utils.CurrencyFormatter.normalize(value));
     }
 
     private BigDecimal defaultZero(BigDecimal value) {
@@ -716,7 +1069,7 @@ public class CustomerAccounts extends JFrame {
 
     private BigDecimal parseMoney(String value, String fieldName) {
         try {
-            return utils.CurrencyFormatter.normalize(new BigDecimal(value.replace("$", "").replace(",", "").trim()));
+            return utils.CurrencyFormatter.normalize(new BigDecimal(stripMoney(value)));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, fieldName + " must be a valid amount.");
             return null;

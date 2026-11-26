@@ -1,0 +1,7 @@
+SmartStock 1.1.101
+
+Combined shared-workspace release across SmartStock chats. Includes the redesigned transfer desk with create/receive/edit/cancel flows; desktop Customer Management web-app shortcut; customer, inventory, receiving, orders and balance-sheet web workflows; custom-order sizing, pricing, production, gallery and variant improvements; receipt, drawer and shared label-printing fixes; and photo review rejection reasons.
+
+Display mode opens the staff work queue without employee login after one-time device approval. Fullscreen controls, automatic scrolling and refresh, outage indicators and automatic updates are included. The standard Windows installer installs a protected update maintenance task once with administrator approval. Later Display updates verify official installer metadata and SHA-256 and install/restart without repeated UAC. Existing screens need this new installer once; an application ZIP cannot install the privileged task.
+
+Update the store server before registers and Studio. Matching hosted assets are published separately. AI model weights remain separate and existing profile models are preserved. Pending photo reviews are not approved by this release. Live store, Windows service, printer, drawer, NFC, cutter and macOS checks remain separate.

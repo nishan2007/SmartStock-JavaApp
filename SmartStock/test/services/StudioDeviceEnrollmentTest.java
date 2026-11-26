@@ -96,6 +96,11 @@ class StudioDeviceEnrollmentTest {
         }
     }
     @Test void studioCredentialsCannotInvokeRegisterOrAdministrationRoutes() {
+        for (String path : java.util.List.of("/v1/studio/fonts", "/v1/studio/drive-catalog", "/v1/studio/progress",
+                "/v1/studio/pdf-ocr", "/v1/studio/pdf-ocr/status")) {
+            assertTrue(StudioDeviceEnrollmentService.allowedPath(path), path);
+            assertFalse(StudioDeviceEnrollmentService.allowedPath(path + "/other"), path);
+        }
         assertTrue(StudioDeviceEnrollmentService.allowedPath("/v1/studio/remove-background"));
         assertTrue(StudioDeviceEnrollmentService.allowedPath("/v1/studio/templates"));
         assertTrue(StudioDeviceEnrollmentService.allowedPath("/v1/studio/phone-capture"));
@@ -107,6 +112,9 @@ class StudioDeviceEnrollmentTest {
         assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/sessions/badge-pin-setup/other"));
         assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/studio/templates/other"));
         assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/security/devices/update"));
+        assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/studio/devices/from-register"));
+        assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/studio/models/install"));
+        assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/sales/checkout"));
         assertFalse(StudioDeviceEnrollmentService.allowedPath("/v1/cloud/storage/upload"));
     }
 }

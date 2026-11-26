@@ -19,6 +19,13 @@
   ],
   "vars": {
     "EMPLOYEE_TUNNEL_HOST": "scheduler.deckers.gy",
-    "EMPLOYEE_ORIGIN": "https://timeclock.deckers.gy"
-  }
+    "EMPLOYEE_ORIGIN": "https://timeclock.deckers.gy",
+    "PUBLIC_STORE_ID": "1"
+  },
+  "services": [
+    {
+      "binding": "STOREFRONT",
+      "service": "smartstock-storefront"
+    }
+  ]
 }

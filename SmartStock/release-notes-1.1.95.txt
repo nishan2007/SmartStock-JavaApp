@@ -1,0 +1,2 @@
+Combined quick update from all current shared sources. Customer account Add Charge now requires what the charge is for and stores the description in the transaction note, enforced on the server. Includes Receiving Inventory web app, current Orders picture previews, drawer, inventory, account and service improvements. Update server first, then registers. Hosted deployments are separate.
+Customer Type is now a list-only dropdown when creating or editing customer accounts.

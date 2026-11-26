@@ -12,6 +12,22 @@ import java.io.ByteArrayOutputStream;
 import static org.junit.jupiter.api.Assertions.*;
 
 class StudioPhotoQueueTest {
+    @Test void printingBeforePreparationDoesNotCancelAutomaticRemoval()throws Exception{
+        var queue=new StudioPhotoQueue(root,new Time());String token=queue.issue(1,7).get("token").getAsString(),id=UUID.randomUUID().toString();
+        queue.upload(1,token,id,"Person",photo());queue.execute(1,request("PRINTED",id));
+        assertTrue(queue.prepareNext(input->transparentCutout()));
+        assertTrue(queue.execute(1,request("GET",id)).get("usingCutout").getAsBoolean());
+    }
+    @Test void blockedPreparationExplainsWhyAndAutomaticallyRecovers()throws Exception{
+        var queue=new StudioPhotoQueue(root,new Time());String token=queue.issue(1,7).get("token").getAsString(),id=UUID.randomUUID().toString();
+        queue.upload(1,token,id,"Person",photo());
+        queue.prepareNext(input->{throw new CatalogStudioImageProcessor.ModelUnavailableException("Install Best in Status > AI Models.");});
+        var blocked=queue.execute(1,request("STATUS",id));assertEquals("pending",blocked.get("backgroundState").getAsString());assertTrue(blocked.get("backgroundMessage").getAsString().contains("AI Models"));
+        queue.prepareNext(input->{throw new StudioBackgroundService.PreparationDeferredException("Waiting for free memory");});
+        assertEquals("Waiting for free memory",queue.execute(1,request("STATUS",id)).get("backgroundMessage").getAsString());
+        assertTrue(queue.prepareNext(input->transparentCutout()));
+        var ready=queue.execute(1,request("GET",id));assertTrue(ready.get("usingCutout").getAsBoolean());assertFalse(ready.has("backgroundMessage"));
+    }
     private byte[] transparentCutout()throws Exception{var out=new java.io.ByteArrayOutputStream();var image=new java.awt.image.BufferedImage(100,150,java.awt.image.BufferedImage.TYPE_INT_ARGB);image.setRGB(50,70,0xff112233);javax.imageio.ImageIO.write(image,"png",out);return out.toByteArray();}
     @Test void preparedBestCutoutIsSharedButOriginalIsPreservedAndBothExpire()throws Exception{
         Time time=new Time();var queue=new StudioPhotoQueue(root,time);String token=queue.issue(1,7).get("token").getAsString(),id=UUID.randomUUID().toString();byte[] original=photo(),cutout=transparentCutout();queue.upload(1,token,id,"Person",original);
@@ -58,16 +74,36 @@ class StudioPhotoQueueTest {
         assertThrows(IllegalArgumentException.class,()->restarted.execute(2,request("GET",first)));
         assertThrows(SecurityException.class,()->queue.upload(2,token,UUID.randomUUID().toString(),"Wrong store",bytes));
     }
-    @Test void unprintedPhotosRemainAndPrintConfirmationSetsAnImmutableTwentyFourHourDeadline()throws Exception{
-        Time time=new Time();var queue=new StudioPhotoQueue(root,time);String token=queue.issue(1,7).get("token").getAsString(),id=UUID.randomUUID().toString();queue.upload(1,token,id,"Person",photo());
-        time.advance(Duration.ofDays(3));assertEquals(1,queue.execute(1,request("LIST",null)).getAsJsonArray("photos").size());
-        long start=time.millis(),deadline=start+Duration.ofHours(24).toMillis();
-        assertEquals(deadline,queue.execute(1,request("PRINTED",id)).get("deleteAfter").getAsLong());
-        time.advance(Duration.ofHours(23));assertEquals(deadline,queue.execute(1,request("PRINTED",id)).get("deleteAfter").getAsLong());
-        assertEquals(1,queue.execute(1,request("LIST",null)).getAsJsonArray("photos").size());
-        time.advance(Duration.ofHours(1));var restarted=new StudioPhotoQueue(root,time);restarted.cleanup();
-        assertEquals(0,restarted.execute(1,request("LIST",null)).getAsJsonArray("photos").size());assertFalse(Files.exists(root.resolve("store-1").resolve(id+".photo")));assertFalse(Files.exists(root.resolve("store-1").resolve(id+".json")));
+    @Test void unprintedPhotosExpireExactlyTwentyFourHoursAfterUpload()throws Exception{
+        Time time=new Time();var queue=new StudioPhotoQueue(root,time);String token=queue.issue(1,7).get("token").getAsString(),id=UUID.randomUUID().toString();
+        long deadline=time.millis()+Duration.ofHours(24).toMillis();
+        assertEquals(deadline,queue.upload(1,token,id,"Person",photo()).get("deleteAfter").getAsLong());
+        queue.prepareNext(input->transparentCutout());
+        time.advance(Duration.ofHours(24).minusMillis(1));assertEquals(1,queue.execute(1,request("LIST",null)).getAsJsonArray("photos").size());
+        time.advance(Duration.ofMillis(1));var restarted=new StudioPhotoQueue(root,time);restarted.cleanup();
+        assertEquals(0,restarted.execute(1,request("LIST",null)).getAsJsonArray("photos").size());
+        for(String suffix:List.of(".photo",".json",".cutout.png"))assertFalse(Files.exists(root.resolve("store-1/"+id+suffix)));
         assertThrows(IllegalArgumentException.class,()->restarted.execute(1,request("GET",id)));
+    }
+    @Test void printingAndUploadRetriesNeverExtendUploadDeadline()throws Exception{
+        Time time=new Time();var queue=new StudioPhotoQueue(root,time);String token=queue.issue(1,7).get("token").getAsString(),id=UUID.randomUUID().toString();byte[] bytes=photo();
+        long deadline=queue.upload(1,token,id,"Person",bytes).get("deleteAfter").getAsLong();
+        time.advance(Duration.ofHours(6));assertEquals(deadline,queue.upload(1,token,id,"Person",bytes).get("deleteAfter").getAsLong());
+        time.advance(Duration.ofHours(17));var printed=queue.execute(1,request("PRINTED",id));long firstPrint=printed.get("printedAt").getAsLong();assertEquals(deadline,printed.get("deleteAfter").getAsLong());
+        time.advance(Duration.ofMinutes(59));var reprinted=queue.execute(1,request("PRINTED",id));assertEquals(firstPrint,reprinted.get("printedAt").getAsLong());assertEquals(deadline,reprinted.get("deleteAfter").getAsLong());
+        time.advance(Duration.ofMinutes(1));assertThrows(IllegalArgumentException.class,()->queue.execute(1,request("PRINTED",id)));
+        assertEquals(0,queue.execute(1,request("LIST",null)).getAsJsonArray("photos").size());
+    }
+    @Test void legacyEntriesUseOriginalUploadTimeAndSlowInferenceCannotRestoreExpiredPhotos()throws Exception{
+        Time time=new Time();var queue=new StudioPhotoQueue(root,time);String token=queue.issue(1,7).get("token").getAsString();
+        for(long oldDeadline:List.of(0L,time.millis()+Duration.ofDays(3).toMillis())){
+            String id=UUID.randomUUID().toString();var row=queue.upload(1,token,id,"Legacy",photo());Path meta=root.resolve("store-1/"+id+".json");
+            row.addProperty("deleteAfter",oldDeadline);Files.writeString(meta,row.toString());
+            queue.cleanup();assertEquals(row.get("createdAt").getAsLong()+Duration.ofHours(24).toMillis(),queue.execute(1,request("STATUS",id)).get("deleteAfter").getAsLong());
+        }
+        assertTrue(queue.prepareNext(input->{time.advance(Duration.ofHours(24));return transparentCutout();}));
+        assertEquals(0,queue.execute(1,request("LIST",null)).getAsJsonArray("photos").size());
+        try(var files=Files.list(root.resolve("store-1"))){assertFalse(files.anyMatch(f->f.getFileName().toString().endsWith(".photo")||f.getFileName().toString().endsWith(".cutout.png")));}
     }
     @Test void uploadRetriesDoNotDuplicateOrChangePhotosAndDeletedUploadsCannotReappear()throws Exception{
         Time time=new Time();var queue=new StudioPhotoQueue(root,time);String token=queue.issue(1,7).get("token").getAsString(),id=UUID.randomUUID().toString();byte[] bytes=photo();

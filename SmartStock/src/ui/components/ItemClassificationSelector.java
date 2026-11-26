@@ -71,7 +71,7 @@ public class ItemClassificationSelector extends JPanel {
 
     private void load(SearchableComboBox box, Integer categoryId, boolean itemTypes) {
         String key="reference:inventory-lookups:"+(categoryId==null?"all":"category:"+categoryId);
-        CachedUiLoader.loadAfterDisplay(this,key,LanApiClient.InventoryLookups.class,SessionDataCache.REFERENCE_TTL,
+        CachedUiLoader.loadAfterDisplay(box,key,LanApiClient.InventoryLookups.class,SessionDataCache.REFERENCE_TTL,
                 loadingState,()->LanApiClient.loadInventoryLookups(categoryId),lookups->{
             String desired=selectedText(box);
             box.setOptions(itemTypes ? lookups.itemTypes() : lookups.brands());

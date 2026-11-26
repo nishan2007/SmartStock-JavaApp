@@ -56,7 +56,7 @@ final class StudioImageTransfer {
             Object value = source.getTransferData(flavor);
             byte[] bytes;
             if (value instanceof byte[] data) {
-                if (data.length > (artwork?StudioImageFile.ARTWORK_MAX_BYTES:StudioImageFile.PHOTO_MAX_BYTES)) throw new IOException(artwork?"Banner image exceeds 100 MiB.":"Image exceeds 20 MB.");
+                if (data.length > (artwork?StudioImageFile.ARTWORK_MAX_BYTES:StudioImageFile.PHOTO_MAX_BYTES)) throw new IOException(artwork?"Banner image exceeds the in-memory import capacity.":"Image exceeds 20 MB.");
                 bytes = data.clone();
             } else if (value instanceof InputStream input) {
                 try (input) {

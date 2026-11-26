@@ -1,0 +1,1 @@
+Fix shared badge template saving compatibility. Omit default layer settings for older servers and preserve nondefault settings. Use SmartStock server 1.1.85 for rotated, hidden or transparent layers.

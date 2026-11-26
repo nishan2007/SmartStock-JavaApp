@@ -23,7 +23,7 @@ export default {
     if(url.protocol!=='https:') return reply('HTTPS required.',400);
     if(url.pathname.startsWith('/_release/')) return releaseRequest(request,env);
     if(!['GET','HEAD'].includes(request.method)) return reply('Method not allowed.',405,{'Allow':'GET, HEAD'});
-    if(url.pathname!=='/' && !/^\/download\/(smartstudio\/)?(windows|mac)$/.test(url.pathname)) return reply('Not found.',404);
+    if(url.pathname!=='/' && url.pathname!=='/manifest/windows' && !/^\/download\/(smartstudio\/)?(windows|mac)$/.test(url.pathname)) return reply('Not found.',404);
     let config;
     // Installers are public downloads, independent of store availability.
     // Operator publication remains authenticated in releaseRequest above.
@@ -39,6 +39,13 @@ export default {
       const links=Object.keys(config.installers).map(p=>`<li><a href="/download/${p}">SmartStock ${p==='windows'?'Windows':'Mac'} installer</a></li>`).join('')
         +Object.keys(config.studioInstallers).map(p=>`<li><a href="/download/smartstudio/${p}">SmartStudio ${p==='windows'?'Windows':'Mac'} installer</a></li>`).join('');
       return reply(request.method==='HEAD'?null:`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SmartStock installers</title><body><h1>SmartStock installers</h1><p>Download the current installer for your computer.</p><ul>${links}</ul>${links?'':'<p>No verified installer is available yet.</p>'}</body></html>`,200,{'Content-Type':'text/html; charset=utf-8'});
+    }
+    if(url.pathname==='/manifest/windows') {
+      const a=config.installers.windows;
+      if(!a || a.kind || !validUpload(a))return reply('Verified installer manifest unavailable.',503);
+      const object=await env.UPDATE_BUCKET.head(a.key);
+      if(!object || object.size!==a.size || object.customMetadata?.sha256!==a.sha256 || (a.etag && object.etag!==a.etag))return reply('Installer verification unavailable.',503);
+      return reply(request.method==='HEAD'?null:JSON.stringify({platform:'windows',version:a.version,buildNumber:a.buildNumber,size:a.size,sha256:a.sha256}),200,{'Content-Type':'application/json'});
     }
     const parts=url.pathname.split('/');
     const artifact=parts[2]==='smartstudio'?config.studioInstallers[parts[3]]:config.installers[parts[2]];

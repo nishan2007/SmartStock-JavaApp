@@ -19,6 +19,26 @@ class CustomOrderSizeSetsTest {
     private List<CustomOrderSizeSetEditor.SizeQuantity> sizes() {
         return List.of(new CustomOrderSizeSetEditor.SizeQuantity(variant(11,"Small","Black",100),5),new CustomOrderSizeSetEditor.SizeQuantity(variant(12,"Medium","Black",120),4));
     }
+    @Test void customerSizesShareAddonsWithoutStockReferences() {
+        var json=LanJson.create().toJsonTree(shared(0)).getAsJsonObject();
+        json.remove("customItemId");
+        json.add("customerItem",LanJson.create().toJsonTree(new CustomerSuppliedItem("Shirt","Black","","Acme")));
+        var supplied=new CustomItemOption(null,"Customer Item",null,"Black",null,"SERVICE","FIXED",BigDecimal.ZERO,false,null,null,null,null,null);
+        var selected=List.of(new CustomOrderSizeSetEditor.SizeQuantity(variant(-1,"S","Black",0),2),new CustomOrderSizeSetEditor.SizeQuantity(variant(-2,"XL","Black",0),3));
+        var template=LanJson.create().fromJson(json,OrderLineRequest.class);
+        var units=CustomOrderSizeSets.expand(supplied,template,selected,false,false);
+        assertEquals(5,units.size());
+        assertEquals("S",units.get(0).request().customerItem().size());
+        assertEquals("XL",units.get(2).request().customerItem().size());
+        for(var unit:units){
+            assertNull(unit.request().customItemId()); assertNull(unit.request().customVariantId());
+            assertEquals(0,unit.request().baseItemPrice().signum());
+            assertEquals(new BigDecimal("25"),unit.request().unitPrice());
+            assertEquals(template.printAddons(),unit.request().printAddons());
+            assertEquals(unit.request().itemSize(),unit.request().customerItem().size());
+            CustomerSuppliedItem.validate(LanJson.create().fromJson(LanJson.create().toJson(unit.request()),ServerCustomOrderDataService.OrderLineRequest.class));
+        }
+    }
     @Test void variablePricedShirtsWithCatalogueSizePricesSupportSets() {
         var variable = new CustomItemOption(1L,"Shirt",null,null,null,"INVENTORY","VARIABLE",
             null,true,null,null,null,null,null);

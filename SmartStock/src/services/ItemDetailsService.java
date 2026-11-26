@@ -86,6 +86,32 @@ public final class ItemDetailsService {
         }
     }
 
+    static void assignMissingSalesShelf(Connection conn, int productId, int locationId, String name) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT shelf_location_id FROM product_shelf_assignments
+                WHERE product_id=? AND location_id=?
+                """)) {
+            ps.setInt(1, productId);
+            ps.setInt(2, locationId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next() && rs.getObject(1) != null) return;
+            }
+        }
+        int shelfId = resolveShelfLocation(conn, locationId, name);
+        try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO product_shelf_assignments (product_id, location_id, shelf_location_id)
+                VALUES (?, ?, ?)
+                ON CONFLICT (product_id, location_id) DO UPDATE SET
+                    shelf_location_id=EXCLUDED.shelf_location_id, updated_at=CURRENT_TIMESTAMP
+                WHERE product_shelf_assignments.shelf_location_id IS NULL
+                """)) {
+            ps.setInt(1, productId);
+            ps.setInt(2, locationId);
+            ps.setInt(3, shelfId);
+            ps.executeUpdate();
+        }
+    }
+
     private static int findId(Connection conn, String sql, int scopeId, String name, String label) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, scopeId);

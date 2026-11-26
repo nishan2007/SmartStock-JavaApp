@@ -1,0 +1,5 @@
+SmartStudio 0.1.104 - Cumulative creative application quick update
+
+Includes the current SmartStudio application changes across the shared working tree and the rebuilt SmartStock 1.1.119 client dependency. Retains the native banner resolution correction and high-resolution, file-backed artwork handling from 0.1.103, alongside current template, editing, preview, printing and workspace changes.
+
+Model-free Windows quick updater. Preserves the installed runtime and profile models. Physical printer, cutter and live store verification remain separate.

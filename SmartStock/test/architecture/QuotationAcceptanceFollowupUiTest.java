@@ -28,8 +28,13 @@ class QuotationAcceptanceFollowupUiTest {
         String quotations = source("src/ui/screens/Quotations.java");
         String invoices = source("src/ui/screens/Invoices.java");
 
-        assertTrue(quotations.contains("continueButton.addActionListener(e -> save());\n            ThemeManager.applyToWindow(this);"));
-        assertTrue(invoices.contains("cancel.addActionListener(e -> dispose());\n            ThemeManager.applyToWindow(this);"));
+        String paymentDialog = quotations.substring(quotations.indexOf("static class PaymentPrompt"),
+                quotations.indexOf("static class QuotationEditor"));
+        String deliveryDialog = invoices.substring(invoices.indexOf("static class DeliveryDialog"));
+        assertTrue(paymentDialog.indexOf("ThemeManager.applyToWindow(this);")
+                > paymentDialog.indexOf("new ui.components.DocumentWorkspace"));
+        assertTrue(deliveryDialog.indexOf("ThemeManager.applyToWindow(this);")
+                > deliveryDialog.indexOf("new ui.components.DocumentWorkspace"));
         assertTrue(invoices.contains("\"Invoiced\""));
     }
 }

@@ -1,12 +1,116 @@
 package gy.deckers.studio;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import javax.swing.*;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.image.BufferedImage;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import static org.junit.jupiter.api.Assertions.*;
 
 class BadgePrintRecordTest {
+    @Test void dataRibbonOpensScopedRecordsAndLoadsTheSelectedBadge(@TempDir Path folder)throws Exception{
+        String templateId=UUID.randomUUID().toString(), recordId=UUID.randomUUID().toString();
+        Path file=folder.resolve("2_"+templateId+".sstbadge");
+        BadgeTemplate.builtin().save(file);
+        var metadata=new JsonObject();
+        metadata.addProperty("id",templateId);
+        metadata.addProperty("storageStoreId",2);
+        Files.writeString(file.resolveSibling(file.getFileName()+".meta.json"),metadata.toString());
+
+        var values=new JsonObject();
+        values.addProperty("fullName","Synthetic rider");
+        values.addProperty("olderField","Preserved");
+        var library=new SharedBadgeLibrary(folder,request->{
+            assertEquals(templateId,request.get("id").getAsString());
+            assertEquals(2,request.get("storageStoreId").getAsInt());
+            var response=new JsonObject();
+            if("RECORD_LIST".equals(request.get("action").getAsString())){
+                var record=new JsonObject();
+                record.addProperty("recordId",recordId);
+                record.addProperty("createdAt","2026-11-25");
+                record.add("values",values);
+                var records=new JsonArray();
+                records.add(record);
+                response.add("records",records);
+            }else{
+                assertEquals("RECORD_GET",request.get("action").getAsString());
+                assertEquals(recordId,request.get("recordId").getAsString());
+                response.add("values",values);
+                response.add("photos",new JsonObject());
+            }
+            return response;
+        });
+        var panelRef=new AtomicReference<BadgeCardsPanel>();
+        var browserRef=new AtomicReference<StudioRecordBrowser<?>>();
+        var ready=new CountDownLatch(1);
+        SwingUtilities.invokeAndWait(()->{
+            try{
+                var panel=new BadgeCardsPanel();
+                panelRef.set(panel);
+                var shared=BadgeCardsPanel.class.getDeclaredField("shared");
+                shared.setAccessible(true);
+                shared.set(panel,library);
+                panel.openDocument(file);
+                var shell=find(panel,StudioWorkspaceShell.class);
+                shell.ribbon().select("Data");
+                var command=find(shell.ribbon(),AbstractButton.class,"DB");
+                assertNotNull(command);
+                command.doClick(0);
+                var browser=find(shell,StudioRecordBrowser.class);
+                assertNotNull(browser);
+                browserRef.set(browser);
+                browser.open.addPropertyChangeListener("enabled",e->{if(browser.open.isEnabled())ready.countDown();});
+            }catch(Exception ex){throw new IllegalStateException(ex);}
+        });
+        try{
+            assertTrue(ready.await(5,TimeUnit.SECONDS));
+            SwingUtilities.invokeAndWait(()->{
+                try{
+                    var panel=panelRef.get();
+                    var browser=browserRef.get();
+                    assertEquals("Preserved",browser.table.getValueAt(0,browser.table.getColumn("olderField").getModelIndex()));
+                    browser.open.doClick(0);
+                    assertFalse(find(panel,StudioWorkspaceShell.class).recordsOpen());
+                    var current=BadgeCardsPanel.class.getDeclaredMethod("values");
+                    current.setAccessible(true);
+                    assertEquals("Synthetic rider",((Map<?,?>)current.invoke(panel)).get("fullName"));
+                }catch(Exception ex){throw new IllegalStateException(ex);}
+            });
+        }finally{
+            SwingUtilities.invokeAndWait(()->{
+                var panel=panelRef.get();
+                find(panel,StudioWorkspaceShell.class).closeRecords();
+                try{var timer=BadgeCardsPanel.class.getDeclaredField("refresh");timer.setAccessible(true);((Timer)timer.get(panel)).stop();}
+                catch(Exception ex){throw new IllegalStateException(ex);}
+            });
+        }
+    }
+
+    private static <T> T find(Container parent,Class<T> type){
+        return find(parent,type,null);
+    }
+    private static <T> T find(Container parent,Class<T> type,String label){
+        for(Component child:parent.getComponents()){
+            if(type.isInstance(child)&&(label==null||child instanceof AbstractButton button&&label.equals(button.getText())))
+                return type.cast(child);
+            if(child instanceof Container nested){
+                T match=find(nested,type,label);
+                if(match!=null)return match;
+            }
+        }
+        return null;
+    }
+
     @Test void newTemplateBindingsCreateBlankInputsAndReuseTheSameField()throws Exception {
         SwingUtilities.invokeAndWait(()->{
             BadgeCardsPanel panel=new BadgeCardsPanel();

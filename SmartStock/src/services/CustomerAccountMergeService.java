@@ -89,7 +89,7 @@ public final class CustomerAccountMergeService {
                 WITH candidates AS (
                   SELECT ca.*,lower(regexp_replace(btrim(ca.name),'[[:space:]]+',' ','g')) AS match_name,
                     public.customer_phone_key(ca.phone) AS match_phone,to_jsonb(ca)::text AS snapshot
-                  FROM customer_accounts ca WHERE NOT EXISTS(
+                  FROM customer_accounts ca WHERE ca.internal_expense_location_id IS NULL AND NOT EXISTS(
                     SELECT 1 FROM customer_account_merges m WHERE m.source_customer_id=ca.customer_id)
                 ), counted AS (
                   SELECT *,count(*) OVER(PARTITION BY match_name,match_phone) AS matches FROM candidates

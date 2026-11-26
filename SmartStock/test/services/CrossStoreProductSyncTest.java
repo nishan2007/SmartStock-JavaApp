@@ -8,6 +8,15 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CrossStoreProductSyncTest {
+    @Test void carriesCompleteTagAssignmentsAndLeavesOlderSnapshotsCompatible()throws Exception {
+        var product=row("{product_id:7,sku:'POLO'}");
+        var tag=row("{tag_id:'a89a32bd-7c4a-4099-a486-b2fed9d6043d',name:'School Wear',is_public:true}");
+        var source=source(Map.of("products",List.of(product),"product_barcodes",List.of(),
+            "product_tag_definitions",List.of(tag),"product_tags",List.of(row("{product_id:7,tag_id:'a89a32bd-7c4a-4099-a486-b2fed9d6043d'}"))));
+        var plan=CrossStoreProductSyncService.plan(source,7);
+        assertEquals(tag,plan.product().getAsJsonArray("_tagSnapshot").get(0));
+        assertFalse(CrossStoreProductSyncService.plan(source(Map.of("products",List.of(product),"product_barcodes",List.of())),7).product().has("_tagSnapshot"));
+    }
     static JsonObject row(String json) { return JsonParser.parseString(json).getAsJsonObject(); }
     @Test void comparesMirrorAndNativeTimestampsWithoutUsingMachineTimezone() throws Exception {
         assertEquals(CrossStoreProductSyncService.timestamp(row("{\"updated_at\":\"2026-10-17 09:54:25.277137-04\"}"),"updated_at"),
@@ -31,6 +40,7 @@ class CrossStoreProductSyncTest {
     static CrossStoreProductSyncService.CatalogSource source(Map<String,List<JsonObject>> tables) {
         return new CrossStoreProductSyncService.CatalogSource() {
             public Instant completedAt(){return Instant.parse("2026-10-17T16:00:00Z");}
+            public boolean hasTags(){return tables.containsKey("product_tags")&&tables.containsKey("product_tag_definitions");}
             public List<JsonObject> rows(String table)throws SQLException{
                 if(!tables.containsKey(table))throw new SQLException("Missing fixture table: "+table);
                 return tables.get(table);

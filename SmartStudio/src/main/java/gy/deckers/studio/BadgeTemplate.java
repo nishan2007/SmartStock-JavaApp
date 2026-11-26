@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.List;
+import publishing.TextAlignment;
 
 /** Portable, self-contained badge designs. Personal photos and record values are never serialized. */
 public final class BadgeTemplate {
@@ -17,17 +18,37 @@ public final class BadgeTemplate {
     public static final int MAX_BYTES = 8 * 1024 * 1024;
     static String portableJson(BadgeTemplate template){
         var json=new Gson().toJsonTree(template).getAsJsonObject();
-        for(var value:json.getAsJsonArray("elements")){var element=value.getAsJsonObject();for(String name:new String[]{"italic","underline","strike","textOutline"})if(!element.get(name).getAsBoolean())element.remove(name);if(!element.has("textOutline")){element.remove("textOutlineColor");element.remove("textOutlineWidth");}}
+        for(var value:portableElements(json)){var element=value.getAsJsonObject();for(String name:new String[]{"italic","underline","strike","textOutline"})if(!element.get(name).getAsBoolean())element.remove(name);if(!element.has("textOutline")){element.remove("textOutlineColor");element.remove("textOutlineWidth");}}
+        // Default layer settings are implicit in older store servers' portable format.
+        for(var value:portableElements(json)){var element=value.getAsJsonObject();if(element.get("rotation").getAsDouble()==0)element.remove("rotation");if(!element.get("hidden").getAsBoolean())element.remove("hidden");if(element.get("transparency").getAsInt()==0)element.remove("transparency");}
         return json.toString();
+    }
+    private static com.google.gson.JsonArray portableElements(com.google.gson.JsonObject json) {
+        var all=new com.google.gson.JsonArray();all.addAll(json.getAsJsonArray("elements"));all.addAll(json.getAsJsonArray("backElements"));return all;
     }
     public boolean savePrintRecords;
     public int formatVersion = 1;
     public String name = "New badge";
+    public publishing.StudioDriveIdentity smartDrive;
     public double widthMm = 85.6, heightMm = 54;
     public List<Element> elements = new ArrayList<>();
+    public List<Element> backElements = new ArrayList<>();
+    transient boolean editingBack;
+    List<Element> pageElements() { return editingBack ? backElements : elements; }
+    List<Element> allElements() { var all=new ArrayList<Element>(elements);all.addAll(backElements);return all; }
+    void mergeBack(BadgeTemplate back) {
+        if(Math.abs(widthMm-back.widthMm)>.01 || Math.abs(heightMm-back.heightMm)>.01)
+            throw new IllegalArgumentException("Front and back must have the same dimensions and orientation.");
+        back.validate();var previous=backElements;backElements=back.snapshot().elements;
+        try{validate();}catch(RuntimeException ex){backElements=previous;throw ex;}
+    }
+    BufferedImage renderSide(boolean back, Map<String,String> values, BufferedImage photo, int dpi)throws IOException {
+        boolean previous=editingBack;try{editingBack=back;return render(values,photo,dpi);}finally{editingBack=previous;}
+    }
 
     public static final class Element {
         public int transparency;
+        public boolean hidden;
         public String photoId=UUID.randomUUID().toString();
         transient BufferedImage personalPhoto;
         transient PhotoFraming photoFraming;
@@ -35,8 +56,9 @@ public final class BadgeTemplate {
         public String photoBackgroundColor="#ffffff",photoOutlineColor="#000000";
         PhotoFraming stylePhoto(PhotoFraming frame){return frame.styled(photoBackgroundEnabled?Color.decode(photoBackgroundColor):null,photoOutlineEnabled?Color.decode(photoOutlineColor):null);}
         public String label, type = "TEXT", text = "", field = "", font = "Arial", color = "#000000", image = "";
-        public double x, y, width, height, fontMm = 3;
+        public double x, y, width, height, rotation, fontMm = 3;
         public boolean bold,italic,underline,strike,textOutline;
+        public TextAlignment textAlignment;
         public String textOutlineColor="#000000";
         public double textOutlineWidth=.2;
         private transient String decodedSource;
@@ -60,7 +82,10 @@ public final class BadgeTemplate {
     }
 
     public static BadgeTemplate load(Path file) throws IOException {
-        try (InputStream in = Files.newInputStream(file)) { return read(in); }
+        try (InputStream in = Files.newInputStream(file)) {
+            BadgeTemplate template=read(in);var identity=publishing.StudioDriveIdentity.fromFile(file);
+            if(identity!=null){template.smartDrive=identity;template.validate();}return template;
+        }
     }
 
     static BadgeTemplate read(InputStream in) throws IOException {
@@ -73,13 +98,19 @@ public final class BadgeTemplate {
             BadgeTemplate template = JSON.fromJson(object, BadgeTemplate.class);
             if (template == null) throw new IllegalArgumentException("Empty template.");
             template.validate();
+            OreallaRidersPermit.upgrade(template);
+            OreallaRidersPermit.layoutFront(template);
             return template;
         } catch (RuntimeException ex) { throw new IOException("Invalid badge template: " + ex.getMessage(), ex); }
     }
 
     public void save(Path file) throws IOException {
         validate();
-        byte[] bytes = JSON.toJson(this).getBytes(StandardCharsets.UTF_8);
+        var object = JSON.toJsonTree(this).getAsJsonObject();
+        ByteArrayOutputStream preview = new ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(renderSide(false, Map.of(), null, 72), "png", preview);
+        if(preview.size()<=1024*1024)object.addProperty("previewPng",java.util.Base64.getEncoder().encodeToString(preview.toByteArray()));
+        byte[] bytes = JSON.toJson(object).getBytes(StandardCharsets.UTF_8);
         if (bytes.length > MAX_BYTES) throw new IOException("Template exceeds the 8 MB limit.");
         Path target = file.toAbsolutePath();
         Files.createDirectories(target.getParent());
@@ -92,18 +123,20 @@ public final class BadgeTemplate {
     }
 
     public void validate() {
+        if(smartDrive!=null){smartDrive.validate();if(!"BADGE".equals(smartDrive.kind))throw new IllegalArgumentException("Invalid badge identity category.");}
         if (formatVersion != 1) throw new IllegalArgumentException("Unsupported template version.");
         if (name == null || name.isBlank() || name.length() > 160) throw new IllegalArgumentException("Enter a template name (up to 160 characters).");
         if (!finite(widthMm, 10, 300) || !finite(heightMm, 10, 300)) throw new IllegalArgumentException("Card dimensions must be 10–300 mm.");
-        if (elements == null || elements.size() > 64) throw new IllegalArgumentException("A template supports up to 64 elements.");
-        for (Element e : elements) {
+        if (elements == null || backElements == null || elements.size() > 64 || backElements.size() > 64) throw new IllegalArgumentException("A template supports up to 64 elements.");
+        for (Element e : allElements()) {
             if (e == null || e.label == null || e.label.isBlank() || e.label.length() > 160
-                    || !Set.of("TEXT", "IMAGE", "PHOTO", "RECT", "ELLIPSE", "TRIANGLE", "LINE").contains(e.type == null ? "" : e.type)) throw new IllegalArgumentException("Invalid element.");
-            if (!finite(e.x, -1000, 1000) || !finite(e.y, -1000, 1000) || !finite(e.width, .01, widthMm)
-                    || !finite(e.height, .01, heightMm))
+                    || !Set.of("TEXT", "IMAGE", "PHOTO", "QR", "RECT", "ELLIPSE", "TRIANGLE", "LINE").contains(e.type == null ? "" : e.type)) throw new IllegalArgumentException("Invalid element.");
+            if (!finite(e.x, -1000, 1000) || !finite(e.y, -1000, 1000) || !finite(e.rotation,-360,360) || !finite(e.width, .01,Math.abs(Math.sin(Math.toRadians(e.rotation)))>.001?Math.max(widthMm,heightMm):widthMm)
+                    || !finite(e.height, .01,Math.abs(Math.sin(Math.toRadians(e.rotation)))>.001?Math.max(widthMm,heightMm):heightMm))
                 throw new IllegalArgumentException(e.label + " has invalid workspace coordinates or dimensions.");
             if (e.text == null || e.text.length() > 1000 || e.field == null || !e.field.matches("[A-Za-z][A-Za-z0-9_]{0,39}|"))
                 throw new IllegalArgumentException("Invalid text or field name.");
+            if ("QR".equals(e.type) && e.field.isEmpty()) throw new IllegalArgumentException("A QR layer requires a data field.");
             if (e.font == null || e.font.length() > 100 || !finite(e.fontMm, .5, 50) || e.color == null || !e.color.matches("#[0-9a-fA-F]{6}"))
                 throw new IllegalArgumentException("Invalid font or colour.");
             if(e.textOutlineColor==null||!e.textOutlineColor.matches("#[0-9a-fA-F]{6}")||!finite(e.textOutlineWidth,0,5))throw new IllegalArgumentException("Invalid text outline.");
@@ -117,7 +150,7 @@ public final class BadgeTemplate {
 
     private static boolean finite(double n, double min, double max) { return Double.isFinite(n) && n >= min && n <= max; }
 
-    BadgeTemplate snapshot() { return JSON.fromJson(JSON.toJson(this), BadgeTemplate.class); }
+    BadgeTemplate snapshot() { var copy=JSON.fromJson(JSON.toJson(this), BadgeTemplate.class);copy.editingBack=editingBack;return copy; }
 
     static BufferedImage decode(String encoded) throws IOException {
         try {
@@ -154,10 +187,13 @@ public final class BadgeTemplate {
     }
 
     void paintElements(Graphics2D g, Map<String, String> values, BufferedImage photo, double scale) throws IOException {
-            for (Element e : elements) {
+            boolean oreallaFront = !editingBack && OreallaRidersPermit.usesFrontLayout(this);
+            for (Element e : pageElements()) {
+                if(e.hidden)continue;
                 int x=(int)Math.round(e.x*scale), y=(int)Math.round(e.y*scale), ew=(int)Math.round(e.width*scale), eh=(int)Math.round(e.height*scale);
                 Graphics2D layer=(Graphics2D)g.create();
                 try {
+                    layer.rotate(Math.toRadians(e.rotation),x+ew/2.,y+eh/2.);
                     layer.clipRect(x,y,ew,eh);
                     if(Set.of("IMAGE","PHOTO").contains(e.type))layer.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER,1-e.transparency/100f));
                     if (Set.of("RECT","ELLIPSE","TRIANGLE","LINE").contains(e.type)) {
@@ -170,6 +206,10 @@ public final class BadgeTemplate {
                         }
                     }
                     else if ("IMAGE".equals(e.type)) layer.drawImage(e.artwork(),x,y,ew,eh,null);
+                    else if ("QR".equals(e.type)) {
+                        String value=values.getOrDefault(e.field,"");
+                        if(!value.isBlank()) paintQr(layer,value,x,y,ew,eh);
+                    }
                     else if ("PHOTO".equals(e.type)) {
                         BufferedImage slotPhoto=e.personalPhoto!=null?e.personalPhoto:photo;
                         if (slotPhoto == null) {
@@ -178,22 +218,58 @@ public final class BadgeTemplate {
                             String label="Photo"; layer.drawString(label,x+(ew-layer.getFontMetrics().stringWidth(label))/2,y+eh/2);
                         } else {
                             PhotoFraming framing=e.photoFraming!=null&&e.photoFraming.source()==slotPhoto?e.photoFraming:PhotoFraming.initial(slotPhoto);
-                            e.stylePhoto(framing).paint(layer,x,y,ew,eh);
+                            (OreallaRidersPermit.enabled(this)?framing:e.stylePhoto(framing)).paint(layer,x,y,ew,eh);
                         }
                     } else {
                         String text=e.field.isEmpty()?e.text:values.getOrDefault(e.field,e.text);
                         Font font=publishing.PublicationFonts.create(e.font,(e.bold?Font.BOLD:0)|(e.italic?Font.ITALIC:0),(float)(e.fontMm*scale));
                         layer.setFont(font);
-                        int tw=layer.getFontMetrics().stringWidth(text);
-                        if (tw > ew) layer.setFont(font.deriveFont((float)(font.getSize2D()*ew/tw)));
+                        boolean permitText = oreallaFront && OreallaRidersPermit.usesTypography(e);
+                        TextAlignment alignment = e.textAlignment == null
+                                ? defaultTextAlignment(e) : e.textAlignment;
+                        if (!permitText) {
+                            int tw=layer.getFontMetrics().stringWidth(text);
+                            if (tw > ew) layer.setFont(font.deriveFont((float)(font.getSize2D()*ew/tw)));
+                        }
                         FontMetrics metrics=layer.getFontMetrics();
+                        float lineWidth=metrics.stringWidth(text);
+                        float tx=x+(float)alignment.offset(ew,lineWidth),baseline=y+(eh-metrics.getHeight())/2f+metrics.getAscent();
+                        Shape glyph;
+                        if (permitText) {
+                            glyph = OreallaRidersPermit.fitText(layer, font, text,
+                                    alignment, !e.field.isEmpty(), x, y, ew, eh);
+                            var bounds=glyph.getBounds2D();
+                            tx=(float)bounds.getX();
+                            lineWidth=(float)bounds.getWidth();
+                        } else {
+                            glyph=layer.getFont().createGlyphVector(layer.getFontRenderContext(),text).getOutline(tx,baseline);
+                        }
                         layer.setColor(Color.decode(e.color));
-                        float tx=x+(ew-metrics.stringWidth(text))/2f,baseline=y+(eh-metrics.getHeight())/2f+metrics.getAscent();
-                        Shape glyph=layer.getFont().createGlyphVector(layer.getFontRenderContext(),text).getOutline(tx,baseline);layer.fill(glyph);
+                        layer.fill(glyph);
                         if(e.textOutline&&e.textOutlineWidth>0){layer.setColor(Color.decode(e.textOutlineColor));layer.setStroke(new BasicStroke((float)(e.textOutlineWidth*scale),BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND));layer.draw(glyph);}
-                        layer.setColor(Color.decode(e.color));layer.setStroke(new BasicStroke(Math.max(1,layer.getFont().getSize2D()/18)));if(e.underline)layer.draw(new java.awt.geom.Line2D.Float(tx,baseline+layer.getFont().getSize2D()*.1f,tx+metrics.stringWidth(text),baseline+layer.getFont().getSize2D()*.1f));if(e.strike)layer.draw(new java.awt.geom.Line2D.Float(tx,baseline-layer.getFont().getSize2D()*.3f,tx+metrics.stringWidth(text),baseline-layer.getFont().getSize2D()*.3f));
+                        layer.setColor(Color.decode(e.color));layer.setStroke(new BasicStroke(Math.max(1,layer.getFont().getSize2D()/18)));if(e.underline)layer.draw(new java.awt.geom.Line2D.Float(tx,baseline+layer.getFont().getSize2D()*.1f,tx+lineWidth,baseline+layer.getFont().getSize2D()*.1f));if(e.strike)layer.draw(new java.awt.geom.Line2D.Float(tx,baseline-layer.getFont().getSize2D()*.3f,tx+lineWidth,baseline-layer.getFont().getSize2D()*.3f));
                     }
                 } finally { layer.dispose(); }
             }
+    }
+    TextAlignment defaultTextAlignment(Element e) {
+        return !editingBack && OreallaRidersPermit.usesFrontLayout(this) && OreallaRidersPermit.usesLeftAlignment(e)
+                ? TextAlignment.LEFT : TextAlignment.CENTER;
+    }
+    private static void paintQr(Graphics2D graphics,String value,int x,int y,int width,int height)throws IOException {
+        try {
+            var matrix=publishing.PublicationBarcode.encode(value,"QR_CODE");
+            int size=Math.min(width,height);
+            int left=x+(width-size)/2,top=y+(height-size)/2,modules=matrix.getWidth();
+            graphics.setColor(Color.WHITE);
+            graphics.fillRect(left,top,size,size);
+            graphics.setColor(Color.BLACK);
+            for(int row=0;row<modules;row++) for(int col=0;col<modules;col++) {
+                if(matrix.get(col,row)) {
+                    int px=col*size/modules,py=row*size/modules;
+                    graphics.fillRect(left+px,top+py,(col+1)*size/modules-px,(row+1)*size/modules-py);
+                }
+            }
+        } catch(Exception ex) {throw new IOException("Could not render badge QR code.",ex);}
     }
 }

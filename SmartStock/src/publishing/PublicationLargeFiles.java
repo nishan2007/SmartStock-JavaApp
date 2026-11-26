@@ -10,7 +10,7 @@ import java.util.zip.*;
 /** Local ZIP64 templates. Asset bytes never accumulate in a project-sized byte array. */
 public final class PublicationLargeFiles {
     public static final long MAX_BYTES=5L*1024*1024*1024;
-    public static final int MAX_IMAGE_BYTES=100*1024*1024;
+    public static final long MAX_IMAGE_BYTES=MAX_BYTES;
     public static final int MAX_JSON_BYTES=16*1024*1024;
     public static Path cache(){return Path.of(System.getProperty("user.home"),"banner-asset-cache");}
     public static Path store(InputStream input,Path cache)throws IOException {
@@ -23,7 +23,7 @@ public final class PublicationLargeFiles {
         try {
             long size=0;byte[] buffer=new byte[1024*1024];
             try(OutputStream output=Files.newOutputStream(partial)){
-                int count;while((count=input.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new IOException("Template operation cancelled.");size+=count;if(size>limit)throw new IOException("Image exceeds the 100 MiB or remaining 5 GiB template budget.");digest.update(buffer,0,count);output.write(buffer,0,count);}
+                int count;while((count=input.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new IOException("Template operation cancelled.");size+=count;if(size>limit)throw new IOException("Image exceeds the remaining 5 GiB template budget.");digest.update(buffer,0,count);output.write(buffer,0,count);}
             }
             Path target=cache.resolve(HexFormat.of().formatHex(digest.digest()));
             if(!Files.exists(target))try{Files.move(partial,target,StandardCopyOption.ATOMIC_MOVE);}catch(AtomicMoveNotSupportedException ex){Files.move(partial,target,StandardCopyOption.REPLACE_EXISTING);}
@@ -32,10 +32,10 @@ public final class PublicationLargeFiles {
         }finally{Files.deleteIfExists(partial);}
     }
     public static void write(Path target,Publication publication)throws IOException {
-        publication.validate();byte[] json=Publication.JSON.toJson(publication).getBytes(StandardCharsets.UTF_8);
+        publication.validate();byte[] json=PublicationPreview.documentJson(publication,publication);
         if(json.length>MAX_JSON_BYTES)throw new IOException("Banner design metadata exceeds 16 MiB.");
         long expected=json.length;
-        for(String id:publication.assetIds()){long size=publication.assetSize(id);if(size<1||size>MAX_IMAGE_BYTES)throw new IOException("Each banner image must be at most 100 MiB.");expected+=size;if(expected>MAX_BYTES)throw new IOException("Template exceeds 5 GiB expanded size.");}
+        for(String id:publication.assetIds()){long size=publication.assetSize(id);if(size<1||size>MAX_IMAGE_BYTES)throw new IOException("Artwork exceeds the 5 GiB template budget.");expected+=size;if(expected>MAX_BYTES)throw new IOException("Template exceeds 5 GiB expanded size.");}
         Path parent=target.toAbsolutePath().getParent();Files.createDirectories(parent);
         Path partial=Files.createTempFile(parent,"banner-",".partial");
         try {

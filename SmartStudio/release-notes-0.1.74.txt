@@ -1,0 +1,3 @@
+SmartStudio 0.1.74 (1074) - Windows quick update.
+Print Setup Preview now opens a visible local sheet-preview window with artwork, sheet navigation and Close/Escape, without saving or contacting the store. Bill Books Numbering exposes print content, number fields, numbering order, custom positions, position map and cut-and-stack directly in the ribbon. Removed the numbering settings popup and redundant paper/margin rows. Shared-template save integrity checks remain enabled, with clearer mismatch guidance to preserve an unverified draft.
+Requires an existing installation; Java runtime and AI model weights are excluded. No store-server deployment or live installation is included.

@@ -21,7 +21,7 @@ export function searchCatalog(query, products, services=serviceTopics, projects=
   const words=query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if(!words.length)return {products:[],services:[],categories:[],projects:[]};
   const matches=value=>words.every(word=>String(value||'').toLocaleLowerCase().includes(word));
-  const productResults=products.filter(p=>matches([p.name,p.sku,p.description,p.category,p.size,p.color].join(' '))).slice(0,8);
+  const productResults=products.filter(p=>matches([p.name,p.sku,p.description,p.category,p.size,p.color,p.searchAliases,...(p.tags||[])].join(' '))).slice(0,8);
   const serviceResults=services.filter(s=>matches(s.name+' '+s.terms)).slice(0,6);
   const categories=[...new Set(products.map(p=>p.category).filter(Boolean))].filter(matches).slice(0,6);
   const projectResults=projects.filter(p=>matches([p.title,p.summary,p.category,p.materials,p.productionMethod,p.customization,...(p.tags||[])].join(' '))).slice(0,6);

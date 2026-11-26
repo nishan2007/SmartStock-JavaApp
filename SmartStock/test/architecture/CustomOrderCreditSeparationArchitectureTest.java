@@ -19,7 +19,7 @@ class CustomOrderCreditSeparationArchitectureTest {
         assertTrue(workflow.contains("CUSTOM_ORDER_PAYMENT"));
         String ledger=read("src/services/CustomerAccountLedgerService.java");
         assertTrue(ledger.contains("credit_applied_amount"));
-        assertTrue(ledger.contains("'CUSTOM_ORDER_BALANCE', 'CUSTOM_ORDER_PAYMENT'"));
+        assertTrue(ledger.replaceAll("\\s+", " ").contains("'CUSTOM_ORDER_BALANCE', 'CUSTOM_ORDER_PAYMENT'"));
     }
 
     @Test void paymentApiRequiresExplicitAllocationsAndUiShowsSeparatedTotals()throws Exception{

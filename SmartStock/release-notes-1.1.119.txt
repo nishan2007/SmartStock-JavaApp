@@ -1,0 +1,7 @@
+SmartStock 1.1.119 - Shared product ad review and cumulative application update
+
+Includes the current SmartStock application changes across the shared working tree, including catalog image coverage and durable ad review for square, portrait, story and landscape formats.
+
+Import images generated in ChatGPT/Codex and save them as shared pending drafts. Authorized registers connected to the same store can reopen, approve or reject them. Revision checks prevent stale registers from overwriting or approving a changed draft. Approval requires explicit confirmation, preserves the main photo and records coverage. No AI API key or API billing is required.
+
+Includes current catalog merge/photo identity, orders, inventory, receipt and account, web workflow and local-first server corrections. Windows quick updater; model weights remain outside application and rollback folders. Update the store server before registers. Hardware and live multi-register checks remain separate.

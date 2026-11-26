@@ -1,0 +1,1 @@
+Phone Minutes follows normal SmartStock navigation and retains the selected account when opened from Customer Accounts. Account-linked cash and credit sales can omit the destination number. Walk-in sales still require a valid number.

@@ -1,0 +1,5 @@
+SmartStudio 0.1.111 - visible badge Front/Back controls
+
+Keep Page, Edit back, Blank back and Add back from template controls directly above the badge canvas. Insert includes Blank back and Add back from template. View includes Front and Back switching. Home also includes direct page controls.
+
+Inserting a blank back asks before replacing existing artwork; Front artwork is preserved. Retains 0.1.110 card-spacing changes and the SmartStock 1.1.146 client libraries.

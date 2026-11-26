@@ -6,3 +6,8 @@
 
 /* DeckersPalette: ORANGE #ff5b00, PURPLE #7022a8, CORAL #f04f45; shared light surfaces. */
 header{border-top:4px solid #ff5b00}.brand{min-width:0;letter-spacing:.5px}.brand #companyName{max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.brand #companyLogo{width:46px;height:46px;object-fit:contain}.primary:hover{filter:brightness(.92)}footer p{margin:6px 0;font-size:12px}footer strong{color:#0f172a}#metrics .metric:nth-child(3){border-top:3px solid #3cff00}#metrics .metric:nth-child(2){border-top:3px solid #ff5b00}#metrics .metric:nth-child(4){border-top:3px solid #7022a8}@media(max-width:760px){.brand #companyName{max-width:165px;font-size:14px}.brand{gap:8px}header{padding:0 16px}}
+
+/* Branded sign-in uses the same accent treatment as the Orders dashboard. */
+.welcome .card{border-top:4px solid #ff5b00}.welcome h1{color:#7022a8}.brand #companyLogo{width:auto;max-width:180px;height:52px;object-fit:contain}.brand:has(#companyLogo:not([hidden])) #companyName{display:none}#auth .eyebrow{color:#7022a8}#remoteLogin .primary,#remoteMfa .primary{width:100%;margin-top:12px}
+
+header{border-top:5px solid;border-image:linear-gradient(90deg,#ff5b00 0 28%,#f100ff 28% 46%,#3cff00 46% 64%,#fff200 64% 82%,#7022a8 82% 100%) 1}

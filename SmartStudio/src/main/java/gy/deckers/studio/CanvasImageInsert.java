@@ -28,4 +28,23 @@ final class CanvasImageInsert {
         double factor=Math.min(pageWidth*.6/width,pageHeight*.6/height);
         return new double[]{width*factor,height*factor};
     }
+
+    static StudioImageFile.Loaded limit(StudioImageFile.Loaded source,int maxSide)throws java.io.IOException{
+        var image=source.image();
+        int longest=Math.max(image.getWidth(),image.getHeight());
+        if(longest<=maxSide)return source;
+        double scale=(double)maxSide/longest;
+        int width=Math.max(1,(int)Math.round(image.getWidth()*scale));
+        int height=Math.max(1,(int)Math.round(image.getHeight()*scale));
+        var resized=new java.awt.image.BufferedImage(width,height,java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        var graphics=resized.createGraphics();
+        try{
+            graphics.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+                    java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            graphics.drawImage(image,0,0,width,height,null);
+        }finally{graphics.dispose();}
+        var bytes=new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(resized,"png",bytes);
+        return new StudioImageFile.Loaded(bytes.toByteArray(),resized,source.name());
+    }
 }

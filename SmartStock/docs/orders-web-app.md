@@ -99,6 +99,13 @@ status accent, and light surfaces. Signed-in company details come from
 `ServerCompanyCustomizationRepository.loadReceiptSettingsForLocation`, including
 the saved company name/logo, motto, and location contact/address lines. No separate
 company profile is maintained by this web app. Only bounded PNG/JPEG logos are
-returned inline through the authenticated dashboard response. Before sign-in or
-when settings are unavailable, the UI uses the SmartStock name instead of invented
-company information. The installed Java server must include this branding update.
+returned inline through the authenticated dashboard response. Before sign-in, `/employees/branding` loads only the company identity already
+published by SmartStock at www.deckers.gy. It forwards no employee cookies, and
+returns only company name, logo, motto, address, phone, and email. The installed Java server must include this branding update.
+
+The pre-login branding route remains independent of the installed employee gateway
+so the login page can show company branding while the gateway is being updated.
+The iPhone icon uses versioned `orders-icon-v2-*` PNGs rendered from the editable
+`orders-icon-source.svg`: an order clipboard, barcode, and completion checkmark.
+If an existing iPhone Home Screen shortcut retains its old icon, remove that
+shortcut and add Orders again from the refreshed Safari page.

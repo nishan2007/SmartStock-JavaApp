@@ -7,6 +7,18 @@ import java.sql.SQLException;
 import static org.junit.jupiter.api.Assertions.*;
 
 class CashDrawerHandoverServiceTest {
+    @Test void unattendedTakeoverRequiresDifferentCashierReasonAndUnchangedCustody() throws Exception {
+        JsonObject b=count();b.addProperty("previousCashierUserId",1);b.addProperty("notes","Previous cashier left unexpectedly");
+        assertEquals("Previous cashier left unexpectedly",CashDrawerHandoverService.validateTakeover(b,1,2,false,false));
+        assertThrows(SQLException.class,()->CashDrawerHandoverService.validateTakeover(b,1,1,false,false));
+        assertThrows(SQLException.class,()->CashDrawerHandoverService.validateTakeover(b,3,2,false,false));
+        assertThrows(SQLException.class,()->CashDrawerHandoverService.validateTakeover(b,1,2,true,false));
+        assertThrows(SQLException.class,()->CashDrawerHandoverService.validateTakeover(b,1,2,false,true));
+        b.addProperty("notes"," ");
+        assertThrows(SQLException.class,()->CashDrawerHandoverService.validateTakeover(b,1,2,false,false));
+        b.remove("previousCashierUserId");
+        assertThrows(SQLException.class,()->CashDrawerHandoverService.validateTakeover(b,1,2,false,false));
+    }
     @Test void onlyOutgoingCashierInitiatesAndDifferentCashierAccepts() throws Exception {
         assertDoesNotThrow(()->CashDrawerHandoverService.validateCashier(1,1,false));
         assertDoesNotThrow(()->CashDrawerHandoverService.validateCashier(1,2,true));

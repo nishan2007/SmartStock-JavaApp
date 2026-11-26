@@ -60,6 +60,8 @@ public final class EmployeeWebRuntimeController implements AutoCloseable {
             }
             if (server != null && !java.util.Objects.equals(runningGeneration, requestedGeneration)) stopServer();
             if (quickTunnel != null && !quickTunnel.isAlive()) stopServer();
+            String configuredOrigin=EmployeeWebConfig.publicOrigin();
+            if(server!=null&&configuredOrigin!=null&&!configuredOrigin.equals(publicOrigin))stopServer();
             if (enabled && server == null && !Instant.now().isBefore(retryAfter)) {
                 startServer();
                 runningGeneration = requestedGeneration;

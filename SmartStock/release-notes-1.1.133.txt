@@ -1,0 +1,1 @@
+Mobile Management now offers Restore device when a revoked phone is selected. Device managers can restore its existing approval, browser credentials and enabled apps without creating another device. Server-side permission, revision, audit and idempotency checks protect the action. Re-pair QR remains separate for repairing a browser connection.

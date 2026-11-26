@@ -8,6 +8,26 @@ import java.util.concurrent.atomic.*;
 import static org.junit.jupiter.api.Assertions.*;
 class SharedBadgeLibraryTest {
  @TempDir Path folder;
+ @Test void recordBrowserReadsAllHistoryPagesThroughTheScopedRecordApi()throws Exception{
+  String templateId=UUID.randomUUID().toString();Path file=folder.resolve("2_"+templateId+".sstbadge");
+  var meta=new JsonObject();meta.addProperty("id",templateId);meta.addProperty("storageStoreId",2);
+  Files.writeString(file.resolveSibling(file.getFileName()+".meta.json"),meta.toString());
+  var offsets=new ArrayList<Integer>();
+  var shared=new SharedBadgeLibrary(folder,request->{
+   assertEquals("RECORD_LIST",request.get("action").getAsString());
+   assertEquals(templateId,request.get("id").getAsString());assertEquals(2,request.get("storageStoreId").getAsInt());
+   int offset=request.get("offset").getAsInt();offsets.add(offset);
+   var rows=new JsonArray();
+   for(int n=offset;n<Math.min(offset+100,205);n++){
+    var row=new JsonObject();row.addProperty("recordId","record-"+n);row.addProperty("createdAt","2026-11-25");
+    var values=new JsonObject();values.addProperty("name","Rider "+n);row.add("values",values);rows.add(row);
+   }
+   var out=new JsonObject();out.add("records",rows);return out;
+  });
+  var records=shared.printRecords(file,null);
+  assertEquals(List.of(0,100,200),offsets);assertEquals(205,records.size());
+  assertEquals("record-204",records.get(204).id());assertEquals("Rider 204",records.get(204).values().get("name"));
+ }
  @Test void deletionSendsRevisionAndAssignmentAndRemovesCachedMembership()throws Exception{
   String id=UUID.randomUUID().toString(),content=new Gson().toJson(new BadgeTemplate());
   String hash=HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(content.getBytes(java.nio.charset.StandardCharsets.UTF_8)));

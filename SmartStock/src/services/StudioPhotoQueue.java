@@ -18,9 +18,7 @@ final class StudioPhotoQueue {
         static {
             CLEANER.scheduleWithFixedDelay(()->{try{CURRENT.cleanup();}catch(Exception e){System.err.println("Photo queue cleanup will retry: "+e.getClass().getSimpleName());}},0,60,TimeUnit.SECONDS);
             PREPARE.scheduleWithFixedDelay(()->{try{
-                if(StudioRemovalRuntime.canPrepare()){
-                    if(!CURRENT.prepareNext(StudioBackgroundService::prepareQueuedPhoto))StudioBackgroundService.prewarmBest();
-                }
+                if(!CURRENT.prepareNext(StudioBackgroundService::prepareQueuedPhoto))StudioBackgroundService.prewarmBest();
             }catch(Exception e){System.err.println("Photo preparation will retry: "+e.getClass().getSimpleName());}},30,3,TimeUnit.SECONDS);
         }
     }
@@ -31,7 +29,7 @@ final class StudioPhotoQueue {
     static StudioPhotoQueue current(){return Runtime.CURRENT;}
     static void prepareUploadedPhoto(){
         Runtime.PREPARE.execute(()->{try{
-            if(StudioRemovalRuntime.canPrepare())Runtime.CURRENT.prepareNext(StudioBackgroundService::prepareQueuedPhoto);
+            Runtime.CURRENT.prepareNext(StudioBackgroundService::prepareQueuedPhoto);
         }catch(Exception e){System.err.println("Photo preparation will retry: "+e.getClass().getSimpleName());}});
     }
     private Path directory(int location)throws Exception{
@@ -86,7 +84,8 @@ final class StudioPhotoQueue {
         }
         long count;try(var paths=Files.list(folder)){count=paths.filter(p->p.getFileName().toString().matches("[a-f0-9-]{36}\\.json")).count();}
         if(count>=300)throw new IllegalStateException("The photo queue is full. Finish or remove older photos before uploading more.");
-        JsonObject row=new JsonObject();row.addProperty("id",key);row.addProperty("name",label);row.addProperty("createdAt",clock.millis());row.addProperty("sha256",hash);row.addProperty("printedAt",0L);row.addProperty("deleteAfter",0L);
+        long uploadedAt=clock.millis();
+        JsonObject row=new JsonObject();row.addProperty("id",key);row.addProperty("name",label);row.addProperty("createdAt",uploadedAt);row.addProperty("sha256",hash);row.addProperty("printedAt",0L);row.addProperty("deleteAfter",uploadedAt+Duration.ofHours(24).toMillis());
         row.addProperty("backgroundState",removeBackground?"pending":"disabled");
         atomic(folder.resolve(key+".photo"),bytes);write(meta,row);return row;
     }
@@ -117,11 +116,11 @@ final class StudioPhotoQueue {
                 boolean ready=!original&&row.has("backgroundState")&&row.get("backgroundState").getAsString().equals("ready")&&Files.isRegularFile(prepared);
                 row.addProperty("usingCutout",ready);row.addProperty("bytesBase64",Base64.getEncoder().encodeToString(Files.readAllBytes(ready?prepared:photo)));return row;
             }
-            case "PREPARE" -> {row.addProperty("backgroundState","pending");write(meta,row);return row;}
+            case "PREPARE" -> {row.addProperty("backgroundState","pending");row.remove("backgroundMessage");write(meta,row);return row;}
             case "STATUS" -> {return row;}
             case "PRINTED" -> {
-                // Reprints and retries must never extend the original deletion deadline.
-                if(row.get("printedAt").getAsLong()==0){row.addProperty("printedAt",clock.millis());row.addProperty("deleteAfter",clock.millis()+Duration.ofHours(24).toMillis());write(meta,row);}return row;
+                // Printing changes status only; retention starts at upload.
+                if(row.get("printedAt").getAsLong()==0){row.addProperty("printedAt",clock.millis());write(meta,row);}return row;
             }
             case "DELETE" -> {remove(folder,key,meta);JsonObject result=new JsonObject();result.addProperty("deleted",true);return result;}
             default -> throw new IllegalArgumentException("Unknown photo queue action.");
@@ -143,7 +142,7 @@ final class StudioPhotoQueue {
         }
         candidates.sort(Comparator.comparingLong(p->{try{return read(p).get("createdAt").getAsLong();}catch(Exception ex){return Long.MAX_VALUE;}}));
         for(Path metadata:candidates){JsonObject row=read(metadata);String state=row.has("backgroundState")?row.get("backgroundState").getAsString():"pending";
-            if(row.get("printedAt").getAsLong()>0||!Set.of("pending","processing").contains(state))continue;
+            if(!Set.of("pending","processing").contains(state))continue;
             String key=id(row.get("id").getAsString());byte[] bytes=Files.readAllBytes(metadata.getParent().resolve(key+".photo"));
             row.addProperty("backgroundState","processing");write(metadata,row);
             return new Pending(metadata.getParent(),key,row.get("sha256").getAsString(),bytes);
@@ -152,10 +151,11 @@ final class StudioPhotoQueue {
     boolean prepareNext(BackgroundProcessor processor)throws Exception{
         synchronized(this){if(preparing)return false;preparing=true;}
         try{
-        Pending job=next();if(job==null)return false;byte[] cutout=null;String state="ready";
+        Pending job=next();if(job==null)return false;byte[] cutout=null;String state="ready",message=null;
         try{cutout=processor.remove(job.original());StudioBackgroundService.validate(cutout);}
         catch(StudioBackgroundService.BusyException ex){state="pending";}
-        catch(CatalogStudioImageProcessor.ModelUnavailableException ex){state="pending";}
+        catch(CatalogStudioImageProcessor.ModelUnavailableException ex){state="pending";message=ex.getMessage();}
+        catch(StudioBackgroundService.PreparationDeferredException ex){state="pending";message=ex.getMessage();}
         catch(Exception|LinkageError ex){state="failed";System.err.println("Queued background removal failed: "+ex.getClass().getSimpleName());}
         synchronized(this){
             cleanup();Path metadata=job.folder().resolve(job.id()+".json");
@@ -163,7 +163,7 @@ final class StudioPhotoQueue {
             if(!Files.isRegularFile(metadata))return true;JsonObject row=read(metadata);
             if(!job.hash().equals(row.get("sha256").getAsString()))return true;
             if(state.equals("ready"))atomic(job.folder().resolve(job.id()+".cutout.png"),cutout);
-            row.addProperty("backgroundState",state);if(state.equals("ready"))row.addProperty("backgroundQuality","BEST");write(metadata,row);
+            row.addProperty("backgroundState",state);row.remove("backgroundMessage");if(message!=null)row.addProperty("backgroundMessage",message);if(state.equals("ready"))row.addProperty("backgroundQuality","BEST");write(metadata,row);
         }return true;
         }finally{synchronized(this){preparing=false;}}
     }
@@ -174,9 +174,11 @@ final class StudioPhotoQueue {
                 for(Path file:files.filter(p->p.getFileName().toString().endsWith(".json")).toList()){
                     JsonObject row=read(file);String filename=file.getFileName().toString();
                     if(filename.startsWith("grant-")){if(row.get("expiresAt").getAsLong()>0&&row.get("expiresAt").getAsLong()<=clock.millis())Files.deleteIfExists(file);continue;}
-                    if(row.has("deleteAfter")&&row.get("deleteAfter").getAsLong()>0&&row.get("deleteAfter").getAsLong()<=clock.millis()){
+                    // Apply the upload-based policy to existing queue entries too.
+                    long deadline=row.get("createdAt").getAsLong()+Duration.ofHours(24).toMillis();
+                    if(deadline<=clock.millis()){
                         remove(folder,id(row.get("id").getAsString()),file);
-                    }
+                    }else if(!row.has("deleteAfter")||row.get("deleteAfter").getAsLong()!=deadline){row.addProperty("deleteAfter",deadline);write(file,row);}
                 }
                 // Remove an image left behind by an interrupted upload before metadata committed.
                 try(var photos=Files.list(folder)){for(Path photo:photos.filter(p->p.getFileName().toString().endsWith(".photo")).toList()){

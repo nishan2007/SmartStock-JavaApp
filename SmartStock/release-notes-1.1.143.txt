@@ -1,0 +1,12 @@
+SmartStock 1.1.143 - cumulative Windows update
+
+Includes the current shared-workspace changes from the SmartStock and SmartStudio chats.
+Fix customer search in quotations and invoices, and apply the approved document-screen layout while retaining existing print formats.
+Improve product tags and search aliases across Inventory, Checkout and the website.
+Keep custom-item and variant quantities separate for each store. Previously merged quantities require per-store reconciliation.
+Include current order, website, payroll, mobile and photo-queue improvements.
+Add automatic per-store trusted LAN certificate provisioning and renewal, employee website routing and protected administrator connectivity on supported Windows servers.
+Keep the authenticated store LAN authority and local-network checks private.
+
+Update the store server before registers and SmartStudio. Server provisioning may require administrator setup and a confirmed store LAN address.
+AI model weights remain separate from the application update.

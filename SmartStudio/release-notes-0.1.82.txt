@@ -1,0 +1,1 @@
+SmartStudio combined quick update: includes outstanding PDF editing, print and cut, template layers, ribbon, login, badge, business card, passport and publication improvements. Uses the current SmartStock 1.1.89 shared client. Save drafts before restarting. Physical printer/cutter checks remain separate.

@@ -5,6 +5,7 @@ import services.*;
 import services.LanCustomOrderCatalogAdminService.*;
 import ui.helpers.*;
 import ui.design.DeckersPalette;
+import ui.design.DeckersSwing;
 import javax.swing.*;
 import javax.swing.table.*;
 import java.awt.*;
@@ -13,6 +14,10 @@ import java.math.BigDecimal;
 import java.util.*;
 import java.util.List;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+
+import static ui.screens.customorders.CustomCatalogDesign.*;
 
 /** Inline catalog editing with explicit variant identity and staged changes. */
 final class CustomItemInventoryPanel extends JPanel {
@@ -22,6 +27,8 @@ final class CustomItemInventoryPanel extends JPanel {
     private final List<String> rowKeys=new ArrayList<>();
     private State state;
     private boolean rendering,saving;
+    private int sortColumn=-1;
+    private boolean ascending=true;
     final JTextField search=new JTextField();
     final JCheckBox showCreated=new JCheckBox("Show date added");
     final JCheckBox showTemplate=new JCheckBox("Show template size");
@@ -32,40 +39,120 @@ final class CustomItemInventoryPanel extends JPanel {
     final JCheckBox shirtsOnly=new JCheckBox("Shirts only");
     final JCheckBox archivedOnly=new JCheckBox("Archived items");
     final JComboBox<String> dateSort=new JComboBox<>(new String[]{"Default order","Newest first","Oldest first"});
+    final JComboBox<String> itemTypes = new JComboBox<>(new String[]{"All Item Types"});
+    final JComboBox<String> categories = new JComboBox<>(new String[]{"All Categories"});
+    final JComboBox<String> brands = new JComboBox<>(new String[]{"All Brands"});
     private final JLabel status=new JLabel("Edit cells, then press Enter or Save Changes.");
+    private final JLabel count = new JLabel();
     private final JButton save=new JButton("Save Changes");
     private final Runnable refresh;
     private final BiConsumer<String,JsonObject> writer;
-    private final DefaultTableModel model=new DefaultTableModel(new String[]{"Item / Variant","Size","Colour","Brand","Barcode","Price / Rate","Qty","Reorder","Active","Pricing","Image","Date Added","Sell in POS","Description","Template Size","Category","Shirt setup","Shirt style","Enable designer","Fabric","Shirt type","Neckline","Template Width","Template Height"},0){
+    private final DefaultTableModel model=new DefaultTableModel(new String[]{"Item / Variant","Size","Colour","Brand","Barcode","Price / Rate","Qty","Reorder","Active","Pricing","Image","Date Added","Sell in POS","Description","Template Size","Category","Shirt setup","Shirt style","Enable designer","Fabric","Shirt type","Neckline","Template Width","Template Height","Item Type"},0){
         public boolean isCellEditable(int row,int col){
             if(archivedOnly.isSelected())return false;
             if(col>=18&&col<=21){if(saving||rowKeys.get(row).startsWith("V:"))return false;JsonObject item=parentRow(row);return flag(item,"isShirt")&&(col!=21||!"COLLARED".equals(text(shirtConfig(item),"shirtType")));}
-            if(col==12||col==13||col==15)return !saving&&!rowKeys.get(row).startsWith("V:");
+            if(col==12||col==13||col==15||col==24)return !saving&&!rowKeys.get(row).startsWith("V:");
             return !saving&&!rowKeys.get(row).startsWith("G:")&&col<9
                     && !((col==6||col==7)&&"SERVICE".equals(originals.get(rowKeys.get(row)).get("productType")==null?"":originals.get(rowKeys.get(row)).get("productType").getAsString()));
         }
         public Class<?> getColumnClass(int column){return column==8||column==12||column==18?Boolean.class:Object.class;}
     };
     final JTable table=new JTable(model);
-    CustomItemInventoryPanel(Window owner,Runnable refresh,BiConsumer<String,JsonObject> writer,java.util.function.Consumer<Long> editItem){
+    CustomItemInventoryPanel(Window owner,Runnable refresh,BiConsumer<String,JsonObject> writer,Consumer<Long> editItem){
+        this(owner, refresh, writer, editItem, () -> { });
+    }
+
+    CustomItemInventoryPanel(Window owner,Runnable refresh,BiConsumer<String,JsonObject> writer,Consumer<Long> editItem,Runnable addItem){
         super(new BorderLayout(8,8));this.refresh=refresh;this.writer=writer;
         setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
-        JPanel top=new JPanel(new BorderLayout(8,0));top.add(new JLabel("Search:"),BorderLayout.WEST);top.add(search);
-        JButton reload=new JButton("Refresh / Discard");JPanel actions=new JPanel();JButton editParent=new JButton("Edit Item Details");actions.add(editParent);actions.add(save);actions.add(reload);editParent.addActionListener(e->{if(saving)return;if(!drafts.isEmpty()){JOptionPane.showMessageDialog(this,"Save or discard table changes before opening Item Details.");return;}int row=table.getSelectedRow();if(row<0)return;String key=rowKeys.get(row);JsonObject value=key.startsWith("G:")?originals.get("I:"+key.substring(2)):originals.get(key);editItem.accept(value.get("itemId").getAsLong());});top.add(actions,BorderLayout.EAST);add(top,BorderLayout.NORTH);
-        table.setRowHeight(30);table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-        for(int i=0;i<model.getColumnCount();i++)table.getColumnModel().getColumn(i).setPreferredWidth(i==0?300:120);
+        setBackground(DeckersPalette.background());
+        putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
+        search.putClientProperty("JTextField.placeholderText", "Find item or barcode");
+        search.getAccessibleContext().setAccessibleName("Search custom inventory");
+        DeckersSwing.styleField(search);
+        CustomCatalogDesign.table(table);
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+        int[] widths = {242, 70, 85, 112, 120, 98, 60, 75, 70, 92, 0, 112, 87, 205, 105, 180, 120, 120, 130, 110, 115, 110, 124, 124, 124};
+        for(int i=0;i<model.getColumnCount();i++)table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
         table.getColumnModel().getColumn(10).setMinWidth(0);table.getColumnModel().getColumn(10).setMaxWidth(0);
-        actions.add(showCreated);actions.add(dateSort);
-        actions.add(archivedOnly);
-        JButton archive=new JButton("Archive / Restore");actions.add(archive);
-        JPanel options=new JPanel(new FlowLayout(FlowLayout.LEFT,8,0));
-        options.add(sublimationOnly);sublimationOnly.addActionListener(e->render());options.add(shirtsOnly);shirtsOnly.addActionListener(e->render());options.add(showCreated);options.add(showTemplate);options.add(dateSort);options.add(archivedOnly);options.add(archive);
-        JPanel serviceOptions=new JPanel(new FlowLayout(FlowLayout.LEFT,8,0));
-        for(JCheckBox filter:List.of(businessCardsOnly,largeFormatPrintingOnly,laserOnly)){serviceOptions.add(filter);filter.addActionListener(e->render());}
-        JPanel filterRows=new JPanel(new GridLayout(0,1,0,6));filterRows.add(options);filterRows.add(serviceOptions);
-        JPanel header=new JPanel(new BorderLayout(0,8));header.add(top,BorderLayout.NORTH);header.add(filterRows,BorderLayout.SOUTH);add(header,BorderLayout.NORTH);
-        archivedOnly.addActionListener(e->render());
-        archive.addActionListener(e->{
+        JButton add = addButton("Add Item", () -> { if (canOpenEditor()) addItem.run(); });
+        JButton edit = button("Edit Item Details", () -> {
+            if (!canOpenEditor()) return;
+            int selected = table.getSelectedRow();
+            if (selected >= 0) editItem.accept(parentRow(selected).get("itemId").getAsLong());
+        });
+        edit.setEnabled(false);
+        JButton reload = new JButton("Refresh");
+        JButton discard = new JButton("Discard");
+        JButton archive = new JButton("Archive");
+        JButton restore = new JButton("Restore");
+        archive.setEnabled(false);
+        restore.setEnabled(false);
+        Runnable updateSelection = () -> {
+            boolean selected = table.getSelectedRow() >= 0;
+            edit.setEnabled(selected);
+            archive.setEnabled(selected && !archivedOnly.isSelected());
+            restore.setEnabled(selected && archivedOnly.isSelected());
+        };
+        table.getSelectionModel().addListSelectionListener(event -> updateSelection.run());
+
+        JPanel actions = surface(new FlowLayout(FlowLayout.LEFT, 7, 0));
+        for (JButton action : List.of(add, edit, save, reload, discard, archive, restore)) actions.add(action);
+        JPanel displayOptions = surface(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        displayOptions.add(new JLabel("Date order"));
+        displayOptions.add(dateSort);
+        displayOptions.add(showCreated);
+        displayOptions.add(showTemplate);
+        displayOptions.add(archivedOnly);
+        JPanel searchRow = surface(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        search.setColumns(25);
+        JLabel searchLabel = new JLabel("Search", OrdersIcons.icon("search", DeckersPalette.muted(), 13), SwingConstants.LEFT);
+        searchLabel.setLabelFor(search);
+        searchRow.add(searchLabel);
+        searchRow.add(search);
+        searchRow.add(displayOptions);
+
+        JPanel serviceOptions = surface(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        for (JCheckBox filter : List.of(sublimationOnly, shirtsOnly, businessCardsOnly, largeFormatPrintingOnly, laserOnly)) {
+            serviceOptions.add(filter);
+            filter.addActionListener(event -> render());
+        }
+        JPanel filterRows = surface(new GridLayout(0, 1, 0, 6));
+        filterRows.add(actions);
+        filterRows.add(searchRow);
+        JPanel classificationFilters = surface(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        classificationFilters.add(new JLabel("Filter"));
+        itemTypes.getAccessibleContext().setAccessibleName("Filter by item type");
+        categories.getAccessibleContext().setAccessibleName("Filter by category");
+        brands.getAccessibleContext().setAccessibleName("Filter by brand");
+        for (JComboBox<String> filter : List.of(itemTypes, categories, brands)) {
+            classificationFilters.add(filter);
+            filter.addActionListener(event -> { if (!rendering) render(); });
+        }
+        filterRows.add(classificationFilters);
+        filterRows.add(serviceOptions);
+
+        JButton reviewTemplates=new JButton("Review missing template sizes");
+        reviewTemplates.addActionListener(e->{
+            if(saving||state==null)return;
+            stopEditing();
+            if(!drafts.isEmpty()){JOptionPane.showMessageDialog(this,"Save or discard table changes before reviewing template sizes.");return;}
+            new TemplateSizeReviewDialog(owner,JSON.toJsonTree(state).getAsJsonObject(),writer,refresh).setVisible(true);
+        });
+        JPanel statusRow = surface(new BorderLayout(8, 0));
+        DeckersSwing.styleBand(statusRow, DeckersPalette.PURPLE, new Insets(4, 8, 4, 8));
+        statusRow.add(status);
+        statusRow.add(reviewTemplates, BorderLayout.EAST);
+        JPanel toolbar = surface(new BorderLayout(0, 8));
+        toolbar.add(filterRows);
+        toolbar.add(statusRow, BorderLayout.SOUTH);
+        JPanel header = surface(new BorderLayout(0, 12));
+        header.add(heading("Inventory", "Items, variants and product settings"), BorderLayout.NORTH);
+        header.add(toolbar);
+        add(header, BorderLayout.NORTH);
+        archivedOnly.addActionListener(e->{render();updateSelection.run();});
+        java.awt.event.ActionListener changeArchive = e->{
             if(saving)return;
             stopEditing();
             if(!drafts.isEmpty()){JOptionPane.showMessageDialog(this,"Save or discard pending edits before archiving or restoring.");return;}
@@ -79,33 +166,39 @@ final class CustomItemInventoryPanel extends JPanel {
             UiTaskRunner.submit(owner,"custom-catalog.archive",()->{writer.accept(action,item);return true;},ignored->{
                 saving=false;save.setEnabled(true);search.setEnabled(true);refresh.run();
             },failure->{saving=false;save.setEnabled(true);search.setEnabled(true);JOptionPane.showMessageDialog(this,"Could not archive or restore: "+failure.getMessage());});
-        });
-        table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-        for(int column=18;column<=21;column++)table.getColumnModel().getColumn(column).setPreferredWidth(140);
+        };
+        archive.addActionListener(changeArchive);
+        restore.addActionListener(changeArchive);
         table.getColumnModel().getColumn(19).setCellEditor(new DefaultCellEditor(new JComboBox<>(new String[]{"Normal","Dry-fit"})));
         table.getColumnModel().getColumn(20).setCellEditor(new DefaultCellEditor(new JComboBox<>(new String[]{"T-shirt","Polo"})));
         table.getColumnModel().getColumn(21).setCellEditor(new DefaultCellEditor(new JComboBox<>(new String[]{"Round neck","V-neck"})));
         table.getColumnModel().getColumn(15).setCellEditor(new DefaultCellEditor(new JComboBox<>(Arrays.stream(CustomItemCategory.values()).map(Object::toString).toArray(String[]::new))));
-        table.getColumnModel().getColumn(15).setPreferredWidth(180);
         setDateVisible(false);
-        table.moveColumn(12,9);
-        for(int column=18;column<=21;column++)table.moveColumn(table.convertColumnIndexToView(column),table.convertColumnIndexToView(16));
-        table.moveColumn(table.convertColumnIndexToView(13),1);
-        table.getColumnModel().getColumn(1).setPreferredWidth(260);
-        table.moveColumn(table.convertColumnIndexToView(22),table.convertColumnIndexToView(14));
-        table.moveColumn(table.convertColumnIndexToView(23),table.convertColumnIndexToView(22)+1);
+        int[] order = {0, 13, 1, 2, 24, 3, 4, 5, 6, 7, 8, 12, 9, 15, 14, 22, 23, 11, 16, 17, 18, 19, 20, 21, 10};
+        for (int view = 0; view < order.length; view++) table.moveColumn(table.convertColumnIndexToView(order[view]), view);
         setTemplateVisible(false);
         showTemplate.addActionListener(e->setTemplateVisible(showTemplate.isSelected()));
         showCreated.addActionListener(e->setDateVisible(showCreated.isSelected()));
-        dateSort.addActionListener(e->render());
-        add(new JScrollPane(table),BorderLayout.CENTER);add(status,BorderLayout.SOUTH);
+        installHeaderSorting();
+        dateSort.addActionListener(e->{
+            int choice=dateSort.getSelectedIndex();
+            if(choice==0&&sortColumn!=11)return;
+            sortColumn=choice==0?-1:11;
+            ascending=choice!=1;
+            render();
+        });
+        add(scroll(table),BorderLayout.CENTER);
+        JPanel foot = surface(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        foot.add(count);
+        add(foot, BorderLayout.SOUTH);
         installEnterSave(table,()->save(owner));
         model.addTableModelListener(e->{
             if(!rendering&&e.getFirstRow()>=0&&e.getColumn()>=18&&e.getColumn()<=21){stageShirt(e.getFirstRow(),e.getColumn());return;}
-            if(rendering||e.getType()!=javax.swing.event.TableModelEvent.UPDATE||e.getFirstRow()<0||e.getColumn()<0||(e.getColumn()>=9&&e.getColumn()!=12&&e.getColumn()!=13&&e.getColumn()!=15))return;
-            int row=e.getFirstRow();String key=rowKeys.get(row);if(key.startsWith("G:")){if(e.getColumn()!=12&&e.getColumn()!=13&&e.getColumn()!=15)return;key="I:"+key.substring(2);}
+            if(rendering||e.getType()!=javax.swing.event.TableModelEvent.UPDATE||e.getFirstRow()<0||e.getColumn()<0||(e.getColumn()>=9&&e.getColumn()!=12&&e.getColumn()!=13&&e.getColumn()!=15&&e.getColumn()!=24))return;
+            int row=e.getFirstRow();String key=rowKeys.get(row);
+            if(e.getColumn()==24&&key.startsWith("V:")){rendering=true;try{model.setValueAt(text(parentRow(row),"itemType"),row,24);}finally{rendering=false;}return;}if(key.startsWith("G:")){if(e.getColumn()!=12&&e.getColumn()!=13&&e.getColumn()!=15&&e.getColumn()!=24)return;key="I:"+key.substring(2);}
             JsonObject draft=drafts.computeIfAbsent(key,k->originals.get(k).deepCopy());
-            String field=e.getColumn()==15?"category":e.getColumn()==13?"description":e.getColumn()==12?"sellInPos":new String[]{"name","size","color","brand","barcode","fixedPrice","quantity","reorderLevel","active"}[e.getColumn()];
+            String field=e.getColumn()==24?"itemType":e.getColumn()==15?"category":e.getColumn()==13?"description":e.getColumn()==12?"sellInPos":new String[]{"name","size","color","brand","barcode","fixedPrice","quantity","reorderLevel","active"}[e.getColumn()];
             Object value=model.getValueAt(row,e.getColumn());if(field.equals("name"))value=String.valueOf(value).stripLeading();if(field.equals("category"))services.CustomItemCategories.apply(value,draft);else draft.add(field,JSON.toJsonTree(value));status.setText(drafts.size()+" row(s) changed.");
             if(key.startsWith("V:")&&List.of("size","color","brand").contains(field)){
                 long parentId=draft.get("itemId").getAsLong();
@@ -118,7 +211,7 @@ final class CustomItemInventoryPanel extends JPanel {
                 }
             }
             if(field.equals("category")){rendering=true;try{refreshShirtCells();}finally{rendering=false;}}
-            if(List.of("isSublimation","isBusinessCards","isLargeFormatPrinting","isLaser").contains(field)||field.equals("sellInPos")||field.equals("description")||field.equals("category")){
+            if(List.of("isSublimation","isBusinessCards","isLargeFormatPrinting","isLaser").contains(field)||field.equals("sellInPos")||field.equals("description")||field.equals("category")||field.equals("itemType")){
                 rendering=true;
                 try{for(int child=0;child<rowKeys.size();child++){
                     String childKey=rowKeys.get(child);
@@ -127,7 +220,8 @@ final class CustomItemInventoryPanel extends JPanel {
             }
         });
         table.addMouseListener(new MouseAdapter(){public void mouseClicked(MouseEvent e){
-            int row=table.rowAtPoint(e.getPoint());if(row<0||table.columnAtPoint(e.getPoint())!=0)return;
+            int row=table.rowAtPoint(e.getPoint()),column=table.columnAtPoint(e.getPoint());
+            if(row<0||column<0||table.convertColumnIndexToModel(column)!=0)return;
             String key=rowKeys.get(row);if(!key.startsWith("G:"))return;
             stopEditing();long id=Long.parseLong(key.substring(2));if(!expanded.remove(id))expanded.add(id);render();
         }});
@@ -145,8 +239,56 @@ final class CustomItemInventoryPanel extends JPanel {
             public void removeUpdate(javax.swing.event.DocumentEvent e){render();}
             public void changedUpdate(javax.swing.event.DocumentEvent e){render();}
         });
-        reload.addActionListener(e->{if(saving)return;if(!drafts.isEmpty()&&JOptionPane.showConfirmDialog(this,"Discard unsaved changes?","Refresh",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;drafts.clear();refresh.run();});
+        reload.addActionListener(e -> { if (discardEdits()) refresh.run(); });
+        discard.addActionListener(e -> discardEdits());
         save.addActionListener(e->save(owner));
+    }
+
+    boolean canOpenEditor() {
+        if (saving || state == null) return false;
+        stopEditing();
+        if (drafts.isEmpty()) return true;
+        JOptionPane.showMessageDialog(this, "Save or discard table changes before opening the item editor.");
+        return false;
+    }
+
+    private boolean discardEdits() {
+        if (saving) return false;
+        stopEditing();
+        if (!drafts.isEmpty() && JOptionPane.showConfirmDialog(this, "Discard unsaved changes?", "Custom Inventory",
+                JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return false;
+        drafts.clear();
+        status.setText("Edit cells, then press Enter or Save Changes.");
+        render();
+        return true;
+    }
+    private void installHeaderSorting(){
+        JTableHeader header=table.getTableHeader();
+        TableCellRenderer renderer=header.getDefaultRenderer();
+        header.setDefaultRenderer((source,value,selected,focused,row,column)->{
+            Component component=renderer.getTableCellRendererComponent(source,value,selected,focused,row,column);
+            if(component instanceof JLabel label){
+                boolean sorted=column>=0&&table.convertColumnIndexToModel(column)==sortColumn;
+                label.setIcon(sorted?UIManager.getIcon(ascending?"Table.ascendingSortIcon":"Table.descendingSortIcon"):null);
+            }
+            return component;
+        });
+        header.setToolTipText("Click a heading to sort. Click again to reverse the order.");
+        header.addMouseListener(new MouseAdapter(){
+            @Override public void mouseClicked(MouseEvent event){
+                int viewColumn=header.columnAtPoint(event.getPoint());
+                if(!SwingUtilities.isLeftMouseButton(event)||viewColumn<0||saving)return;
+                int column=table.convertColumnIndexToModel(viewColumn);
+                ascending=sortColumn!=column||!ascending;
+                sortColumn=column;
+                if(column==11){
+                    dateSort.setSelectedIndex(ascending?2:1);
+                }else{
+                    dateSort.setSelectedIndex(0);
+                    render();
+                }
+            }
+        });
     }
     void setState(State loaded){
         table.getColumnModel().getColumn(table.convertColumnIndexToView(15)).setCellEditor(new DefaultCellEditor(new JComboBox<>(services.CustomItemCategories.choices(loaded.customCategories()))));
@@ -157,7 +299,36 @@ final class CustomItemInventoryPanel extends JPanel {
                 row.addProperty("pricingType",item.pricingType());row.addProperty("productType",item.productType());
 
                 originals.put("V:"+variant.variantId(),row);}}
+        rendering = true;
+        try {
+            updateFilter(itemTypes, loaded.items().stream().map(Item::itemType));
+            updateFilter(categories, loaded.items().stream().map(item -> categoryLabel(originals.get("I:" + item.itemId()))));
+            updateFilter(brands, loaded.items().stream().flatMap(item -> Stream.concat(
+                    Stream.of(item.brand()), item.variants().stream().map(Variant::brand))));
+        } finally {
+            rendering = false;
+        }
         render();
+    }
+
+    private String categoryLabel(JsonObject item) {
+        return Objects.toString(CustomItemCategories.displayChoice(item, state.customCategories()), "");
+    }
+
+    private static void updateFilter(JComboBox<String> filter, Stream<String> values) {
+        String selected = (String) filter.getSelectedItem();
+        var names = new TreeSet<String>(String.CASE_INSENSITIVE_ORDER);
+        values.filter(Objects::nonNull).map(String::strip).filter(value -> !value.isEmpty()).forEach(names::add);
+        String defaultChoice = filter.getItemAt(0);
+        var choices = new DefaultComboBoxModel<String>();
+        choices.addElement(defaultChoice);
+        for (String name : names) choices.addElement(name);
+        filter.setModel(choices);
+        if (selected != null && names.contains(selected)) filter.setSelectedItem(names.ceiling(selected));
+    }
+
+    private static boolean selectedFilterMatches(JComboBox<String> filter, String value) {
+        return filter.getSelectedIndex() <= 0 || filter.getSelectedItem().toString().equalsIgnoreCase(value.strip());
     }
     JsonObject staged(String key){return drafts.get(key)==null?null:drafts.get(key).deepCopy();}
     private void stopEditing(){if(table.isEditing())table.getCellEditor().stopCellEditing();}
@@ -175,36 +346,92 @@ final class CustomItemInventoryPanel extends JPanel {
         }
     }
     private void render(){
+        table.getTableHeader().repaint();
         if(state==null||saving)return;stopEditing();rendering=true;
+        int selectedRow=table.getSelectedRow();
+        String selectedKey=selectedRow<0?null:rowKeys.get(selectedRow);
         try{model.setRowCount(0);rowKeys.clear();String query=search.getText().trim().toLowerCase(Locale.ROOT);
             for(Item item:sortedItems()){
                 if(item.archived()!=archivedOnly.isSelected())continue;
                 String itemKey="I:"+item.itemId();JsonObject itemData=drafts.getOrDefault(itemKey,originals.get(itemKey));
+                if (!selectedFilterMatches(itemTypes, text(itemData, "itemType"))
+                        || !selectedFilterMatches(categories, categoryLabel(itemData))) continue;
                 if(businessCardsOnly.isSelected()&&!flag(itemData,"isBusinessCards"))continue;
                 if(largeFormatPrintingOnly.isSelected()&&!flag(itemData,"isLargeFormatPrinting"))continue;
                 if(laserOnly.isSelected()&&!flag(itemData,"isLaser"))continue;
                 if(sublimationOnly.isSelected()&&!flag(itemData,"isSublimation"))continue;
                 if(shirtsOnly.isSelected()&&(!itemData.has("isShirt")||!itemData.get("isShirt").getAsBoolean()))continue;
-                boolean match=matchesSearch(itemData,query);
-                List<Variant> variants=item.variants().stream().filter(v->match||matchesSearch(drafts.getOrDefault("V:"+v.variantId(),originals.get("V:"+v.variantId())),query,itemData)).toList();
+                boolean itemTextMatches=matchesSearch(itemData,query);
+                String parentBrand = text(itemData, "brand");
+                boolean match=itemTextMatches && selectedFilterMatches(brands, parentBrand);
+                List<Variant> variants=item.variants().stream().filter(variant -> {
+                    String key = "V:" + variant.variantId();
+                    JsonObject data = drafts.getOrDefault(key, originals.get(key));
+                    String variantBrand = text(data, "brand");
+                    return selectedFilterMatches(brands, variantBrand.isBlank() ? parentBrand : variantBrand)
+                            && (itemTextMatches || matchesSearch(data, query, itemData));
+                }).toList();
                 if(!match&&variants.isEmpty())continue;
                 if(item.hasVariants()){
-                    rowKeys.add("G:"+item.itemId());model.addRow(new Object[]{(expanded.contains(item.itemId())||!query.isBlank()?"▾ ":"▸ ")+text(itemData,"name"),variantSummary(item,"size"),variantSummary(item,"color"),variantSummary(item,"brand"),"",null,item.quantity(),item.reorderLevel(),item.active(),item.pricingType(),item.imageUrl(),displayDate(item.createdAt()),itemData.has("sellInPos")&&itemData.get("sellInPos").getAsBoolean(),text(itemData,"description"),templateSummary(item,itemData),services.CustomItemCategories.displayChoice(itemData,state.customCategories()),item.shirtReadiness(),item.isShirt()?ShirtDesignerService.styleLabel(item.shirtDesignerConfig()):""});
-                    if(expanded.contains(item.itemId())||!query.isBlank())for(Variant v:variants)add("V:"+v.variantId(),true);
+                    boolean showVariants = expanded.contains(item.itemId()) || !query.isBlank() || brands.getSelectedIndex() > 0;
+                    rowKeys.add("G:"+item.itemId());model.addRow(new Object[]{(showVariants?"▾ ":"▸ ")+text(itemData,"name"),variantSummary(item,"size"),variantSummary(item,"color"),variantSummary(item,"brand"),"",null,item.quantity(),item.reorderLevel(),item.active(),item.pricingType(),item.imageUrl(),displayDate(item.createdAt()),itemData.has("sellInPos")&&itemData.get("sellInPos").getAsBoolean(),text(itemData,"description"),templateSummary(item,itemData),services.CustomItemCategories.displayChoice(itemData,state.customCategories()),item.shirtReadiness(),item.isShirt()?ShirtDesignerService.styleLabel(item.shirtDesignerConfig()):""});
+                    if(showVariants)for(Variant v:variants)add("V:"+v.variantId(),true);
                 }else add(itemKey,false);
             }
             refreshShirtCells();
             for(int row=0;row<rowKeys.size();row++){
                 String key=rowKeys.get(row);JsonObject parent=parentRow(row);
                 JsonObject value=key.startsWith("G:")?parent:drafts.getOrDefault(key,originals.get(key));
+                model.setValueAt(text(parent,"itemType"),row,24);
                 model.setValueAt(templateDimension(value,parent,"templateWidth"),row,22);
                 model.setValueAt(templateDimension(value,parent,"templateHeight"),row,23);
             }
+            if(sortColumn>=0&&sortColumn!=11)sortItemGroups();
+            int selection=rowKeys.indexOf(selectedKey);
+            if(selection>=0)table.setRowSelectionInterval(selection,selection);
+            long items = rowKeys.stream().filter(key -> !key.startsWith("V:")).count();
+            long variants = rowKeys.size() - items;
+            count.setText(items + (items == 1 ? " item" : " items") + "  ·  "
+                    + variants + (variants == 1 ? " visible variant" : " visible variants"));
         }finally{rendering=false;}
+    }
+    private void sortItemGroups(){
+        var rows=model.getDataVector();
+        List<ItemRows> groups=new ArrayList<>();
+        for(int start=0;start<rowKeys.size();){
+            int end=start+1;
+            while(end<rowKeys.size()&&rowKeys.get(end).startsWith("V:"))end++;
+            String value=sortColumn==0?text(parentRow(start),"name"):Objects.toString(model.getValueAt(start,sortColumn),"");
+            groups.add(new ItemRows(start,end,value));
+            start=end;
+        }
+        Comparator<ItemRows> order=Comparator.comparing(ItemRows::value,String.CASE_INSENSITIVE_ORDER);
+        if(sortColumn>=5&&sortColumn<=7){
+            Comparator<BigDecimal> numbers=ascending?Comparator.naturalOrder():Comparator.reverseOrder();
+            order=Comparator.comparing(group->sortNumber(group.value()),Comparator.nullsLast(numbers));
+        }else if(!ascending){
+            order=order.reversed();
+        }
+        groups.sort(order);
+        var sortedRows=new ArrayList<>(rows);
+        var sortedKeys=new ArrayList<>(rowKeys);
+        int destination=0;
+        for(ItemRows group:groups){
+            for(int row=group.start();row<group.end();row++){
+                rows.set(destination,sortedRows.get(row));
+                rowKeys.set(destination,sortedKeys.get(row));
+                destination++;
+            }
+        }
+        model.fireTableDataChanged();
+    }
+    private record ItemRows(int start,int end,String value){}
+    private static BigDecimal sortNumber(String value){
+        try{return new BigDecimal(value.strip());}catch(NumberFormatException ignored){return null;}
     }
     private static boolean matchesSearch(JsonObject row,String query,JsonObject... parents){
         StringBuilder value=new StringBuilder();
-        for(String field:List.of("name","description","size","color","brand","sku","barcode")){
+        for(String field:List.of("name","description","size","color","brand","itemType","sku","barcode")){
             value.append(' ').append(text(row,field));
             for(JsonObject parent:parents)value.append(' ').append(text(parent,field));
         }
@@ -256,13 +483,16 @@ final class CustomItemInventoryPanel extends JPanel {
         draft.add("shirtDesignerConfig",config);rendering=true;try{refreshShirtCells();}finally{rendering=false;}status.setText(drafts.size()+" row(s) changed. Save Changes to apply.");
     }
     private void setDateVisible(boolean visible){
-        TableColumn column=table.getColumnModel().getColumn(table.convertColumnIndexToView(11));
-        column.setMinWidth(visible?120:0);column.setMaxWidth(visible?Integer.MAX_VALUE:0);
-        column.setPreferredWidth(visible?180:0);
+        setColumnVisible(11,visible);
     }
     private void setTemplateVisible(boolean visible){
-        TableColumn column=table.getColumnModel().getColumn(table.convertColumnIndexToView(14));
-        column.setMinWidth(visible?120:0);column.setMaxWidth(visible?Integer.MAX_VALUE:0);
+        setColumnVisible(14,visible);
+    }
+    private void setColumnVisible(int modelColumn,boolean visible){
+        TableColumn column=table.getColumnModel().getColumn(table.convertColumnIndexToView(modelColumn));
+        if(visible)column.setMaxWidth(Integer.MAX_VALUE);
+        column.setMinWidth(visible?120:0);
+        if(!visible)column.setMaxWidth(0);
         column.setPreferredWidth(visible?180:0);
     }
     private String templateSummary(Item item,JsonObject parent){

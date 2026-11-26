@@ -17,7 +17,7 @@ public final class OverseasOrderDocuments {
         for(JsonElement e:o.getAsJsonArray("lines")) {
             JsonObject l=e.getAsJsonObject();int qty=l.get("quantity").getAsInt();BigDecimal unit=l.get("unit_price").getAsBigDecimal();
             lines.add(new CustomOrderSlipData.Line(l.get("description").getAsString()+" x "+qty,
-                    string(l,"options"),"GYD "+unit.toPlainString()+" each"+(string(l,"seller").isBlank()?"":" · Seller: "+string(l,"seller")),null,unit.multiply(BigDecimal.valueOf(qty))));
+                    string(l,"options"),(l.has("digital")&&l.get("digital").getAsBoolean()?"Digital item (code; no physical delivery) · ":"")+"GYD "+unit.toPlainString()+" each"+(string(l,"seller").isBlank()?"":" · Seller: "+string(l,"seller")),null,unit.multiply(BigDecimal.valueOf(qty))));
         }
         if(o.get("shipping").getAsBigDecimal().signum()>0)
             lines.add(new CustomOrderSlipData.Line("Extra shipping",null,null,null,o.get("shipping").getAsBigDecimal()));
@@ -32,8 +32,14 @@ public final class OverseasOrderDocuments {
                     +"\nRecorded: "+string(payment,"created_at");method=string(payment,"payment_method");reference=string(payment,"payment_reference");
         }
         String date=string(o,"expected_date");BigDecimal balance=o.get("balance").getAsBigDecimal();
-        return new CustomOrderSlipData(string(o,"number"),string(o,"customer_name"),string(o,"customer_phone"),"",
-                date.isBlank()?null:LocalDate.parse(date),Timestamp.from(java.time.OffsetDateTime.parse(string(payment==null?o:payment,"created_at")).toInstant()),"",string(o,"store_name").isBlank()?managers.SessionManager.getCurrentLocationName():string(o,"store_name"),
+        String account=string(o,"customer_account_number");
+        // Older saved receipt snapshots predate account metadata. Enrich only this
+        // missing identity field; retain their original amounts and item details.
+        if(account.isBlank())account=string(detail.getAsJsonObject("order"),"customer_account_number");
+        String cashier=string(payment==null?o:payment,"taken_by_name");
+        if(payment==null&&cashier.isBlank())cashier=string(detail.getAsJsonObject("order"),"taken_by_name");
+        return new CustomOrderSlipData(string(o,"number"),string(o,"customer_name"),string(o,"customer_phone"),account,
+                date.isBlank()?null:LocalDate.parse(date),Timestamp.from(java.time.OffsetDateTime.parse(string(payment==null?o:payment,"created_at")).toInstant()),cashier,string(o,"store_name").isBlank()?managers.SessionManager.getCurrentLocationName():string(o,"store_name"),
                 services.DeviceContextService.currentDeviceName(),method,reference,balance.signum()==0?"PAID":paid.signum()==0?"UNPAID":"PARTIAL",
                 o.get("total").getAsBigDecimal(),paid,balance,title+"\nItem prices include shipping.\n"+string(o,"notes"),lines);
     }

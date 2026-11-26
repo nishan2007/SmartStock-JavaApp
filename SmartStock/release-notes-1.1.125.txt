@@ -1,0 +1,9 @@
+SmartStock 1.1.125
+
+Product ad reviews now show the original product photo and AI photo beside the ad under review. Switch source-photo tabs and resize the comparison panes. Missing photos do not block review, and late image loads cannot replace the current selection.
+
+Includes the updated Customers workspace, balance-first sorting, inactive-account highlighting, compact transaction/payment activity, and simplified transaction history that combines documents with their linked bookkeeping entries without changing ledger totals.
+
+Customer type is the source of account classification. The server upgrade preserves existing business accounts, numbers, limits and balances before removing the redundant business flag.
+
+Retains the SmartStudio shared-design/font/progress access fix from 1.1.124. Update the store server first, then registers. This update excludes AI model weights; models remain in the active store profile.

@@ -2014,7 +2014,7 @@ CREATE TABLE public.devices (
     credential_status text DEFAULT 'PENDING'::text NOT NULL,
     credential_issued_at timestamp with time zone,
     credential_claimed_at timestamp with time zone,
-    CONSTRAINT devices_access_mode_check CHECK ((access_mode = ANY (ARRAY['CLIENT'::text, 'SERVER'::text, 'REMOTE_ADMIN'::text]))),
+    CONSTRAINT devices_access_mode_check CHECK ((access_mode = ANY (ARRAY['CLIENT'::text, 'SERVER'::text, 'REMOTE_ADMIN'::text, 'DISPLAY'::text]))),
     CONSTRAINT devices_auto_logout_minutes_check CHECK (((auto_logout_minutes >= 1) AND (auto_logout_minutes <= 480))),
     CONSTRAINT devices_credential_status_check CHECK ((credential_status = ANY (ARRAY['PENDING'::text, 'ISSUED'::text, 'CLAIMED'::text, 'ROTATION_PENDING'::text, 'REVOKED'::text])))
 );
@@ -2693,6 +2693,8 @@ CREATE TABLE public.users (
     email text,
     phone text,
     employee_photo_url text,
+    employee_photo_source_url text,
+    employee_photo_frame text,
     employee_id_card_document_url text,
     date_of_birth date,
     hire_date date DEFAULT CURRENT_DATE NOT NULL,
@@ -5144,3 +5146,113 @@ CREATE INDEX IF NOT EXISTS custom_order_lines_inventory_product_idx ON public.cu
 
 END IF;
 END $smartstock_local$;
+
+INSERT INTO public.permissions(permission_key,permission_name,description,permission_group,permission_subgroup)
+VALUES ('MANAGE_SALES_TASKS','Manage Sales Tasks','Create, assign, complete, price, reopen and cancel service work. Financial operations also require their existing permissions.','Point of Sale','Sales Tasks')
+ON CONFLICT(permission_key) DO NOTHING;
+INSERT INTO public.role_permissions(role_id,permission_id,updated_at)
+SELECT r.role_id,p.permission_id,now() FROM public.roles r CROSS JOIN public.permissions p
+WHERE upper(r.role_name)='ADMIN' AND p.permission_key='MANAGE_SALES_TASKS'
+ON CONFLICT(role_id,permission_id) DO NOTHING;
+
+INSERT INTO public.permissions(permission_key,permission_name,description,permission_group,permission_subgroup)
+VALUES ('VIEW_BALANCE_SHEET_HISTORY','View Balance Sheet History','Inspect captured drafts, snapshots and changes by employees.','Accounting','Balance Sheet')
+ON CONFLICT(permission_key) DO NOTHING;
+INSERT INTO public.role_permissions(role_id,permission_id,updated_at)
+SELECT r.role_id,p.permission_id,now() FROM public.roles r CROSS JOIN public.permissions p
+WHERE upper(r.role_name)='ADMIN' AND p.permission_key='VIEW_BALANCE_SHEET_HISTORY'
+ON CONFLICT(role_id,permission_id) DO NOTHING;
+
+
+
+
+CREATE OR REPLACE FUNCTION public.smartstock_cross_store_row_hashes(
+    p_location_id integer,p_generation_id uuid,p_table_name text,p_after_sequence bigint DEFAULT 0,p_limit integer DEFAULT 1000)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = '' AS $$
+DECLARE result jsonb;
+BEGIN
+    IF p_table_name IS NULL OR p_table_name NOT IN ('products','product_barcodes','inventory','sales','sale_items',
+        'sale_returns','sale_return_items','customer_account_transactions','phone_minutes_sales','custom_orders','quotations','invoices') THEN
+        RAISE EXCEPTION 'Unsupported cross-store table';
+    END IF;
+    IF p_limit IS NULL OR p_limit<1 OR p_limit>1000 OR p_after_sequence IS NULL OR p_after_sequence<0 THEN
+        RAISE EXCEPTION 'Invalid page bounds';
+    END IF;
+    PERFORM 1 FROM public.smartstock_store_snapshot_generations
+    WHERE generation_id=p_generation_id AND location_id=p_location_id AND status='COMPLETE';
+    IF NOT FOUND THEN RAISE EXCEPTION 'Completed snapshot is unavailable'; END IF;
+    WITH page AS (
+        SELECT row_key,row_hash,row_sequence FROM public.smartstock_store_snapshot_rows
+        WHERE generation_id=p_generation_id AND table_name=p_table_name AND row_sequence>p_after_sequence
+        ORDER BY row_sequence LIMIT p_limit
+    ) SELECT pg_catalog.jsonb_build_object('generation_id',p_generation_id,
+        'rows',COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('row_key',row_key,
+            'row_hash',row_hash,'sequence',row_sequence) ORDER BY row_sequence),'[]'::jsonb),
+        'next_cursor',COALESCE(pg_catalog.max(row_sequence),p_after_sequence)) INTO result FROM page;
+    RETURN result;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION public.smartstock_cross_store_rows(
+    p_location_id integer,p_generation_id uuid,p_table_name text,p_row_keys jsonb)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY INVOKER SET search_path = '' AS $$
+DECLARE result jsonb;
+BEGIN
+    IF p_table_name IS NULL OR p_table_name NOT IN ('products','product_barcodes','inventory','sales','sale_items',
+        'sale_returns','sale_return_items','customer_account_transactions','phone_minutes_sales','custom_orders','quotations','invoices') THEN
+        RAISE EXCEPTION 'Unsupported cross-store table';
+    END IF;
+    IF p_row_keys IS NULL OR pg_catalog.jsonb_typeof(p_row_keys)<>'array' THEN
+        RAISE EXCEPTION 'Row keys must be an array';
+    END IF;
+    IF pg_catalog.jsonb_array_length(p_row_keys)>1000 THEN RAISE EXCEPTION 'Too many row keys'; END IF;
+    PERFORM 1 FROM public.smartstock_store_snapshot_generations
+    WHERE generation_id=p_generation_id AND location_id=p_location_id AND status='COMPLETE';
+    IF NOT FOUND THEN RAISE EXCEPTION 'Completed snapshot is unavailable'; END IF;
+    SELECT pg_catalog.jsonb_build_object('generation_id',p_generation_id,
+        'rows',COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('row_key',r.row_key,
+            'row_hash',r.row_hash,'row_data',r.row_data) ORDER BY r.row_key),'[]'::jsonb)) INTO result
+    FROM public.smartstock_store_snapshot_rows r
+    WHERE r.generation_id=p_generation_id AND r.table_name=p_table_name
+      AND r.row_key IN (SELECT value FROM pg_catalog.jsonb_array_elements(p_row_keys));
+    RETURN result;
+END
+$$;
+REVOKE ALL ON FUNCTION public.smartstock_cross_store_row_hashes(integer,uuid,text,bigint,integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.smartstock_cross_store_rows(integer,uuid,text,jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.smartstock_cross_store_row_hashes(integer,uuid,text,bigint,integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.smartstock_cross_store_rows(integer,uuid,text,jsonb) TO service_role;
+-- Existing snapshot PK and page index cover both prepared-query access paths.
+
+-- Store-owned reusable tags. Public visibility is projected only by StorefrontService.
+CREATE TABLE IF NOT EXISTS public.product_tag_definitions (
+    tag_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 80),
+    is_public boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS product_tag_definitions_name_key
+    ON public.product_tag_definitions (lower(btrim(name)));
+CREATE TABLE IF NOT EXISTS public.product_tags (
+    product_id integer NOT NULL REFERENCES public.products(product_id) ON DELETE CASCADE,
+    tag_id uuid NOT NULL REFERENCES public.product_tag_definitions(tag_id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (product_id, tag_id)
+);
+CREATE INDEX IF NOT EXISTS product_tags_tag_product_idx ON public.product_tags(tag_id,product_id);
+ALTER TABLE public.product_tag_definitions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.product_tags ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.product_tag_definitions,public.product_tags FROM PUBLIC;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+  REVOKE ALL ON public.product_tag_definitions,public.product_tags FROM anon;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+  REVOKE ALL ON public.product_tag_definitions,public.product_tags FROM authenticated;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+  GRANT ALL ON public.product_tag_definitions,public.product_tags TO service_role;
+ END IF;
+END $$;

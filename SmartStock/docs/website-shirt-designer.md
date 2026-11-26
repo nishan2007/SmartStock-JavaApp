@@ -1,11 +1,76 @@
 # Website shirt designer
 
+Shared guide sizes are configured in **Custom Order Items → Print Materials →
+Sizes / Pricing Presets → Max width (inches) / Max height (inches)**. These two
+values belong to the preset and apply to every shirt using it. Enter width 10
+and height 2 for a 2×10 vinyl guide, or width 4 and height 4 for a logo guide.
+Saved dimensions take priority over preset names and legacy per-shirt overrides.
+Existing named sizes are backfilled once by the migration; unsized legacy
+presets retain the website's name-based fallback until configured.
+
+**Font size (pt)** changes text inside its guide and clips oversized text rather
+than compressing it. **Image zoom** scales an image from 10% to 500%, preserves
+its proportions, and clips overflow to its guide. Both values are saved in the
+browser draft and submitted design. Preset size fields and matching staff
+validation/rendering require the next SmartStock application update and its
+local schema migration. No live installation or database upgrade is implied by
+source validation.
+
+Text added with an **ARCH**/**Arched text** preset starts on a curved baseline.
+The text layer's **Text shape** control switches between Straight and Arch;
+**Arch curve** adjusts its sweep from 10 to 180 degrees. Resizing and rotation
+apply to the whole curved line. Existing Arch draft layers without a saved shape
+are initialized as arches when reopened; an explicitly saved straight shape is
+preserved. The curve is saved as a bounded `arc` value on the text layer and is
+rendered in both website previews and the updated staff preview. Pricing remains
+the selected preset's existing charge. Staff validation/rendering requires the
+next SmartStock application update; the browse-only website preview is deployed
+independently.
+
 The store owns shirt setup and pricing. Customers preview their design and submit
 an estimated quote, without payment or stock reservation. Supabase's existing
 authentication/private artwork storage and the existing Cloudflare gateway are
 reused; PostgreSQL remains the live store authority.
 
 ## Staff setup
+
+In **Custom item inventory → Edit Item Details → Shirt setup**, use
+**Position print areas…** to configure the large front, left chest logo, and
+large back independently. Drag the selected box to move it and its corner
+handles to resize it, or enter Left, Top, Width, and Height as percentages of the
+mockup. Reduce **Top (%)** to raise a chest logo. Guide dimensions are set in
+Print Materials presets; this dialog controls placement. Confirm both dialogs,
+then save the item. The existing
+shirt configuration and catalog synchronization carry these values to the
+website; no separate website-only position settings are required.
+
+Opening the position editor gives unconfigured areas a 10 × 11-inch front/back
+reference calibration and a higher, inset 3-inch chest area. Explicit configured
+areas are preserved. **Reset this area** applies those defaults only to the
+selected area. Canceling the position dialog leaves the original setup intact.
+
+### Website preview controls (2026-10-25)
+
+Adding text or an image opens **Edit artwork**. Select an element and drag any
+of its four corner handles to stretch or shrink it; drag inside it to move it.
+Mouse and touch gestures share the same controls, and one gesture is one undo
+step. Resizing observes the print boundary and any configured add-on dimensions.
+
+System-preset areas without physical dimensions use preview defaults: 10 × 11
+inches for front/back and 3 × 3 inches for the left chest. The default chest box
+is inset to avoid the side of the 3D garment. Explicit staff-configured physical
+areas remain unchanged. These defaults do not set prices or modify store data.
+
+The published frontend currently uses the Cloudflare `FRONTEND_ASSETS` binding
+over the existing store gateway, with HTML referencing the current built script.
+Future gateway deployments must preserve or deliberately replace this frontend
+asset layer, otherwise they will expose the installed server's older bundle.
+The compiled bundle remains in `src/storefront-web` for the next app package.
+
+Validation includes `node --test test/*.test.mjs` and the opt-in browser scripts
+`shirt-resize-browser.mjs`, `shirt-browser.mjs`, and `shirt-addons-browser.mjs`
+from `website/test`. Browser tests use synthetic store responses, including
+missing physical dimensions, and do not upload to a live store.
 
 1. Open Custom Order Items. Check **Shirt designer** on the item form, or edit the
    **Shirt designer** column in the custom-item inventory list and save changes.

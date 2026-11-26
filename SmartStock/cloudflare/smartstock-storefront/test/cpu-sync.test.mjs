@@ -25,6 +25,18 @@ function fixture(){
   return {env,stores,request};
 }
 const snapshot=(capturedAt,name='Paper')=>({locationId:1,capturedAt,settings:{enabled:true},store:{id:1,name:'Store'},products:[{id:1,name}],projects:[]});
+test('browse-only sync accepts custom item categories and still rejects private records',async()=>{
+  const {env,stores,request}=fixture();
+  const catalog={...snapshot('2026-10-27T10:00:00Z'),customItemCategories:[{id:1,name:'Gifts',items:[{id:7,name:'Mug'}]}]};
+  assert.equal((await worker.fetch(request({snapshot:catalog,events:[],enrollments:[]}),env)).status,200);
+  const coordinator=new StoreCoordinator({storage:stores.get('1')},env);
+  const state=await (await coordinator.fetch(new Request('https://coordinator/state?public=1'))).json();
+  assert.deepEqual(state.snapshot.customItemCategories,catalog.customItemCategories);
+  for(const privateField of ['customers','links','orders','receipts']){
+    const response=await worker.fetch(request({snapshot:{...catalog,[privateField]:[]},events:[],enrollments:[]}),env);
+    assert.equal(response.status,409);
+  }
+});
 test('edge forwards the authenticated sync body without decoding it',async()=>{
   const {env,request}=fixture();const input=request({snapshot:snapshot('2026-10-04T10:00:00Z'),events:[],enrollments:[]});
   let called=false;

@@ -2,6 +2,7 @@ package ui.screens;
 
 import utils.CurrencyFormatter;
 import managers.PermissionManager;
+import managers.NavigationManager;
 import services.LanApiClient;
 import services.CustomerPhotoService;
 import ui.components.CustomerTypeSelector;
@@ -36,6 +37,41 @@ public class CustomerAccountDetails extends JFrame {
     private JTextField accountNumberField;
     private JTextField nameField;
     private JTextField phoneField;
+    private final JTextField additionalPhone1Field = new JTextField();
+    private final JTextField additionalPhone2Field = new JTextField();
+
+    private final JTextField phoneLabelField = phoneLabelField("Main number type");
+    private final JTextField additionalPhone1LabelField = phoneLabelField("Additional number 1 type");
+    private final JTextField additionalPhone2LabelField = phoneLabelField("Additional number 2 type");
+
+    private static JTextField phoneLabelField(String name) {
+        JTextField field = new JTextField(8);
+        field.putClientProperty("JTextField.placeholderText", "Type");
+        field.setToolTipText("Optional type, e.g. Personal, Business, Home or Work");
+        field.getAccessibleContext().setAccessibleName(name);
+        return field;
+    }
+
+    private JPanel phoneNumbersPanel() {
+        JPanel panel = new JPanel(new java.awt.GridBagLayout());
+        panel.setOpaque(false);
+        JTextField[] numbers = {phoneField, additionalPhone1Field, additionalPhone2Field};
+        JTextField[] types = {phoneLabelField, additionalPhone1LabelField, additionalPhone2LabelField};
+        String[] labels = {"Main:", "Additional 1:", "Additional 2:"};
+        GridBagConstraints constraints = new GridBagConstraints();
+        constraints.fill = GridBagConstraints.HORIZONTAL;
+        constraints.insets = new Insets(2, 3, 2, 3);
+        for (int row = 0; row < numbers.length; row++) {
+            constraints.gridy = row;
+            constraints.gridx = 0; constraints.weightx = 0;
+            panel.add(new JLabel(labels[row]), constraints);
+            constraints.gridx = 1; constraints.weightx = 0.65;
+            panel.add(numbers[row], constraints);
+            constraints.gridx = 2; constraints.weightx = 0.35;
+            panel.add(types[row], constraints);
+        }
+        return panel;
+    }
     private JCheckBox whatsappOptInCheckBox;
     private JCheckBox requireChargeAuthorizationCheckBox;
     private JCheckBox customOrderDepositExemptBox;
@@ -44,10 +80,11 @@ public class CustomerAccountDetails extends JFrame {
     private JTextField customerPhotoField;
     private JLabel customerPhotoPreview;
     private CustomerTypeSelector customerTypeSelector;
-    private JCheckBox businessAccountCheckBox;
+
     private JCheckBox activeCheckBox;
     private JLabel balanceLabel;
     private JLabel availableCreditLabel;
+    private JLabel minutesDueLabel,accountCreditLabel;
     private JLabel customOrderDueLabel;
     private JLabel totalDueLabel;
     private JTextField creditLimitField;
@@ -62,7 +99,10 @@ public class CustomerAccountDetails extends JFrame {
     private LanApiClient.CustomerAccountRecord currentAccount;
     private java.util.List<LanApiClient.CustomerTransactionRecord> currentTransactions=java.util.List.of();
 
-    public CustomerAccountDetails(int customerId, Runnable afterSave) {
+    private final JFrame accountsWindow;
+
+    public CustomerAccountDetails(int customerId, Runnable afterSave, JFrame accountsWindow) {
+        this.accountsWindow = accountsWindow;
         this.customerId = customerId;
         this.afterSave = afterSave;
         this.canSetCreditLimit = PermissionManager.hasPermission("SET_CREDIT_LIMIT");
@@ -95,14 +135,47 @@ public class CustomerAccountDetails extends JFrame {
             summary.append("\nEligible total: ").append(currencyFormat.format(preview.get("total").getAsBigDecimal()));
             summary.append("\nThese receipts will receive linked noncash account corrections and expense entries. Stock and drawer cash will not change.\n");
             for(var element:skipped){var row=element.getAsJsonObject();summary.append("\nSkipped ").append(row.get("receipt").getAsString()).append(": ").append(row.get("reason").getAsString());}
+            boolean canBind = preview.has("canBindLegacy") && preview.get("canBindLegacy").getAsBoolean();
+            var unassigned = preview.getAsJsonArray("unassignedExpenses");
+            boolean hasUnassigned = unassigned != null && !unassigned.isEmpty();
+            if (hasUnassigned) {
+                summary.append("\n\nUnassigned Company Use expenses available for review");
+                for (var element : unassigned) {
+                    var expense = element.getAsJsonObject();
+                    summary.append("\n#").append(expense.get("id").getAsLong()).append(" — ")
+                            .append(expense.get("date").getAsString()).append(" — ")
+                            .append(currencyFormat.format(expense.get("amount").getAsBigDecimal())).append(" — ")
+                            .append(expense.get("description").getAsString());
+                }
+            }
             JTextArea text=new JTextArea(summary.toString(),18,65);text.setEditable(false);text.setLineWrap(true);text.setWrapStyleWord(true);
-            if(eligible.isEmpty()){JOptionPane.showMessageDialog(this,new JScrollPane(text),"No Eligible Purchases",JOptionPane.INFORMATION_MESSAGE);return;}
+            if(eligible.isEmpty() && !canBind){JOptionPane.showMessageDialog(this,new JScrollPane(text),"No Eligible Purchases",JOptionPane.INFORMATION_MESSAGE);return;}
             JComboBox<String> category=new JComboBox<>(new String[]{"Company Use","Donation"});
-            JPanel panel=new JPanel(new BorderLayout(8,8));panel.add(new JScrollPane(text),BorderLayout.CENTER);panel.add(category,BorderLayout.SOUTH);
+            JPanel options = new JPanel(new GridLayout(0, 1, 0, 4));
+            options.add(category);
+            JTextField accountNumber = new JTextField(18);
+            JCheckBox assign = new JCheckBox("Assign the reviewed unassigned expenses to Skeldon");
+            if (canBind) {
+                JPanel confirmation = new JPanel(new FlowLayout(FlowLayout.LEFT));
+                confirmation.add(new JLabel("Enter the account number to bind this legacy account to Skeldon (admin)"));
+                confirmation.add(accountNumber);
+                options.add(confirmation);
+                if (hasUnassigned) options.add(assign);
+            }
+            JPanel panel=new JPanel(new BorderLayout(8,8));panel.add(new JScrollPane(text),BorderLayout.CENTER);panel.add(options,BorderLayout.SOUTH);
             if(JOptionPane.showConfirmDialog(this,panel,"Review Company Expense Transfer",JOptionPane.OK_CANCEL_OPTION,JOptionPane.WARNING_MESSAGE)!=JOptionPane.OK_OPTION)return;
+            String confirmed = accountNumber.getText().trim();
+            if ((eligible.isEmpty() || assign.isSelected()) && confirmed.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Enter the legacy account number to complete this review.");
+                return;
+            }
             String signature=ui.helpers.CustomerChargeAuthorizationDialog.captureEmployeeSignature(this,managers.SessionManager.getCurrentUserDisplayName());if(signature==null)return;
             com.google.gson.JsonObject body=new com.google.gson.JsonObject();body.addProperty("customerId",customerId);body.addProperty("previewToken",preview.get("previewToken").getAsString());
             body.addProperty("category",(String)category.getSelectedItem());body.addProperty("signaturePngBase64",signature);
+            if (!confirmed.isEmpty()) {
+                body.addProperty("legacyAccountNumber", confirmed);
+                body.addProperty("assignUnassignedExpenses", assign.isSelected());
+            }
             postCompanyExpenseTransfer(body,UUID.randomUUID().toString());
         },failure->JOptionPane.showMessageDialog(this,failure.getMessage(),"Company Expense Transfer",JOptionPane.ERROR_MESSAGE));
     }
@@ -110,8 +183,11 @@ public class CustomerAccountDetails extends JFrame {
     private void postCompanyExpenseTransfer(com.google.gson.JsonObject body,String key){
         UiTaskRunner.submit(this,"company-expense.transfer",()->LanApiClient.stockLedger("account-transfer",body,key),result->{
             SessionDataCache.invalidate("customer-account:");SessionDataCache.invalidate("reports:");loadAccountSnapshot();if(afterSave!=null)afterSave.run();
+            String legacy = result.has("legacyAccountBound") && result.get("legacyAccountBound").getAsBoolean()
+                    ? "\nLegacy account bound to Skeldon. Unassigned expenses assigned: "
+                        + result.get("assignedExpenses").getAsInt() : "";
             JOptionPane.showMessageDialog(this,"Transferred "+result.get("transferred").getAsInt()+" receipts to expenses.\nAmount: "+currencyFormat.format(result.get("amount").getAsBigDecimal())+
-                    "\nRemaining account balance: "+currencyFormat.format(result.get("balanceAfter").getAsBigDecimal())+"\nStock and drawer cash were unchanged.","Company Expenses Transferred",JOptionPane.INFORMATION_MESSAGE);
+                    "\nRemaining account balance: "+currencyFormat.format(result.get("balanceAfter").getAsBigDecimal()) + legacy,"Company Expenses Transferred",JOptionPane.INFORMATION_MESSAGE);
         },failure->{
             if(failure instanceof LanApiClient.LanApiException api && !api.retryable()){
                 JOptionPane.showMessageDialog(this,api.getMessage(),"Transfer Not Completed",JOptionPane.WARNING_MESSAGE);return;
@@ -181,10 +257,10 @@ public class CustomerAccountDetails extends JFrame {
         customerPhotoField = new JTextField();customerPhotoField.setEditable(false);
         customerPhotoPreview=ProductImageHelper.createImagePreview("",140,140);
         customerTypeSelector = new CustomerTypeSelector();
-        businessAccountCheckBox = new JCheckBox("Business Account");
+
         activeCheckBox = new JCheckBox("Active");
         balanceLabel = new JLabel();
-        availableCreditLabel = new JLabel();
+        availableCreditLabel = new JLabel();minutesDueLabel=new JLabel();accountCreditLabel=new JLabel();
         customOrderDueLabel = new JLabel();
         totalDueLabel = new JLabel();
         creditLimitField = new JTextField();
@@ -194,17 +270,19 @@ public class CustomerAccountDetails extends JFrame {
         addInfoField(grid, gbc, 0, 0, "Account #:", accountNumberField);
         addInfoField(grid, gbc, 0, 1, "Name:", nameField);
         addInfoField(grid, gbc, 1, 0, "Customer Type:", customerTypeSelector);
-        addInfoField(grid, gbc, 1, 1, "Phone:", phoneField);
+        addInfoField(grid, gbc, 1, 1, "Phone numbers:", phoneNumbersPanel());
         addInfoField(grid, gbc, 6, 1, "WhatsApp:", whatsappOptInCheckBox);
         addInfoField(grid,gbc,7,1,"Account authorization:",requireChargeAuthorizationCheckBox);
         addInfoField(grid,gbc,8,0,"Custom-order deposit:",customOrderDepositExemptBox);
+        addInfoField(grid,gbc,9,0,"Minutes Due:",minutesDueLabel);
+        addInfoField(grid,gbc,9,1,"Account Credit Available:",accountCreditLabel);
         addInfoField(grid, gbc, 2, 0, "Email:", emailField);
-        addInfoField(grid, gbc, 2, 1, "Type:", businessAccountCheckBox);
+
         addInfoField(grid, gbc, 3, 0, "Status:", activeCheckBox);
         addInfoField(grid, gbc, 3, 1, "Credit Balance (All Stores):", balanceLabel);
         addInfoField(grid, gbc, 4, 0, "Custom Order Due:", customOrderDueLabel);
         addInfoField(grid, gbc, 4, 1, "Total Due:", totalDueLabel);
-        addInfoField(grid, gbc, 5, 0, "Available Credit:", availableCreditLabel);
+        addInfoField(grid, gbc, 5, 0, "Merchandise Available Credit:", availableCreditLabel);
         addInfoField(grid, gbc, 5, 1, "Customer Since (year):", customerSinceField);
         JButton choosePhoto=new JButton("Choose Photo / Logo");choosePhoto.addActionListener(e->chooseCustomerPhoto());
         JPanel photoPanel=new JPanel(new BorderLayout(6,0));photoPanel.add(customerPhotoField,BorderLayout.CENTER);photoPanel.add(choosePhoto,BorderLayout.EAST);
@@ -291,6 +369,29 @@ public class CustomerAccountDetails extends JFrame {
 
     private JPanel buildFooterPanel() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        JButton statementButton = new JButton("Print Unpaid Purchases");
+        statementButton.addActionListener(e -> {
+            statementButton.setEnabled(false);
+            UiTaskRunner.submit(this, "customer-account.statement", () -> {
+                var account = LanApiClient.loadCustomerAccountDetails(customerId);
+                var balances = LanApiClient.loadCustomerOpenBalances(customerId);
+                return new AccountStatementPreview.Snapshot(account.name(), account.accountNumber(), balances);
+            }, snapshot -> {
+                statementButton.setEnabled(true);
+                AccountStatementPreview.open(this, snapshot);
+            }, failure -> {
+                statementButton.setEnabled(true);
+                JOptionPane.showMessageDialog(this, failure.getMessage(), "Unpaid Purchases", JOptionPane.ERROR_MESSAGE);
+            });
+        });
+        panel.add(statementButton);
+        JButton minutesButton = new JButton("Phone Minutes");
+        minutesButton.addActionListener(e -> {
+            JFrame source = accountsWindow != null && accountsWindow.isDisplayable() ? accountsWindow : this;
+            NavigationManager.openPhoneMinutes(source, customerId);
+            if (source != this && !source.isDisplayable()) dispose();
+        });
+        panel.add(minutesButton);
         if(PermissionManager.hasPermission("RECORD_STOCK_EXPENSE") && PermissionManager.hasPermission("PROCESS_RETURNS")
                 && PermissionManager.hasPermission("RETURN_OVERRIDE")){
             JButton transfer=new JButton("Transfer Company Expenses");
@@ -324,11 +425,11 @@ public class CustomerAccountDetails extends JFrame {
                 customerTypeSelector.setSelectedCustomerType(
                         account.customerTypeId(),account.customerTypeName()
                 );
-                phoneField.setText(text(account.phone()));emailField.setText(text(account.email()));businessAccountCheckBox.setSelected(account.business());whatsappOptInCheckBox.setSelected(account.whatsappOptIn());requireChargeAuthorizationCheckBox.setSelected(account.requireChargeAuthorization());customOrderDepositExemptBox.setSelected(account.customOrderDepositExempt());
+                phoneField.setText(text(account.phone()));additionalPhone1Field.setText(text(account.additionalPhone1()));additionalPhone2Field.setText(text(account.additionalPhone2()));phoneLabelField.setText(text(account.phoneLabel()));additionalPhone1LabelField.setText(text(account.additionalPhone1Label()));additionalPhone2LabelField.setText(text(account.additionalPhone2Label()));emailField.setText(text(account.email()));whatsappOptInCheckBox.setSelected(account.whatsappOptIn());requireChargeAuthorizationCheckBox.setSelected(account.requireChargeAuthorization());customOrderDepositExemptBox.setSelected(account.customOrderDepositExempt());
                 customerSinceField.setText(account.customerSince()==null?"":String.valueOf(account.customerSince()));
                 customerPhotoField.setText(text(account.customerPhotoUrl()));
                 ProductImageHelper.setPreviewImage(customerPhotoPreview,customerPhotoField.getText(),140,140);
-                activeCheckBox.setSelected(account.active());balanceLabel.setText(money(account.currentBalance()));customOrderDueLabel.setText(money(account.customOrderDue()));totalDueLabel.setText(money(account.totalDue()));availableCreditLabel.setText(money(account.availableCredit()));
+                activeCheckBox.setSelected(account.active());balanceLabel.setText(money(account.currentBalance()));customOrderDueLabel.setText(money(account.customOrderDue()));totalDueLabel.setText(money(account.totalDue()));availableCreditLabel.setText(money(account.availableCredit()));minutesDueLabel.setText(money(account.minutesDue()));accountCreditLabel.setText(money(account.accountCreditAvailable()));
                 creditLimitField.setText(stripMoney(money(account.creditLimit())));notesArea.setText(account.accountNotes());
         transactionModel.setRowCount(0);
             LanApiClient.CustomerTransactionResult result = snapshot.transactions();
@@ -384,14 +485,14 @@ public class CustomerAccountDetails extends JFrame {
         String photoInput=customerPhotoField.getText().trim();
         final BigDecimal savedCreditLimit=creditLimit;
         LanApiClient.CustomerAccountSaveRequest request=new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,
-                    customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,photoInput,whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),currentAccount.salesDiscountEnabled(),currentAccount.salesDiscountPercent(),currentAccount.invoiceDiscountEnabled(),currentAccount.invoiceDiscountPercent(),currentAccount.customOrderDiscountEnabled(),currentAccount.customOrderDiscountPercent(),customOrderDepositExemptBox.isSelected());
+                    customerTypeId,phone,email,savedCreditLimit,activeCheckBox.isSelected(),notes,customerSince,photoInput,whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),currentAccount.salesDiscountEnabled(),currentAccount.salesDiscountPercent(),currentAccount.invoiceDiscountEnabled(),currentAccount.invoiceDiscountPercent(),currentAccount.customOrderDiscountEnabled(),currentAccount.customOrderDiscountPercent(),customOrderDepositExemptBox.isSelected()).withAdditionalPhones(additionalPhone1Field.getText(),additionalPhone2Field.getText()).withPhoneLabels(phoneLabelField.getText(),additionalPhone1LabelField.getText(),additionalPhone2LabelField.getText());
             String fingerprint=request.toString();if(pendingSaveKey==null||!fingerprint.equals(pendingFingerprint)){
                 pendingFingerprint=fingerprint;pendingSaveKey=UUID.randomUUID().toString();}
         String saveKey = pendingSaveKey;
         saveButton.setEnabled(false);
         UiTaskRunner.submit(this, "customer-account.save", () -> {
             String uploaded=CustomerPhotoService.uploadLocalPhotoIfNeeded(photoInput,name);
-            LanApiClient.saveCustomerAccount(new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,customerTypeId,phone,email,savedCreditLimit,businessAccountCheckBox.isSelected(),activeCheckBox.isSelected(),notes,customerSince,uploaded,whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),request.salesDiscountEnabled(),request.salesDiscountPercent(),request.invoiceDiscountEnabled(),request.invoiceDiscountPercent(),request.customOrderDiscountEnabled(),request.customOrderDiscountPercent(),request.customOrderDepositExempt()), saveKey);
+            LanApiClient.saveCustomerAccount(new LanApiClient.CustomerAccountSaveRequest(customerId,accountNumber,name,customerTypeId,phone,email,savedCreditLimit,activeCheckBox.isSelected(),notes,customerSince,uploaded,whatsappOptInCheckBox.isSelected(),requireChargeAuthorizationCheckBox.isSelected(),request.salesDiscountEnabled(),request.salesDiscountPercent(),request.invoiceDiscountEnabled(),request.invoiceDiscountPercent(),request.customOrderDiscountEnabled(),request.customOrderDiscountPercent(),request.customOrderDepositExempt()).withAdditionalPhones(request.additionalPhone1(),request.additionalPhone2()).withPhoneLabels(request.phoneLabel(),request.additionalPhone1Label(),request.additionalPhone2Label()), saveKey);
             return null;
         }, ignored -> {
             pendingSaveKey=null;pendingFingerprint=null;
@@ -438,6 +539,9 @@ public class CustomerAccountDetails extends JFrame {
             case "CUSTOM_ORDER_REFUND" -> "Custom Order Refund";
             case "CUSTOM_ORDER_BALANCE" -> "Custom Order Balance";
             case "CUSTOM_ORDER_PAYMENT" -> "Custom Order Payment";
+            case "MINUTES_CREDIT" -> "Minutes on Credit";
+            case "MINUTES_PAID" -> "Cash Minutes";
+            case "MINUTES_REVERSAL" -> "Minutes Reversal";
             case "MANUAL_CHARGE" -> "Manual Charge";
             case "PAYMENT" -> "Payment";
             default -> type.replace('_', ' ');

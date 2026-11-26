@@ -14,11 +14,22 @@ public class CustomerTypeSelector extends JPanel {
     private final LoadingStatePanel loadingState = new LoadingStatePanel();
 
     public CustomerTypeSelector() {
+        this(true);
+    }
+
+    public CustomerTypeSelector(boolean loadOptions) {
         setLayout(new BorderLayout(6, 0));
-        customerTypeBox.setEditable(true);
+        customerTypeBox.setEditable(false);
+        customerTypeBox.setMaximumRowCount(12);
+        customerTypeBox.getAccessibleContext().setAccessibleName("Customer type");
+        customerTypeBox.setToolTipText("Choose an existing customer type. Manage options using Customer Types.");
         add(customerTypeBox, BorderLayout.CENTER);
         add(loadingState, BorderLayout.SOUTH);
-        loadCustomerTypes();
+        if (loadOptions) loadCustomerTypes();
+        else {
+            customerTypeBox.addItem(new CustomerTypeOption(null, ""));
+            loadingState.setVisible(false);
+        }
     }
 
     public void loadCustomerTypes() {
@@ -76,6 +87,11 @@ public class CustomerTypeSelector extends JPanel {
         return selected == null ? "" : selected.toString().trim();
     }
 
+    /** Account classification follows the selected type; there is no second user choice. */
+    public boolean isBusinessAccount() {
+        return utils.CustomerAccountTypes.isBusiness(getSelectedCustomerTypeName());
+    }
+
     public void setSelectedCustomerType(Integer customerTypeId, String customerTypeName) {
         if (customerTypeId == null && (customerTypeName == null || customerTypeName.isBlank())) {
             clearSelection();
@@ -91,7 +107,10 @@ public class CustomerTypeSelector extends JPanel {
             }
         }
 
-        customerTypeBox.setSelectedItem(new CustomerTypeOption(customerTypeId, customerTypeName == null ? "" : customerTypeName));
+        if(customerTypeId!=null){
+            CustomerTypeOption existing=new CustomerTypeOption(customerTypeId,customerTypeName);
+            customerTypeBox.addItem(existing);customerTypeBox.setSelectedItem(existing);
+        }else clearSelection();
     }
 
     public void setSelectedCustomerTypeByName(String customerTypeName) {

@@ -20,6 +20,7 @@ final class BannerDocuments {
     static Path folder(){return Path.of(System.getProperty("user.home"),"template-library","banners");}
     static List<Path> files()throws IOException{return PublicationTemplateLibrary.files(List.of(folder()));}
     static void pdf(Publication source,Path target)throws IOException {
+        long started=System.nanoTime();
         source.validate();PublicationPreflight.requireMergeData(source);
         if(!source.mergeRows.isEmpty())throw new IllegalArgumentException("Banner export uses template artwork. Clear merge records before exporting.");
         float unit=(float)Math.max(1,Math.ceil(Math.max(source.width,source.height)/5080.));
@@ -42,7 +43,11 @@ final class BannerDocuments {
             }
             try{Files.move(temp,target,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}catch(AtomicMoveNotSupportedException ex){Files.move(temp,target,StandardCopyOption.REPLACE_EXISTING);}
         }catch(RuntimeException ex){throw new IOException("Banner export failed: "+ex.getMessage(),ex);}
-        finally {Files.deleteIfExists(temp);}
+        finally {
+            Files.deleteIfExists(temp);
+            System.getLogger(BannerDocuments.class.getName()).log(System.Logger.Level.INFO,
+                    "Banner PDF total ms="+(System.nanoTime()-started)/1_000_000);
+        }
     }
     private BannerDocuments(){}
 }

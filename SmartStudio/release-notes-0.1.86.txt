@@ -1,0 +1,8 @@
+SmartStudio 0.1.86
+
+Keeps printing inside SmartStudio. Printer hardware margins are now queried only after the user selects a printer, preventing the default printer's margins from being carried to another device. Preserves the selected driver's accepted area and explicitly requests the sheet orientation.
+
+Includes original-resolution/vector PDF export improvements.
+Print Setup includes Copy print details for collecting local, geometry-only diagnostics after a direct print.
+
+One-sheet direct printing passed on the Canon iR2525 with Evergreen's 12-card Letter layout. Physical C5240 acceptance is pending. Test one sheet before printing a full job.

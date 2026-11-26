@@ -1,0 +1,7 @@
+SmartStudio 0.1.101 - Banner printing and shared Studio updates
+
+Banner printing requests the complete physical page without dialog-added software margins, retaining the configured artwork dimensions. Printer hardware limits and borderless settings still apply.
+
+Includes the latest shared Studio workspace, photo queue/template picker, publication and badge editing, preview and printing improvements in the current workspace, with SmartStock 1.1.113 client support.
+
+Windows quick update for existing SmartStudio installations. Runtime and AI model weights remain outside the updater; existing profile models are preserved. Physical printer, cutter and NFC verification remains separate.

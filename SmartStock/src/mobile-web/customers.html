@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><script src="./mobile-management/reconnect.js"></script><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#7022a8"><meta name="apple-mobile-web-app-capable" content="yes"><title>Customer Management</title><link rel="stylesheet" href="./customers.css"><script src="./customers.js" defer></script></head>
+<body><header><div class="brand"><div><strong>DECKERS</strong><span>CUSTOMER MANAGEMENT</span></div></div><a href="./minutes.html">Phone Minutes</a><button id="logout" hidden>Sign out</button></header>
+<main><div class="intro"><div><p class="eyebrow">CUSTOMER ACCOUNTS</p><h1>Know your customers.</h1><p>Find accounts, review details and keep profiles up to date.</p></div></div><p id="notice" role="status" aria-live="polite"></p>
+<section id="auth" class="panel auth"><h2>Customer accounts, wherever you are</h2><p id="activationHelp">Open an approved browser activation link from SmartStock, then sign in with your employee account. Your existing Customer Accounts permission applies.</p><form id="login"><label>Email or username<input id="identifier" autocomplete="username" required></label><label>Password<input id="password" type="password" autocomplete="current-password" required></label><button class="primary" id="loginButton">Sign in securely</button></form><form id="mfa" hidden><h2>Authenticator verification</h2><img id="mfaQr" alt="Authenticator setup QR code" hidden><p id="mfaSecret"></p><label>Six-digit code<input id="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required></label><button class="primary">Verify</button></form><form id="activation"><label>Activation link from existing Web App Device Management<input id="activationLink" type="text" required autocomplete="off"></label><button>Activate this browser</button></form><button id="retry">Check connection again</button></section>
+<section id="workspace" hidden><div id="customerDirectory"><div class="panel"><label>Search customer accounts<input id="query" type="search" placeholder="Name, account number, phone or email" maxlength="300"></label><div class="results-head"><p id="count"></p><div><button id="refresh">Refresh</button> <button id="add" class="primary">Add customer</button></div></div></div><div id="results" class="results"></div></div>
+<article id="customerAccount" class="customer-account" hidden aria-labelledby="accountName">
+  <button id="backToCustomers" class="customer-back" type="button">Back to customer accounts</button>
+  <div class="customer-identity">
+    <div id="accountInitials" class="customer-initials" aria-hidden="true"></div>
+    <div class="customer-name"><h1 id="accountName" tabindex="-1"></h1><p id="accountNumber"></p></div>
+    <div class="customer-controls">
+      <button id="editAccount" class="account-edit" type="button">Edit account</button>
+      <span id="accountStatus" class="account-status"></span>
+    </div>
+  </div>
+  <dl class="customer-balances">
+    <div><dt>Credit Limit</dt><dd id="accountLimit"></dd></div>
+    <div><dt>Credit Balance</dt><dd id="accountBalance"></dd></div>
+    <div><dt>Order Due</dt><dd id="accountOrderDue"></dd></div>
+    <div class="customer-balance-wide customer-due"><dt>Total Due</dt><dd id="accountTotal"></dd></div>
+    <div class="customer-balance-wide customer-credit"><dt>Available Credit</dt><dd id="accountCredit"></dd></div>
+  </dl>
+  <div class="customer-actions">
+    <button id="recordPayment" class="account-edit" type="button">Record Payment</button>
+    <button id="addCharge" type="button">Add Charge</button>
+  </div>
+  <label class="history-search" for="historyQuery">Search customer history</label>
+  <div class="history-input"><input id="historyQuery" type="search" maxlength="180" autocomplete="off" placeholder="Receipt, order or item"></div>
+  <h2 id="historyHeading">10 most recent transactions</h2>
+  <p id="historyNotice" role="status"></p>
+  <ul id="historyRows" class="history-rows" aria-labelledby="historyHeading"></ul>
+  <button id="historyMore" class="more" type="button" hidden>Load more results</button>
+</article></section></main>
+<dialog id="transactionSheet" class="transaction-sheet" aria-labelledby="transactionTitle">
+  <div class="transaction-heading">
+    <span class="sheet-handle" aria-hidden="true"></span>
+    <div class="transaction-title-row">
+      <span id="transactionIcon" class="history-icon" aria-hidden="true"></span>
+      <h2 id="transactionTitle" tabindex="-1">Transaction details</h2>
+      <span id="transactionStatus" class="account-status" hidden></span>
+      <button id="closeTransaction" type="button" class="sheet-close" aria-label="Close transaction details" autofocus></button>
+    </div>
+    <nav id="orderSections" class="order-sections" aria-label="Order sections" hidden>
+      <button type="button" data-section="Overview" aria-pressed="true">Overview</button>
+      <button type="button" data-section="Items" aria-pressed="false">Items</button>
+      <button type="button" data-section="Payments" aria-pressed="false">Payments</button>
+      <button type="button" data-section="Activity" aria-pressed="false">Activity</button>
+    </nav>
+  </div>
+  <div id="transactionBody" class="transaction-body" tabindex="0"></div>
+</dialog>
+<dialog id="accountAdjustment" aria-labelledby="adjustmentTitle">
+  <div class="dialog-head"><h2 id="adjustmentTitle"></h2><button id="closeAdjustment" type="button">Close</button></div>
+  <form id="adjustmentForm">
+    <div id="adjustmentCharge">
+      <label>Amount (G$)<input type="number" name="chargeAmount" min="1" step="1"></label>
+      <label>What is the charge for?<textarea name="description" rows="3" maxlength="1000"></textarea></label>
+    </div>
+    <div id="adjustmentPayment" hidden>
+      <fieldset><legend>Apply payment to</legend><div id="paymentBalances"></div></fieldset>
+      <p id="paymentTotal" aria-live="polite"></p>
+      <label>Payment method<select name="paymentMethod"><option value="CASH">Cash</option><option value="CARD">Card</option><option value="CHEQUE">Cheque</option><option value="MMG">MMG</option><option value="BANK_TRANSFER">Bank transfer</option><option value="APPLY_CREDIT">Apply available account credit</option></select></label>
+      <label id="paymentDrawer">Cash drawer<select name="drawerSessionId"></select></label>
+      <label id="paymentReference">Reference<input name="paymentReference" maxlength="200"></label>
+    </div>
+    <p id="adjustmentNotice" role="status"></p>
+    <button id="saveAdjustment" class="primary" type="submit"></button>
+  </form>
+</dialog>
+<dialog id="detail" aria-labelledby="detailTitle"><div class="dialog-head"><h2 id="detailTitle">Customer account</h2><button id="closeDetail">Close</button></div><p id="balances"></p><form id="editor"><label>Name<input name="name" required maxlength="200"></label><label>Account number<input name="accountNumber" maxlength="100"></label><label>Customer type<select name="customerTypeId"></select></label><label>Phone<input name="phone" type="tel" maxlength="100"></label><label>Email<input name="email" type="email" maxlength="320"></label><label>Credit limit<input name="creditLimit" type="number" min="0" step="0.01" required></label><label>Customer since<input name="customerSince" type="number" min="1900"></label><label>Account notes<textarea name="accountNotes" maxlength="4000" rows="4"></textarea></label><label><input name="active" type="checkbox"> Active account</label><p id="saveNotice" role="status"></p><button id="save" class="primary">Save customer</button></form></dialog></body></html>

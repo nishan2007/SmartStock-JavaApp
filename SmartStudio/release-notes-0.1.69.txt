@@ -1,0 +1,2 @@
+SmartStudio 0.1.69 (1069) - Windows update only.
+Purple icon ribbon with labels below actions. Dedicated Print Setup tab and per-template print settings. Data tables start without preset fields; custom fields and records, including number ranges, save with templates. Shared record saving requires the updated store server. Existing SmartStudio installation required; Java runtime and AI model weights are excluded.

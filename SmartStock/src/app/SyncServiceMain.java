@@ -27,6 +27,7 @@ public final class SyncServiceMain {
         services.LanHttpsTransport.preserveDefaultProvider();
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             running = false;
+            services.StoreNetworkProvisioning.close();
             if (schedulerWeb != null) schedulerWeb.close();
             if (employeeWeb != null) employeeWeb.close();
             if (walletEnrollment != null) walletEnrollment.close();
@@ -37,6 +38,11 @@ public final class SyncServiceMain {
         }, "smartstock-sync-shutdown"));
 
         System.out.println("Starting SmartStock background sync service.");
+        services.StoreNetworkProvisioning.start(() -> {
+            LanApiServer current=lanApiServer;
+            if(current!=null)try{current.refreshMobileWebIdentity();}
+            catch(Exception e){throw new IllegalStateException("Browser listener reload failed.",e);}
+        });
         try {
             if (DatabaseConfig.load().mode() == DatabaseMode.SERVER) {
                 services.LocalDatabaseBootstrapService.reconcileConfiguredCredential();
@@ -117,6 +123,8 @@ public final class SyncServiceMain {
     }
 
     private static void stopLanApiForInactiveRole() {
+        if(ServerRoleGuard.state()!=ServerRoleGuard.State.PRIMARY&&ServerRoleGuard.state()!=ServerRoleGuard.State.DRAINING)
+            services.StoreNetworkProvisioning.fenceRemote();
         synchronized (SyncServiceMain.class) {
             if (schedulerWeb != null) {
                 schedulerWeb.close();

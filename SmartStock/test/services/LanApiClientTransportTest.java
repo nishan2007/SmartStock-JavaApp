@@ -16,6 +16,29 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LanApiClientTransportTest {
+    @Test void responseParsingPreservesHttpStatusForCompatibilityDecisions()throws Exception {
+        var parser=LanApiClient.class.getDeclaredMethod("responseData",java.net.http.HttpResponse.class);parser.setAccessible(true);
+        for(int status:new int[]{404,503}) {
+            var response=java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),new Class<?>[]{java.net.http.HttpResponse.class},
+                    (proxy,method,args)->switch(method.getName()){case "statusCode"->status;case "body"->"<html>Unavailable</html>";default->throw new UnsupportedOperationException();});
+            var thrown=org.junit.jupiter.api.Assertions.assertThrows(java.lang.reflect.InvocationTargetException.class,()->parser.invoke(null,response));
+            var failure=(LanApiClient.LanApiException)thrown.getCause();
+            assertEquals(status,failure.statusCode());assertEquals(status==404,LanApiClient.missingStudioDriveEndpoint(failure));
+        }
+    }
+    @Test void oldServerFallbackRequiresAMissingEndpointAndNeverMasksAuthorizationOrOutages(){
+        assertTrue(LanApiClient.missingStudioDriveEndpoint(new LanApiClient.LanApiException("INVALID_SERVER_RESPONSE","Old HTML 404",false,404)));
+        assertTrue(LanApiClient.missingStudioDriveEndpoint(new LanApiClient.LanApiException("NOT_FOUND","Missing route",false,404)));
+        for(var failure:new LanApiClient.LanApiException[]{
+                new LanApiClient.LanApiException("INVALID_SERVER_RESPONSE","Malformed success",true,200),
+                new LanApiClient.LanApiException("INVALID_SERVER_RESPONSE","Proxy outage",true,503),
+                new LanApiClient.LanApiException("DEVICE_NOT_FOUND","Revoked device",false,404),
+                new LanApiClient.LanApiException("PERMISSION_DENIED","Forbidden",false,403),
+                new LanApiClient.LanApiException("LOGIN_REQUIRED","Expired session",false,401),
+                new LanApiClient.LanApiException("NOT_FOUND","Unknown HTTP status",false)}){
+            assertFalse(LanApiClient.missingStudioDriveEndpoint(failure));
+        }
+    }
     @Test
     void reconciliationWaitsForServerBatchWithoutSlowingOrdinaryRequests() {
         assertTrue(LanApiClient.postTimeout("/v1/images/reconcile", false)
@@ -28,6 +51,9 @@ class LanApiClientTransportTest {
                 LanApiClient.postTimeout("/v1/studio/remove-background", true));
         assertEquals(java.time.Duration.ofSeconds(75),
                 LanApiClient.postTimeout("/v1/studio/models/refresh", false));
+        assertEquals(java.time.Duration.ofMinutes(4),
+                LanApiClient.postTimeout("/v1/studio/pdf-ocr", false));
+        assertTrue(RemoteAdminPolicy.isPhysicalOperation("/v1/studio/pdf-ocr"));
     }
 
     @Test

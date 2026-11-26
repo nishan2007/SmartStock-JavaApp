@@ -54,7 +54,11 @@ public final class CustomOrderDataService {
     }
 
     public static String saveCustomOrder(OrderSaveRequest request, String key) throws SQLException {
-        return call(() -> LanApiClient.saveCustomOrder(request, key));
+        return saveCustomOrder(request, key, false);
+    }
+
+    public static String saveCustomOrder(OrderSaveRequest request, String key, boolean oneTimeCustomer) throws SQLException {
+        return call(() -> LanApiClient.saveCustomOrder(request, key, oneTimeCustomer));
     }
 
     public static LookupResult lookupCustomItem(String search) throws SQLException {
@@ -65,7 +69,8 @@ public final class CustomOrderDataService {
         return call(() -> LanApiClient.searchCustomOrderItems(search));
     }
 
-    public record ItemSearchOption(Long customItemId, Long customVariantId, String label) {
+    public record ItemSearchOption(Long customItemId, Long customVariantId, String label, String imageUrl) {
+        public ItemSearchOption(Long customItemId, Long customVariantId, String label) { this(customItemId,customVariantId,label,null); }
         @Override public String toString() { return label; }
     }
 
@@ -83,7 +88,11 @@ public final class CustomOrderDataService {
     public record CustomItemOption(Long customItemId, String name, String size, String color, String sku, String productType, String pricingType,
                                    BigDecimal fixedPrice, boolean hasVariants, BigDecimal areaPrice,
                                    String areaPriceUnit, String dimensionUnit, BigDecimal maxWidth,
-                                   BigDecimal maxLength) {
+                                   BigDecimal maxLength, String imageUrl) {
+        public CustomItemOption(Long customItemId, String name, String size, String color, String sku, String productType, String pricingType,
+                                   BigDecimal fixedPrice, boolean hasVariants, BigDecimal areaPrice,
+                                   String areaPriceUnit, String dimensionUnit, BigDecimal maxWidth,
+                                   BigDecimal maxLength) { this(customItemId, name, size, color, sku, productType, pricingType, fixedPrice, hasVariants, areaPrice, areaPriceUnit, dimensionUnit, maxWidth, maxLength, null); }
         @Override public String toString() {
             String label = attributeLabel(name,size,color);
             if (sku != null && !sku.isBlank()) label += " [" + sku + "]";
@@ -94,7 +103,8 @@ public final class CustomOrderDataService {
         }
     }
 
-    public record VariantOption(Long variantId, String name, String size, String color, String effectiveSize, String effectiveColor, String sku, BigDecimal fixedPrice) {
+    public record VariantOption(Long variantId, String name, String size, String color, String effectiveSize, String effectiveColor, String sku, BigDecimal fixedPrice, String imageUrl) {
+        public VariantOption(Long variantId, String name, String size, String color, String effectiveSize, String effectiveColor, String sku, BigDecimal fixedPrice) { this(variantId, name, size, color, effectiveSize, effectiveColor, sku, fixedPrice, null); }
         @Override public String toString() {
             return (sku == null || sku.isBlank() ? attributeLabel(name,effectiveSize,effectiveColor) : attributeLabel(name,effectiveSize,effectiveColor) + " [" + sku + "]")
                     + (fixedPrice == null ? "" : " ($" + fixedPrice + ")");

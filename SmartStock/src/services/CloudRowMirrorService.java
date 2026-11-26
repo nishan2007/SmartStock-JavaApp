@@ -37,7 +37,9 @@ public final class CloudRowMirrorService {
             "role_mobile_permissions", "company_info", "locations", "users", "customer_types",
             "customer_accounts", "categories", "item_types", "item_brands", "vendors",
             "customer_account_merges", "customer_phone_ownership",
-            "product_groups", "products", "product_lifecycle_audit", "product_barcodes", "custom_order_items",
+            "product_merges", "product_merge_applications",
+            "product_stock_commands", "product_stock_command_results",
+            "product_tag_definitions", "product_groups", "products", "product_lifecycle_audit", "product_barcodes", "product_tags", "custom_order_items",
             "custom_order_item_barcodes", "custom_order_item_variants", "custom_order_item_variant_barcodes",
             "custom_order_print_materials", "custom_order_print_size_presets",
             "custom_order_design_placements", "employee_payroll_settings",
@@ -46,9 +48,25 @@ public final class CloudRowMirrorService {
             "catalog_source_ids"
     );
     private static final Map<String, String> DEPENDENT_LOCATION_PREDICATES = Map.ofEntries(
+            Map.entry("custom_item_inventory", "t.location_id=?"),
+            Map.entry("custom_variant_inventory", "t.location_id=?"),
+            Map.entry("custom_inventory_legacy_migration", "t.location_id=?"),
+            Map.entry("phone_minutes_credit_uses", "EXISTS (SELECT 1 FROM customer_account_transactions p WHERE p.transaction_id=t.payment_transaction_id AND p.location_id=?)"),
+            Map.entry("phone_minutes_web_requests", "t.location_id=?"),
+            Map.entry("phone_minutes_sales", "t.location_id=?"),
+            Map.entry("sales_tasks", "t.location_id=?"),
+            Map.entry("sales_task_payments", "t.location_id=?"),
+            Map.entry("sales_task_events", "EXISTS (SELECT 1 FROM sales_tasks p WHERE p.task_id=t.task_id AND p.location_id=?)"),
+            Map.entry("sales_task_files", "EXISTS (SELECT 1 FROM sales_tasks p WHERE p.task_id=t.task_id AND p.location_id=?)"),
             Map.entry("sale_items", "EXISTS (SELECT 1 FROM sales p WHERE p.sale_id=t.sale_id AND p.location_id=?)"),
             Map.entry("sale_return_items", "EXISTS (SELECT 1 FROM sale_returns p WHERE p.return_id=t.return_id AND p.location_id=?)"),
+            Map.entry("store_keys", "t.location_id=?"),
+            Map.entry("store_key_custody", "t.location_id=?"),
+            Map.entry("store_key_events", "t.location_id=?"),
             Map.entry("cash_drawer_count_events", "t.location_id=?"),
+            Map.entry("balance_sheet_workspaces", "t.location_id=?"),
+            Map.entry("balance_sheet_workspace_events", "EXISTS (SELECT 1 FROM balance_sheet_workspaces w WHERE w.workspace_id=t.workspace_id AND w.location_id=?)"),
+            Map.entry("balance_sheet_workspace_snapshots", "t.location_id=?"),
             Map.entry("balance_sheet_drawer_sessions", "EXISTS (SELECT 1 FROM balance_sheet_submissions p WHERE p.balance_sheet_submission_id=t.balance_sheet_submission_id AND p.location_id=?)"),
             Map.entry("custom_order_audit_log", customOrderPredicate()),
             Map.entry("custom_order_inventory_reservations", customOrderPredicate()),
@@ -418,7 +436,7 @@ public final class CloudRowMirrorService {
 
         int uploaded = 0;
         int deleted = 0;
-        int batchSize="custom_order_held_files".equals(table)?1:BATCH_SIZE;
+        int batchSize=Set.of("custom_order_held_files","sales_task_files").contains(table)?1:BATCH_SIZE;
         for (int offset = 0; offset < pending.size(); offset += batchSize) {
             List<MirrorRow> batch = pending.subList(offset,
                     Math.min(offset + batchSize, pending.size()));

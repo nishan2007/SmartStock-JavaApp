@@ -1,0 +1,6 @@
+SmartStock 1.1.92 - combined Windows quick update
+
+Includes current shared changes across chats. Drawer handover can retain a shortage or overage against the outgoing cashier while the incoming cashier starts from the accepted count. Adds audited cash takeover when the previous cashier cannot complete handover, requiring a count and reason.
+Includes current order attachments/copying, multi-size custom orders, Orders and work queues, production stages, customer-save, due-date, balance-sheet/inventory web resources and other shared application changes.
+
+Update the store server first, then registers. This publishes an application update; it does not install it or deploy separately hosted websites and Workers. Physical cash-drawer, database, service, and store acceptance remain separate rollout checks.

@@ -80,7 +80,8 @@ CREATE FUNCTION public.assign_customer_account_number() RETURNS trigger
     AS $$
 BEGIN
     IF NULLIF(TRIM(NEW.account_number), '') IS NULL THEN
-        IF COALESCE(NEW.is_business, FALSE) THEN
+        IF EXISTS (SELECT 1 FROM public.customer_types ct WHERE ct.customer_type_id=NEW.customer_type_id
+                   AND LOWER(BTRIM(ct.name)) IN ('business','businesses')) THEN
             NEW.account_number := 'BA-' || LPAD(NEXTVAL('customer_account_ba_number_seq')::TEXT, 6, '0');
         ELSE
             NEW.account_number := 'CA-' || LPAD(NEXTVAL('customer_account_ca_number_seq')::TEXT, 6, '0');
@@ -2918,6 +2919,10 @@ CREATE TABLE public.custom_order_print_size_presets (
     updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     CONSTRAINT custom_order_print_size_presets_price_chk CHECK ((fixed_price >= (0)::numeric)),
     CONSTRAINT custom_order_print_size_presets_pricing_mode_chk CHECK ((pricing_mode = ANY (ARRAY['FIXED_PRESET'::text, 'PER_LINE'::text])))
+,
+    guide_width_in numeric(8,3),
+    guide_height_in numeric(8,3),
+    CONSTRAINT custom_order_print_preset_guides_chk CHECK ((guide_width_in IS NULL AND guide_height_in IS NULL) OR (guide_width_in IS NOT NULL AND guide_height_in IS NOT NULL AND guide_width_in > 0 AND guide_width_in <= 60 AND guide_height_in > 0 AND guide_height_in <= 60))
 );
 
 
@@ -2988,7 +2993,7 @@ CREATE TABLE public.custom_orders (
     source_invoice_id bigint,
     invoice_billed boolean DEFAULT false NOT NULL,
     order_number text NOT NULL,
-    customer_id integer NOT NULL,
+    customer_id integer,
     customer_name text NOT NULL,
     customer_phone text NOT NULL,
     status text DEFAULT 'NEW'::text NOT NULL,
@@ -3178,7 +3183,6 @@ CREATE TABLE public.customer_accounts (
     email text,
     credit_limit numeric(12,2) DEFAULT 0 NOT NULL,
     current_balance numeric(12,2) DEFAULT 0 NOT NULL,
-    is_business boolean DEFAULT false NOT NULL,
     is_active boolean DEFAULT true NOT NULL,
     account_notes text,
     customer_since integer,
@@ -3338,7 +3342,7 @@ CREATE TABLE public.devices (
     api_server_fingerprint text,
     api_pairing_challenge_hash text,
     api_pairing_challenge_expires_at timestamp with time zone,
-    CONSTRAINT devices_access_mode_check CHECK ((access_mode = ANY (ARRAY['CLIENT'::text, 'SERVER'::text, 'REMOTE_ADMIN'::text]))),
+    CONSTRAINT devices_access_mode_check CHECK ((access_mode = ANY (ARRAY['CLIENT'::text, 'SERVER'::text, 'REMOTE_ADMIN'::text, 'DISPLAY'::text]))),
     CONSTRAINT devices_auto_logout_minutes_check CHECK (((auto_logout_minutes >= 1) AND (auto_logout_minutes <= 480))),
     CONSTRAINT devices_credential_status_check CHECK ((credential_status = ANY (ARRAY['PENDING'::text, 'ISSUED'::text, 'CLAIMED'::text, 'ROTATION_PENDING'::text, 'REVOKED'::text])))
 );
@@ -6281,6 +6285,8 @@ CREATE TABLE public.users (
     email text,
     phone text,
     employee_photo_url text,
+    employee_photo_source_url text,
+    employee_photo_frame text,
     employee_id_card_document_url text,
     date_of_birth date,
     hire_date date DEFAULT CURRENT_DATE NOT NULL,
@@ -14766,6 +14772,30 @@ DO $$ BEGIN
  END IF;
 END $$;
 
+CREATE TABLE IF NOT EXISTS public.product_image_coverage (
+    product_id bigint NOT NULL REFERENCES public.products(product_id) ON DELETE CASCADE,
+    image_kind text NOT NULL CHECK (image_kind IN ('ad_square','ad_portrait','ad_story','ad_landscape')),
+    image_reference text NOT NULL,
+    pixel_width integer NOT NULL CHECK (pixel_width > 0),
+    pixel_height integer NOT NULL CHECK (pixel_height > 0),
+    approved_by_user_id integer,
+    approved_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (product_id, image_kind)
+);
+ALTER TABLE public.product_image_coverage ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.product_image_coverage FROM PUBLIC;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+  REVOKE ALL ON public.product_image_coverage FROM anon;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+  REVOKE ALL ON public.product_image_coverage FROM authenticated;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+  GRANT ALL ON public.product_image_coverage TO service_role;
+ END IF;
+END $$;
+
 -- Store-owned order pricing; existing orders retain finalized prices.
 ALTER TABLE public.custom_orders
     ADD COLUMN IF NOT EXISTS pricing_state text NOT NULL DEFAULT 'FINAL',
@@ -15195,6 +15225,7 @@ CREATE TABLE IF NOT EXISTS public.employee_web_sessions (
  absolute_expires_at timestamptz NOT NULL,
  created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
  last_seen_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ remember_device boolean NOT NULL DEFAULT false,
  revoked_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS employee_web_sessions_device_idx ON public.employee_web_sessions(browser_device_id) WHERE revoked_at IS NULL;
@@ -15246,6 +15277,7 @@ CREATE TABLE IF NOT EXISTS public.overseas_orders (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS public.overseas_order_lines (
+    digital boolean NOT NULL DEFAULT false,
     line_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     overseas_order_id uuid NOT NULL REFERENCES public.overseas_orders(overseas_order_id),
     description text NOT NULL,
@@ -15631,3 +15663,799 @@ ON CONFLICT (source_movement_type,source_movement_id) DO NOTHING;
 ALTER TABLE public.custom_order_lines ADD COLUMN IF NOT EXISTS inventory_product_id integer REFERENCES public.products(product_id);
 ALTER TABLE public.custom_order_lines ADD COLUMN IF NOT EXISTS inventory_restocked boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS custom_order_lines_inventory_product_idx ON public.custom_order_lines(inventory_product_id) WHERE inventory_product_id IS NOT NULL;
+
+-- Phone ownership describes current contact details, not historical order snapshots.
+LOCK TABLE public.customer_accounts IN SHARE ROW EXCLUSIVE MODE;
+DELETE FROM public.customer_phone_ownership;
+INSERT INTO public.customer_phone_ownership(phone_key,customer_id)
+SELECT public.customer_phone_key(phone),min(customer_id)
+FROM public.customer_accounts
+WHERE public.customer_phone_key(phone) IS NOT NULL
+  AND customer_id=public.canonical_customer_id(customer_id)
+GROUP BY public.customer_phone_key(phone);
+
+CREATE OR REPLACE FUNCTION public.enforce_customer_phone_ownership() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE key text := public.customer_phone_key(NEW.phone); owner_id integer;
+BEGIN
+  IF key IS NULL OR public.canonical_customer_id(NEW.customer_id)<>NEW.customer_id THEN RETURN NEW; END IF;
+  -- Preserve existing legacy duplicates when their normalized number is unchanged.
+  IF TG_OP='UPDATE' THEN
+    IF NEW.customer_id=OLD.customer_id AND key IS NOT DISTINCT FROM public.customer_phone_key(OLD.phone) THEN RETURN NEW; END IF;
+  END IF;
+  -- The unique key serializes competing claims, including claims of stale mirrored rows.
+  INSERT INTO public.customer_phone_ownership AS ownership(phone_key,customer_id)
+  VALUES(key,NEW.customer_id) ON CONFLICT(phone_key) DO UPDATE SET customer_id=EXCLUDED.customer_id
+  WHERE NOT EXISTS(SELECT 1 FROM public.customer_accounts ca
+    WHERE public.customer_phone_key(ca.phone)=key AND ca.customer_id<>NEW.customer_id
+      AND ca.customer_id=public.canonical_customer_id(ca.customer_id));
+  SELECT customer_id INTO owner_id FROM public.customer_phone_ownership WHERE phone_key=key;
+  IF owner_id IS DISTINCT FROM NEW.customer_id OR EXISTS(
+    SELECT 1 FROM public.customer_accounts ca
+    WHERE public.customer_phone_key(ca.phone)=key AND ca.customer_id<>NEW.customer_id
+      AND ca.customer_id=public.canonical_customer_id(ca.customer_id)) THEN
+    RAISE EXCEPTION 'This phone number already belongs to a customer account. Select the existing account or use a different phone number.'
+      USING ERRCODE='23505', CONSTRAINT='customer_phone_ownership_pkey';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION public.release_removed_customer_phone() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM public.customer_phone_ownership ownership
+  WHERE ownership.phone_key=public.customer_phone_key(OLD.phone)
+    AND NOT EXISTS(SELECT 1 FROM public.customer_accounts ca
+      WHERE public.customer_phone_key(ca.phone)=ownership.phone_key
+        AND ca.customer_id=public.canonical_customer_id(ca.customer_id));
+  RETURN NULL;
+END
+$$;
+DROP TRIGGER IF EXISTS customer_phone_release ON public.customer_accounts;
+CREATE TRIGGER customer_phone_release AFTER UPDATE OF phone,customer_id OR DELETE
+ON public.customer_accounts FOR EACH ROW EXECUTE FUNCTION public.release_removed_customer_phone();
+
+-- Service work is local store authority. Payments are separate from the eventual sale.
+CREATE TABLE IF NOT EXISTS public.sales_tasks (
+    task_id bigserial PRIMARY KEY,
+    location_id integer NOT NULL REFERENCES public.locations(location_id),
+    customer_id integer REFERENCES public.customer_accounts(customer_id),
+    customer_name text NOT NULL CHECK (length(trim(customer_name)) > 0),
+    phone text NOT NULL DEFAULT '',
+    instructions text NOT NULL CHECK (length(trim(instructions)) > 0),
+    due_at timestamptz,
+    assigned_user_id integer REFERENCES public.users(user_id),
+    status text NOT NULL DEFAULT 'RECEIVED' CHECK (status IN ('RECEIVED','IN_PROGRESS','COMPLETED','COLLECTED','CANCELLED')),
+    billing_status text NOT NULL DEFAULT 'PROVISIONAL' CHECK (billing_status IN ('PROVISIONAL','FINALIZED')),
+    checkout_request jsonb NOT NULL DEFAULT '{"lines":[]}',
+    finalized_quote jsonb,
+    final_total numeric(12,2) CHECK (final_total > 0),
+    sale_id integer UNIQUE REFERENCES public.sales(sale_id),
+    version integer NOT NULL DEFAULT 1,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    sync_uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+    CHECK ((billing_status='FINALIZED') = (final_total IS NOT NULL AND finalized_quote IS NOT NULL)),
+    CHECK ((status='COLLECTED') = (sale_id IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS public.sales_task_payments (
+    payment_id bigserial PRIMARY KEY,
+    task_id bigint NOT NULL REFERENCES public.sales_tasks(task_id),
+    location_id integer NOT NULL REFERENCES public.locations(location_id),
+    customer_id integer REFERENCES public.customer_accounts(customer_id),
+    amount numeric(12,2) NOT NULL CHECK (amount > 0),
+    payment_action text NOT NULL CHECK (payment_action IN ('PAYMENT','REFUND')),
+    payment_method text NOT NULL CHECK (payment_method IN ('CASH','CARD','CHEQUE','MMG','BANK_TRANSFER')),
+    payment_reference text NOT NULL DEFAULT '',
+    reason text NOT NULL DEFAULT '',
+    user_id integer NOT NULL REFERENCES public.users(user_id),
+    user_name text NOT NULL,
+    device_id text NOT NULL,
+    device_name text NOT NULL DEFAULT '',
+    cash_drawer_id bigint,
+    cash_drawer_name text,
+    cash_drawer_session_id bigint REFERENCES public.cash_drawer_sessions(cash_drawer_session_id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    sync_uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE
+);
+CREATE TABLE IF NOT EXISTS public.sales_task_events (
+    event_id bigserial PRIMARY KEY,
+    task_id bigint NOT NULL REFERENCES public.sales_tasks(task_id),
+    action text NOT NULL,
+    reason text NOT NULL DEFAULT '',
+    snapshot jsonb NOT NULL,
+    user_id integer NOT NULL REFERENCES public.users(user_id),
+    user_name text NOT NULL,
+    device_id text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    sync_uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE
+);
+CREATE TABLE IF NOT EXISTS public.sales_task_files (
+    file_id bigserial PRIMARY KEY,
+    task_id bigint NOT NULL REFERENCES public.sales_tasks(task_id),
+    filename text NOT NULL,
+    content bytea NOT NULL CHECK (octet_length(content) <= 5242880),
+    sha256 text NOT NULL,
+    user_id integer NOT NULL REFERENCES public.users(user_id),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    sync_uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE
+);
+CREATE INDEX IF NOT EXISTS sales_tasks_queue_idx ON public.sales_tasks(location_id,status,due_at,task_id);
+CREATE INDEX IF NOT EXISTS sales_tasks_customer_idx ON public.sales_tasks(customer_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS sales_tasks_assignee_idx ON public.sales_tasks(assigned_user_id,status);
+CREATE INDEX IF NOT EXISTS sales_task_payments_task_idx ON public.sales_task_payments(task_id,payment_id);
+CREATE INDEX IF NOT EXISTS sales_task_payments_drawer_idx ON public.sales_task_payments(cash_drawer_session_id,created_at);
+CREATE INDEX IF NOT EXISTS sales_task_payments_location_idx ON public.sales_task_payments(location_id,created_at);
+CREATE INDEX IF NOT EXISTS sales_task_events_task_idx ON public.sales_task_events(task_id,event_id);
+CREATE INDEX IF NOT EXISTS sales_task_files_task_idx ON public.sales_task_files(task_id,file_id);
+
+-- Money received, rather than revenue earned. A collected task's sale is excluded:
+-- all its actual tender was already recorded in sales_task_payments.
+CREATE OR REPLACE VIEW public.sales_tender_activity AS
+SELECT s.* FROM public.sales s WHERE NOT EXISTS (SELECT 1 FROM public.sales_tasks t WHERE t.sale_id=s.sale_id)
+UNION ALL
+SELECT (jsonb_populate_record(NULL::public.sales,jsonb_build_object(
+    'sale_id',-p.payment_id,'location_id',p.location_id,'customer_id',p.customer_id,
+    'user_id',p.user_id,'user_name',p.user_name,'created_at',p.created_at,
+    'amount_paid',CASE WHEN p.payment_action='REFUND' THEN -p.amount ELSE p.amount END,
+    'total_amount',p.amount,'payment_method',p.payment_method,'payment_reference',p.payment_reference,
+    'payment_status','PAID','status','COMPLETED','receipt_number','ST-'||p.task_id||'/P-'||p.payment_id,
+    'device_id',p.device_id,'device_name',p.device_name,'receipt_device_id',p.device_id,
+    'cash_drawer_id',p.cash_drawer_id,'cash_drawer_name',p.cash_drawer_name,'cash_drawer_session_id',p.cash_drawer_session_id
+))).* FROM public.sales_task_payments p;
+
+ALTER TABLE public.sales_tasks ADD COLUMN IF NOT EXISTS due_asap boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS sales_tasks_asap_queue_idx ON public.sales_tasks(location_id,due_asap DESC,due_at,task_id)
+WHERE status NOT IN ('COLLECTED','CANCELLED');
+
+-- Local authority only. Included by normal provisioning; covered by full store backups.
+CREATE TABLE IF NOT EXISTS public.balance_sheet_workspaces (
+    workspace_id uuid PRIMARY KEY,
+    location_id integer NOT NULL REFERENCES public.locations(location_id),
+    period_start date NOT NULL,
+    period_end date NOT NULL CHECK (period_end >= period_start),
+    drawer_sessions jsonb NOT NULL DEFAULT '[]',
+    revision bigint NOT NULL DEFAULT 0,
+    snapshot_hash text,
+    UNIQUE(location_id,period_start,period_end,drawer_sessions)
+);
+CREATE TABLE IF NOT EXISTS public.balance_sheet_workspace_snapshots (
+    snapshot_hash text PRIMARY KEY,
+    location_id integer NOT NULL REFERENCES public.locations(location_id),
+    content jsonb NOT NULL
+);
+CREATE TABLE IF NOT EXISTS public.balance_sheet_workspace_drafts (
+    workspace_id uuid NOT NULL REFERENCES public.balance_sheet_workspaces(workspace_id),
+    form_id uuid NOT NULL,
+    user_id integer NOT NULL,
+    device_id text NOT NULL,
+    revision bigint NOT NULL,
+    content jsonb NOT NULL,
+    PRIMARY KEY(workspace_id,form_id)
+);
+CREATE TABLE IF NOT EXISTS public.balance_sheet_workspace_events (
+    event_id bigint GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    workspace_id uuid NOT NULL REFERENCES public.balance_sheet_workspaces(workspace_id),
+    revision bigint NOT NULL,
+    event_key uuid NOT NULL,
+    request_hash text NOT NULL,
+    event_type text NOT NULL,
+    changed_by_user_id integer,
+    changed_by_name text,
+    device_id text,
+    device_name text,
+    captured_at timestamptz,
+    received_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    before_hash text REFERENCES public.balance_sheet_workspace_snapshots(snapshot_hash),
+    after_hash text NOT NULL REFERENCES public.balance_sheet_workspace_snapshots(snapshot_hash),
+    details jsonb NOT NULL DEFAULT '{}',
+    result jsonb NOT NULL DEFAULT '{}',
+    submission_id bigint,
+    UNIQUE(workspace_id,revision),
+    UNIQUE(workspace_id,event_key)
+);
+CREATE INDEX IF NOT EXISTS balance_sheet_workspace_events_timeline_idx
+    ON public.balance_sheet_workspace_events(workspace_id,event_id DESC);
+CREATE INDEX IF NOT EXISTS balance_sheet_workspace_events_actor_idx
+    ON public.balance_sheet_workspace_events(changed_by_user_id,received_at DESC);
+CREATE OR REPLACE FUNCTION public.reject_balance_sheet_history_change() RETURNS trigger LANGUAGE plpgsql SET search_path='' AS $$
+BEGIN
+    RAISE EXCEPTION 'Balance sheet history is append-only' USING ERRCODE='42501';
+END; $$;
+DROP TRIGGER IF EXISTS balance_sheet_event_immutable ON public.balance_sheet_workspace_events;
+CREATE TRIGGER balance_sheet_event_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON public.balance_sheet_workspace_events
+    FOR EACH STATEMENT EXECUTE FUNCTION public.reject_balance_sheet_history_change();
+DROP TRIGGER IF EXISTS balance_sheet_snapshot_immutable ON public.balance_sheet_workspace_snapshots;
+CREATE TRIGGER balance_sheet_snapshot_immutable BEFORE UPDATE OR DELETE OR TRUNCATE ON public.balance_sheet_workspace_snapshots
+    FOR EACH STATEMENT EXECUTE FUNCTION public.reject_balance_sheet_history_change();
+DO $$ DECLARE table_name text; BEGIN
+    FOREACH table_name IN ARRAY ARRAY['balance_sheet_workspaces','balance_sheet_workspace_drafts','balance_sheet_workspace_snapshots','balance_sheet_workspace_events'] LOOP
+        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',table_name);
+        IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+            EXECUTE format('REVOKE ALL ON public.%I FROM anon',table_name);
+        END IF;
+        IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+            EXECUTE format('REVOKE ALL ON public.%I FROM authenticated',table_name);
+        END IF;
+        IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+            EXECUTE format('DROP POLICY IF EXISTS balance_sheet_server_only ON public.%I',table_name);
+            EXECUTE format('CREATE POLICY balance_sheet_server_only ON public.%I TO service_role USING (true) WITH CHECK (true)',table_name);
+            EXECUTE format('GRANT SELECT,INSERT ON public.%I TO service_role',table_name);
+        END IF;
+    END LOOP;
+    IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+        GRANT UPDATE ON public.balance_sheet_workspaces,public.balance_sheet_workspace_drafts TO service_role;
+        REVOKE UPDATE,DELETE,TRUNCATE ON public.balance_sheet_workspace_events,public.balance_sheet_workspace_snapshots FROM service_role;
+        GRANT USAGE,SELECT ON SEQUENCE public.balance_sheet_workspace_events_event_id_seq TO service_role;
+    END IF;
+END $$;
+
+-- Minutes are local service sales, never inventory items.
+CREATE TABLE IF NOT EXISTS public.phone_minutes_sales (
+ minutes_id bigserial PRIMARY KEY,
+ sync_uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+ location_id integer NOT NULL REFERENCES public.locations(location_id),
+ customer_id integer REFERENCES public.customer_accounts(customer_id),
+ destination_phone text NOT NULL CONSTRAINT phone_minutes_destination_phone_by_customer CHECK (destination_phone ~ '^\+?[0-9]{7,15}$' OR (customer_id IS NOT NULL AND destination_phone = '')),
+ amount numeric(12,2) NOT NULL CHECK (amount>0 AND amount=trunc(amount)),
+ amount_paid numeric(12,2) NOT NULL DEFAULT 0 CHECK (amount_paid>=0 AND amount_paid<=amount),
+ payment_method text NOT NULL CHECK (payment_method IN ('CASH','CREDIT')),
+ user_id integer NOT NULL REFERENCES public.users(user_id), user_name text NOT NULL,
+ device_id text NOT NULL, device_name text NOT NULL DEFAULT '',
+ cash_drawer_id bigint, cash_drawer_name text,
+ cash_drawer_session_id bigint REFERENCES public.cash_drawer_sessions(cash_drawer_session_id),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ reversed_at timestamptz, reversed_by integer REFERENCES public.users(user_id), reversed_by_name text,
+ reversal_reason text, reversal_device_id text, reversal_device_name text,
+ reversal_cash_drawer_id bigint, reversal_cash_drawer_name text,
+ reversal_cash_drawer_session_id bigint REFERENCES public.cash_drawer_sessions(cash_drawer_session_id),
+ credit_remaining numeric(12,2) NOT NULL DEFAULT 0 CHECK (credit_remaining>=0 AND credit_remaining<=amount_paid),
+ CHECK (payment_method<>'CREDIT' OR customer_id IS NOT NULL),
+ CHECK (payment_method<>'CASH' OR amount_paid=amount),
+ CHECK (credit_remaining=0 OR (reversed_at IS NOT NULL AND payment_method='CREDIT')),
+ CHECK (reversed_at IS NULL OR length(trim(reversal_reason))>0)
+);
+ALTER TABLE public.customer_account_transactions ADD COLUMN IF NOT EXISTS minutes_id bigint REFERENCES public.phone_minutes_sales(minutes_id);
+ALTER TABLE public.customer_account_payment_allocations ADD COLUMN IF NOT EXISTS minutes_id bigint REFERENCES public.phone_minutes_sales(minutes_id);
+CREATE TABLE IF NOT EXISTS public.phone_minutes_credit_uses (
+ credit_use_id bigserial PRIMARY KEY,
+ sync_uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+ minutes_id bigint NOT NULL REFERENCES public.phone_minutes_sales(minutes_id),
+ payment_transaction_id bigint NOT NULL REFERENCES public.customer_account_transactions(transaction_id),
+ amount numeric(12,2) NOT NULL CHECK (amount>0 AND amount=trunc(amount)),
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS phone_minutes_credit_uses_source_idx ON public.phone_minutes_credit_uses(minutes_id,payment_transaction_id);
+CREATE INDEX IF NOT EXISTS phone_minutes_credit_uses_payment_idx ON public.phone_minutes_credit_uses(payment_transaction_id);
+CREATE INDEX IF NOT EXISTS phone_minutes_customer_idx ON public.phone_minutes_sales(customer_id,created_at DESC,minutes_id);
+CREATE INDEX IF NOT EXISTS phone_minutes_store_idx ON public.phone_minutes_sales(location_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS phone_minutes_phone_idx ON public.phone_minutes_sales(destination_phone);
+CREATE INDEX IF NOT EXISTS phone_minutes_drawer_idx ON public.phone_minutes_sales(cash_drawer_session_id);
+CREATE INDEX IF NOT EXISTS phone_minutes_reversal_drawer_idx ON public.phone_minutes_sales(reversal_cash_drawer_session_id);
+CREATE INDEX IF NOT EXISTS account_allocations_minutes_idx ON public.customer_account_payment_allocations(minutes_id,payment_transaction_id);
+CREATE INDEX IF NOT EXISTS account_transactions_minutes_idx ON public.customer_account_transactions(minutes_id);
+
+CREATE OR REPLACE VIEW public.sales_tender_activity AS
+SELECT s.* FROM public.sales s WHERE NOT EXISTS (SELECT 1 FROM public.sales_tasks t WHERE t.sale_id=s.sale_id)
+UNION ALL
+SELECT (jsonb_populate_record(NULL::public.sales,jsonb_build_object(
+    'sale_id',-p.payment_id,'location_id',p.location_id,'customer_id',p.customer_id,
+    'user_id',p.user_id,'user_name',p.user_name,'created_at',p.created_at,
+    'amount_paid',CASE WHEN p.payment_action='REFUND' THEN -p.amount ELSE p.amount END,
+    'total_amount',p.amount,'payment_method',p.payment_method,'payment_reference',p.payment_reference,
+    'payment_status','PAID','status','COMPLETED','receipt_number','ST-'||p.task_id||'/P-'||p.payment_id,
+    'device_id',p.device_id,'device_name',p.device_name,'receipt_device_id',p.device_id,
+    'cash_drawer_id',p.cash_drawer_id,'cash_drawer_name',p.cash_drawer_name,'cash_drawer_session_id',p.cash_drawer_session_id
+))).* FROM public.sales_task_payments p
+UNION ALL
+SELECT (jsonb_populate_record(NULL::public.sales,jsonb_build_object(
+ 'sale_id',-1000000000-m.minutes_id,'location_id',m.location_id,'customer_id',m.customer_id,
+ 'user_id',m.user_id,'user_name',m.user_name,'created_at',m.created_at,
+ 'amount_paid',m.amount,'total_amount',m.amount,'payment_method','CASH','payment_status','PAID',
+ 'status','COMPLETED','receipt_number','MIN-'||m.minutes_id,'device_id',m.device_id,'device_name',m.device_name,
+ 'cash_drawer_id',m.cash_drawer_id,'cash_drawer_name',m.cash_drawer_name,'cash_drawer_session_id',m.cash_drawer_session_id
+))).* FROM public.phone_minutes_sales m WHERE m.payment_method='CASH'
+UNION ALL
+SELECT (jsonb_populate_record(NULL::public.sales,jsonb_build_object(
+ 'sale_id',-1500000000-m.minutes_id,'location_id',m.location_id,'customer_id',m.customer_id,
+ 'user_id',m.reversed_by,'user_name',m.reversed_by_name,'created_at',m.reversed_at,
+ 'amount_paid',-m.amount,'total_amount',-m.amount,'payment_method','CASH','payment_status','PAID',
+ 'status','COMPLETED','receipt_number','MIN-'||m.minutes_id||'/REV','device_id',m.reversal_device_id,'device_name',m.reversal_device_name,
+ 'cash_drawer_id',m.reversal_cash_drawer_id,'cash_drawer_name',m.reversal_cash_drawer_name,'cash_drawer_session_id',m.reversal_cash_drawer_session_id
+))).* FROM public.phone_minutes_sales m WHERE m.payment_method='CASH' AND m.reversed_at IS NOT NULL;
+
+-- Browser retries are store-owned financial records; no tokens or credentials are stored.
+CREATE TABLE IF NOT EXISTS public.phone_minutes_web_requests (
+ browser_id uuid NOT NULL,
+ user_id integer NOT NULL REFERENCES public.users(user_id),
+ request_key uuid NOT NULL,
+ location_id integer NOT NULL REFERENCES public.locations(location_id),
+ operation text NOT NULL CHECK(operation IN ('create','reverse')),
+ request_hash text NOT NULL,
+ response jsonb,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ sync_uuid uuid NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+ PRIMARY KEY(browser_id,user_id,request_key)
+);
+CREATE INDEX IF NOT EXISTS phone_minutes_web_requests_location_idx ON public.phone_minutes_web_requests(location_id,created_at);
+
+-- Product aliases are shared by catalog UUID; quantities are consolidated only
+-- inside the receiving store's own PostgreSQL transaction, never from a cache.
+ALTER TABLE public.sale_items ADD COLUMN IF NOT EXISTS merge_cost_price_snapshot numeric(12,2);
+CREATE TABLE IF NOT EXISTS public.product_merges (
+  merge_id uuid NOT NULL UNIQUE,
+  source_uid uuid PRIMARY KEY,
+  target_uid uuid NOT NULL,
+  origin_location_id integer NOT NULL,
+  merged_by_user_id integer NOT NULL,
+  retained_fields jsonb NOT NULL DEFAULT '{}'::jsonb,
+  updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CHECK(source_uid<>target_uid)
+);
+CREATE INDEX IF NOT EXISTS product_merges_target_idx ON public.product_merges(target_uid);
+CREATE TABLE IF NOT EXISTS public.product_stock_commands (
+ command_id uuid PRIMARY KEY, origin_location_id integer NOT NULL, location_id integer NOT NULL,
+ product_uid uuid NOT NULL, expected_quantity integer NOT NULL,
+ new_quantity integer NOT NULL CHECK(new_quantity>=0), requested_by_user_id integer NOT NULL,
+ device_id uuid NOT NULL, updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS product_stock_commands_owner_idx ON public.product_stock_commands(location_id,updated_at);
+CREATE TABLE IF NOT EXISTS public.product_stock_command_results (
+ command_id uuid PRIMARY KEY, location_id integer NOT NULL,
+ state text NOT NULL CHECK(state IN ('APPLIED','CONFLICT')),
+ previous_quantity integer NOT NULL, requested_quantity integer NOT NULL,
+ updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS public.product_merge_applications (
+  merge_id uuid NOT NULL,
+  location_id integer NOT NULL,
+  source_product_id integer NOT NULL,
+  target_product_id integer NOT NULL,
+  quantity_moved integer NOT NULL,
+  before_state jsonb NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(merge_id,location_id)
+);
+CREATE INDEX IF NOT EXISTS product_merge_applications_owner_idx ON public.product_merge_applications(location_id,updated_at);
+
+CREATE OR REPLACE FUNCTION public.canonical_product_uid(value uuid) RETURNS uuid
+LANGUAGE plpgsql STABLE AS $$
+DECLARE next_uid uuid; seen uuid[] := ARRAY[]::uuid[]; current_uid uuid := value;
+BEGIN
+  LOOP
+    IF current_uid=ANY(seen) THEN RAISE EXCEPTION 'Product merge cycle.' USING ERRCODE='55000'; END IF;
+    seen:=array_append(seen,current_uid);
+    SELECT target_uid INTO next_uid FROM public.product_merges WHERE source_uid=current_uid;
+    IF NOT FOUND THEN RETURN current_uid; END IF;
+    current_uid:=next_uid;
+  END LOOP;
+END
+$$;
+CREATE OR REPLACE FUNCTION public.canonical_product_id(value integer) RETURNS integer
+LANGUAGE sql STABLE AS $$
+  SELECT COALESCE((SELECT dest.product_id FROM public.products src JOIN public.products dest
+    ON dest.catalog_uid=public.canonical_product_uid(src.catalog_uid) WHERE src.product_id=value),value)
+$$;
+
+-- Exclude raw remote caches (their IDs belong to their source store), retained
+-- photo evidence, source tombstones, and tables with product-key collisions.
+CREATE OR REPLACE FUNCTION public.product_merge_reference_columns()
+RETURNS TABLE(schema_name text,table_name text,column_name text)
+LANGUAGE sql STABLE AS $$
+ SELECT DISTINCT n.nspname::text,t.relname::text,a.attname::text
+ FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace
+ JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum>0 AND NOT a.attisdropped
+ WHERE t.relkind IN ('r','p') AND n.nspname IN ('public','storefront')
+ AND t.relname NOT LIKE 'sync\_%' ESCAPE '\'
+ AND t.relname NOT IN ('products','product_merges','product_merge_applications','inventory',
+   'product_barcodes','product_shelf_assignments','product_lifecycle_audit','catalog_studio_reviews',
+   'catalog_studio_image_reviews','product_image_coverage','reservations','favorites')
+ AND NOT (n.nspname='storefront' AND t.relname='products')
+ AND a.atttypid IN ('int4'::regtype,'int8'::regtype)
+ AND (a.attname IN ('product_id','inventory_product_id') OR EXISTS(
+   SELECT 1 FROM pg_constraint fk WHERE fk.contype='f' AND fk.conrelid=t.oid
+   AND fk.confrelid='public.products'::regclass AND array_length(fk.conkey,1)=1 AND fk.conkey[1]=a.attnum))
+$$;
+
+CREATE OR REPLACE FUNCTION public.redirect_merged_product_reference() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE old_id integer; replacement integer;
+BEGIN
+ old_id:=(to_jsonb(NEW)->>TG_ARGV[0])::integer;
+ IF old_id IS NULL THEN RETURN NEW; END IF;
+ replacement:=public.canonical_product_id(old_id);
+ IF replacement<>old_id THEN NEW:=jsonb_populate_record(NEW,jsonb_build_object(TG_ARGV[0],replacement)); END IF;
+ RETURN NEW;
+END
+$$;
+CREATE OR REPLACE FUNCTION public.guard_merged_product_stock() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+ IF public.canonical_product_id(NEW.product_id)<>NEW.product_id AND NEW.quantity_on_hand<>0 THEN
+   RAISE EXCEPTION 'This product was merged. Refresh inventory before changing stock.' USING ERRCODE='40001';
+ END IF;
+ RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS product_merge_stock_guard ON public.inventory;
+CREATE TRIGGER product_merge_stock_guard BEFORE INSERT OR UPDATE ON public.inventory
+FOR EACH ROW EXECUTE FUNCTION public.guard_merged_product_stock();
+DROP TRIGGER IF EXISTS product_merge_barcode_guard ON public.product_barcodes;
+CREATE TRIGGER product_merge_barcode_guard BEFORE INSERT OR UPDATE OF product_id ON public.product_barcodes
+FOR EACH ROW EXECUTE FUNCTION public.redirect_merged_product_reference('product_id');
+
+CREATE OR REPLACE FUNCTION public.keep_merged_product_retired() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' THEN
+   IF EXISTS(SELECT 1 FROM public.product_merges WHERE source_uid=OLD.catalog_uid OR target_uid=OLD.catalog_uid) THEN
+     RAISE EXCEPTION 'Merged product identities cannot be deleted.' USING ERRCODE='55000';
+   END IF;
+   RETURN OLD;
+ END IF;
+ IF TG_OP='UPDATE' AND (NEW.product_id IS DISTINCT FROM OLD.product_id OR NEW.catalog_uid IS DISTINCT FROM OLD.catalog_uid)
+   AND EXISTS(SELECT 1 FROM public.product_merges WHERE source_uid=OLD.catalog_uid OR target_uid=OLD.catalog_uid) THEN
+   RAISE EXCEPTION 'Merged product identities cannot be changed.' USING ERRCODE='55000';
+ END IF;
+ IF EXISTS(SELECT 1 FROM public.product_merges WHERE source_uid=NEW.catalog_uid) THEN
+   NEW.is_active:=FALSE; NEW.barcode:=NULL;
+   NEW.archive_reason:='Merged into product #'||public.canonical_product_id(NEW.product_id);
+   NEW.archived_at:=COALESCE(NEW.archived_at,CURRENT_TIMESTAMP);
+ END IF;
+ RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS product_merge_retired_guard ON public.products;
+CREATE TRIGGER product_merge_retired_guard BEFORE INSERT OR UPDATE OR DELETE ON public.products
+FOR EACH ROW EXECUTE FUNCTION public.keep_merged_product_retired();
+
+CREATE OR REPLACE FUNCTION public.canonical_product_lines(value jsonb,key_name text) RETURNS jsonb
+LANGUAGE plpgsql STABLE AS $$
+DECLARE line jsonb; result jsonb := '[]'; raw text;
+BEGIN
+ IF jsonb_typeof(value->'lines') IS DISTINCT FROM 'array' THEN RETURN value; END IF;
+ FOR line IN SELECT * FROM jsonb_array_elements(value->'lines') LOOP
+   raw:=line->>key_name;
+   IF raw ~ '^[0-9]{1,9}$' THEN
+     line:=line||jsonb_build_object(key_name,public.canonical_product_id(raw::integer));
+   END IF;
+   result:=result||jsonb_build_array(line);
+ END LOOP;
+ RETURN jsonb_set(value,'{lines}',result);
+END
+$$;
+CREATE OR REPLACE FUNCTION public.redirect_merged_sales_task() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN NEW.checkout_request:=public.canonical_product_lines(NEW.checkout_request,'productId'); RETURN NEW; END
+$$;
+DROP TRIGGER IF EXISTS product_merge_task_guard ON public.sales_tasks;
+CREATE TRIGGER product_merge_task_guard BEFORE INSERT OR UPDATE OF checkout_request ON public.sales_tasks
+FOR EACH ROW EXECUTE FUNCTION public.redirect_merged_sales_task();
+CREATE OR REPLACE FUNCTION public.redirect_merged_stock_ledger() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.item_type='PRODUCT' THEN NEW.item_id:=public.canonical_product_id(NEW.item_id); END IF;
+ RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS product_merge_ledger_guard ON public.stock_ledger_entries;
+CREATE TRIGGER product_merge_ledger_guard BEFORE INSERT OR UPDATE OF item_id ON public.stock_ledger_entries
+FOR EACH ROW EXECUTE FUNCTION public.redirect_merged_stock_ledger();
+
+CREATE OR REPLACE FUNCTION public.install_product_merge_reference_guards() RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE ref record;
+BEGIN
+ FOR ref IN SELECT * FROM public.product_merge_reference_columns() WHERE schema_name='public' LOOP
+   EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I.%I','product_merge_'||ref.column_name,ref.schema_name,ref.table_name);
+   EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %I ON %I.%I FOR EACH ROW EXECUTE FUNCTION public.redirect_merged_product_reference(%L)',
+     'product_merge_'||ref.column_name,ref.column_name,ref.schema_name,ref.table_name,ref.column_name);
+ END LOOP;
+END
+$$;
+SELECT public.install_product_merge_reference_guards();
+
+CREATE OR REPLACE FUNCTION public.preserve_product_merge_mapping() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP='DELETE' OR NEW IS DISTINCT FROM OLD THEN
+   RAISE EXCEPTION 'Product merge mappings are immutable.' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS product_merge_mapping_immutable ON public.product_merges;
+CREATE TRIGGER product_merge_mapping_immutable BEFORE UPDATE OR DELETE ON public.product_merges
+FOR EACH ROW EXECUTE FUNCTION public.preserve_product_merge_mapping();
+
+-- Consolidation itself is performed by the server service in the same transaction
+-- as INSERT. Replicas use the same service; a received mapping cannot be marked
+-- applied until local stock, references, barcodes and the receipt commit together.
+
+-- Store-local review evidence. Never included in register reference snapshots.
+CREATE TABLE IF NOT EXISTS public.product_ad_drafts (
+ product_id bigint NOT NULL REFERENCES public.products(product_id) ON DELETE CASCADE,
+ image_kind text NOT NULL CHECK (image_kind IN ('ad_square','ad_portrait','ad_story','ad_landscape')),
+ preview_png bytea NOT NULL CHECK (octet_length(preview_png) BETWEEN 1 AND 12582912),
+ decision text NOT NULL DEFAULT 'pending' CHECK (decision IN ('pending','approved','rejected')),
+ revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+ uploaded_by_user_id integer NOT NULL,
+ reviewed_by_user_id integer,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(product_id,image_kind)
+);
+ALTER TABLE public.product_ad_drafts ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.product_ad_drafts FROM PUBLIC;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+  REVOKE ALL ON public.product_ad_drafts FROM anon;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+  REVOKE ALL ON public.product_ad_drafts FROM authenticated;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+  GRANT ALL ON public.product_ad_drafts TO service_role;
+ END IF;
+END $$;
+
+-- Keep review evidence attached to its original product during a catalog merge.
+CREATE OR REPLACE FUNCTION public.product_merge_reference_columns()
+RETURNS TABLE(schema_name text,table_name text,column_name text)
+LANGUAGE sql STABLE AS $$
+ SELECT DISTINCT n.nspname::text,t.relname::text,a.attname::text
+ FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace
+ JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum>0 AND NOT a.attisdropped
+ WHERE t.relkind IN ('r','p') AND n.nspname IN ('public','storefront')
+ AND t.relname NOT LIKE 'sync\_%' ESCAPE '\'
+ AND t.relname NOT IN ('products','product_merges','product_merge_applications','inventory',
+   'product_barcodes','product_shelf_assignments','product_lifecycle_audit','catalog_studio_reviews',
+   'catalog_studio_image_reviews','product_image_coverage','product_ad_drafts','reservations','favorites')
+ AND NOT (n.nspname='storefront' AND t.relname='products')
+ AND a.atttypid IN ('int4'::regtype,'int8'::regtype)
+ AND (a.attname IN ('product_id','inventory_product_id') OR EXISTS(
+   SELECT 1 FROM pg_constraint fk WHERE fk.contype='f' AND fk.conrelid=t.oid
+   AND fk.confrelid='public.products'::regclass AND array_length(fk.conkey,1)=1 AND fk.conkey[1]=a.attnum))
+$$;
+ALTER TABLE public.product_ad_drafts ADD COLUMN IF NOT EXISTS rejection_reason text CHECK (char_length(rejection_reason) <= 2000);
+
+-- Store-owned custom stock. Catalog quantities are retained only as legacy migration evidence.
+CREATE TABLE IF NOT EXISTS public.custom_item_inventory (
+ custom_item_id bigint NOT NULL REFERENCES public.custom_order_items(custom_item_id) ON DELETE CASCADE,
+ location_id integer NOT NULL REFERENCES public.locations(location_id),
+ quantity_on_hand numeric NOT NULL DEFAULT 0,
+ reorder_level numeric NOT NULL DEFAULT 0 CHECK(reorder_level>=0),
+ sold_quantity numeric NOT NULL DEFAULT 0,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(custom_item_id,location_id)
+);
+CREATE TABLE IF NOT EXISTS public.custom_variant_inventory (
+ custom_variant_id bigint NOT NULL REFERENCES public.custom_order_item_variants(custom_variant_id) ON DELETE CASCADE,
+ location_id integer NOT NULL REFERENCES public.locations(location_id),
+ quantity_on_hand numeric NOT NULL DEFAULT 0,
+ reorder_level numeric NOT NULL DEFAULT 0 CHECK(reorder_level>=0),
+ sold_quantity numeric NOT NULL DEFAULT 0,
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ PRIMARY KEY(custom_variant_id,location_id)
+);
+CREATE INDEX IF NOT EXISTS custom_item_inventory_location_idx ON public.custom_item_inventory(location_id,quantity_on_hand,reorder_level);
+CREATE INDEX IF NOT EXISTS custom_variant_inventory_location_idx ON public.custom_variant_inventory(location_id,quantity_on_hand,reorder_level);
+CREATE TABLE IF NOT EXISTS public.custom_inventory_legacy_migration (
+ singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),
+ location_id integer NOT NULL REFERENCES public.locations(location_id),
+ migrated_at timestamptz NOT NULL DEFAULT now(),
+ rosehall_stock_correction_before jsonb,
+ rosehall_stock_corrected_at timestamptz
+);
+REVOKE ALL ON public.custom_item_inventory,public.custom_variant_inventory,public.custom_inventory_legacy_migration FROM PUBLIC;
+
+-- Indexed store-scoped reads, including active variant totals for parent rows.
+CREATE OR REPLACE FUNCTION public.custom_stock_value(item bigint,variant bigint,store integer,field text)
+RETURNS numeric LANGUAGE sql STABLE SET search_path=public AS $stock$
+ SELECT CASE WHEN variant IS NOT NULL THEN
+  COALESCE((SELECT CASE field WHEN 'quantity_on_hand' THEN s.quantity_on_hand WHEN 'reorder_level' THEN s.reorder_level WHEN 'sold_quantity' THEN s.sold_quantity END FROM custom_variant_inventory s WHERE s.custom_variant_id=variant AND s.location_id=store),0)
+ WHEN COALESCE((SELECT has_variants FROM custom_order_items WHERE custom_item_id=item),false) THEN
+  COALESCE((SELECT SUM(CASE field WHEN 'quantity_on_hand' THEN s.quantity_on_hand WHEN 'reorder_level' THEN s.reorder_level WHEN 'sold_quantity' THEN s.sold_quantity END) FROM custom_order_item_variants v JOIN custom_variant_inventory s ON s.custom_variant_id=v.custom_variant_id AND s.location_id=store WHERE v.custom_item_id=item AND v.is_active),0)
+ ELSE COALESCE((SELECT CASE field WHEN 'quantity_on_hand' THEN s.quantity_on_hand WHEN 'reorder_level' THEN s.reorder_level WHEN 'sold_quantity' THEN s.sold_quantity END FROM custom_item_inventory s WHERE s.custom_item_id=item AND s.location_id=store),0) END
+$stock$;
+
+-- Local-only browser approvals. Never mirror credentials or approval codes to cloud/registers.
+CREATE TABLE IF NOT EXISTS public.mobile_managed_devices (
+ device_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ device_name text NOT NULL CHECK (length(device_name) BETWEEN 1 AND 120),
+ created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ last_seen_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ revoked_at timestamptz,
+ device_info jsonb NOT NULL DEFAULT '{}'::jsonb,
+ device_info_updated_at timestamptz,
+ remember_login boolean NOT NULL DEFAULT false,
+ revision bigint NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS public.mobile_device_apps (
+ device_id uuid NOT NULL REFERENCES public.mobile_managed_devices(device_id) ON DELETE CASCADE,
+ app_key text NOT NULL,
+ PRIMARY KEY(device_id,app_key)
+);
+CREATE TABLE IF NOT EXISTS public.mobile_device_credentials (
+ credential_hash text PRIMARY KEY,
+ device_id uuid NOT NULL REFERENCES public.mobile_managed_devices(device_id) ON DELETE CASCADE,
+ created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS mobile_device_credentials_device_idx ON public.mobile_device_credentials(device_id);
+CREATE TABLE IF NOT EXISTS public.mobile_device_pairings (
+ code_hash text PRIMARY KEY,
+ device_name text NOT NULL,
+ app_keys text[] NOT NULL,
+ issued_by integer NOT NULL REFERENCES public.users(user_id),
+ expires_at timestamptz NOT NULL,
+ consumed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS mobile_device_pairings_expiry_idx ON public.mobile_device_pairings(expires_at);
+CREATE TABLE IF NOT EXISTS public.mobile_device_handoffs (
+ token_hash text PRIMARY KEY,
+ device_id uuid NOT NULL REFERENCES public.mobile_managed_devices(device_id) ON DELETE CASCADE,
+ app_key text NOT NULL,
+ destination text NOT NULL,
+ expires_at timestamptz NOT NULL,
+ consumed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS mobile_device_handoffs_expiry_idx ON public.mobile_device_handoffs(expires_at);
+-- Old browser/session approvals are deliberately not promoted. They must pair once again.
+-- Their records remain available for history; the shared request guard rejects them.
+
+ALTER TABLE public.mobile_managed_devices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.mobile_device_apps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.mobile_device_credentials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.mobile_device_pairings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.mobile_device_handoffs ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.customer_accounts ADD COLUMN IF NOT EXISTS additional_phone_1 text;
+ALTER TABLE public.customer_accounts ADD COLUMN IF NOT EXISTS additional_phone_2 text;
+CREATE INDEX IF NOT EXISTS customer_accounts_additional_phone_1_key_idx ON public.customer_accounts(public.customer_phone_key(additional_phone_1));
+CREATE INDEX IF NOT EXISTS customer_accounts_additional_phone_2_key_idx ON public.customer_accounts(public.customer_phone_key(additional_phone_2));
+CREATE OR REPLACE FUNCTION public.enforce_customer_phone_ownership() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE key text; owner_id integer;
+BEGIN
+ IF public.canonical_customer_id(NEW.customer_id)<>NEW.customer_id THEN RETURN NEW; END IF;
+ IF (public.customer_phone_key(NEW.phone) IS NOT NULL AND public.customer_phone_key(NEW.phone) IN (public.customer_phone_key(NEW.additional_phone_1),public.customer_phone_key(NEW.additional_phone_2))) OR (public.customer_phone_key(NEW.additional_phone_1) IS NOT NULL AND public.customer_phone_key(NEW.additional_phone_1)=public.customer_phone_key(NEW.additional_phone_2)) THEN
+ RAISE EXCEPTION 'Enter a different number in each phone field.' USING ERRCODE='23514'; END IF;
+ FOR key IN SELECT DISTINCT public.customer_phone_key(n) FROM unnest(ARRAY[NEW.phone,NEW.additional_phone_1,NEW.additional_phone_2]) n WHERE public.customer_phone_key(n) IS NOT NULL LOOP
+ IF TG_OP='UPDATE' THEN
+ IF NEW.customer_id=OLD.customer_id AND key=ANY(ARRAY[public.customer_phone_key(OLD.phone),public.customer_phone_key(OLD.additional_phone_1),public.customer_phone_key(OLD.additional_phone_2)]) THEN CONTINUE; END IF;
+ END IF;
+ INSERT INTO public.customer_phone_ownership AS ownership(phone_key,customer_id) VALUES(key,NEW.customer_id)
+ ON CONFLICT(phone_key) DO UPDATE SET customer_id=EXCLUDED.customer_id
+ WHERE NOT EXISTS(SELECT 1 FROM public.customer_accounts ca WHERE key=ANY(ARRAY[public.customer_phone_key(ca.phone),public.customer_phone_key(ca.additional_phone_1),public.customer_phone_key(ca.additional_phone_2)]) AND ca.customer_id<>NEW.customer_id AND ca.customer_id=public.canonical_customer_id(ca.customer_id));
+ SELECT customer_id INTO owner_id FROM public.customer_phone_ownership WHERE phone_key=key;
+ IF owner_id IS DISTINCT FROM NEW.customer_id THEN RAISE EXCEPTION 'This phone number already belongs to a customer account. Select the existing account or use a different phone number.' USING ERRCODE='23505',CONSTRAINT='customer_phone_ownership_pkey'; END IF;
+ END LOOP; RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION public.release_removed_customer_phone() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ DELETE FROM public.customer_phone_ownership ownership WHERE ownership.phone_key=ANY(ARRAY[public.customer_phone_key(OLD.phone),public.customer_phone_key(OLD.additional_phone_1),public.customer_phone_key(OLD.additional_phone_2)]) AND NOT EXISTS(SELECT 1 FROM public.customer_accounts ca WHERE ownership.phone_key=ANY(ARRAY[public.customer_phone_key(ca.phone),public.customer_phone_key(ca.additional_phone_1),public.customer_phone_key(ca.additional_phone_2)]) AND ca.customer_id=public.canonical_customer_id(ca.customer_id)); RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS customer_phone_ownership_guard ON public.customer_accounts;
+CREATE TRIGGER customer_phone_ownership_guard BEFORE INSERT OR UPDATE OF phone,additional_phone_1,additional_phone_2,customer_id ON public.customer_accounts FOR EACH ROW EXECUTE FUNCTION public.enforce_customer_phone_ownership();
+DROP TRIGGER IF EXISTS customer_phone_release ON public.customer_accounts;
+CREATE TRIGGER customer_phone_release AFTER UPDATE OF phone,additional_phone_1,additional_phone_2,customer_id OR DELETE ON public.customer_accounts FOR EACH ROW EXECUTE FUNCTION public.release_removed_customer_phone();
+ALTER TABLE public.customer_accounts ADD COLUMN IF NOT EXISTS phone_label varchar(50);
+ALTER TABLE public.customer_accounts ADD COLUMN IF NOT EXISTS additional_phone_1_label varchar(50);
+ALTER TABLE public.customer_accounts ADD COLUMN IF NOT EXISTS additional_phone_2_label varchar(50);
+
+-- Connect isolated iPhone home-screen storage to an already approved device.
+-- The request token is shown to the paired browser; the independent claim secret
+-- remains in an HttpOnly cookie in the requesting app. Neither is stored plaintext.
+CREATE TABLE IF NOT EXISTS public.mobile_device_links (
+ request_hash text PRIMARY KEY,
+ claim_hash text NOT NULL,
+ app_key text NOT NULL,
+ destination text NOT NULL,
+ device_id uuid REFERENCES public.mobile_managed_devices(device_id) ON DELETE CASCADE,
+ expires_at timestamptz NOT NULL,
+ approved_at timestamptz,
+ consumed_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS mobile_device_links_expiry_idx ON public.mobile_device_links(expires_at);
+ALTER TABLE public.mobile_device_links ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.payroll_web_requests (
+ browser_id uuid NOT NULL,user_id integer NOT NULL REFERENCES public.users(user_id),request_key uuid NOT NULL,
+ request_hash text NOT NULL,response jsonb,created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ PRIMARY KEY(browser_id,user_id,request_key));
+CREATE INDEX IF NOT EXISTS payroll_web_requests_created_idx ON public.payroll_web_requests(created_at);
+ALTER TABLE public.payroll_web_requests ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.customer_account_web_requests (
+    browser_id uuid NOT NULL,
+    user_id integer NOT NULL,
+    location_id integer NOT NULL,
+    request_key uuid NOT NULL,
+    request_hash text NOT NULL,
+    response jsonb,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (browser_id,user_id,location_id,request_key)
+);
+CREATE INDEX IF NOT EXISTS customer_account_web_requests_created_idx
+    ON public.customer_account_web_requests(created_at);
+ALTER TABLE public.customer_account_web_requests ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.customer_account_web_requests FROM PUBLIC;
+
+-- Store key custody is local-server authority; cloud snapshots are recovery only.
+CREATE TABLE IF NOT EXISTS public.store_keys (
+ key_id uuid PRIMARY KEY, location_id integer NOT NULL REFERENCES public.locations(location_id),
+ key_number integer NOT NULL CHECK(key_number>0), label text NOT NULL,
+ retired boolean NOT NULL DEFAULT false, card_hash text UNIQUE,
+ version bigint NOT NULL DEFAULT 0, updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE(location_id,key_number), UNIQUE(key_id,location_id)
+);
+CREATE TABLE IF NOT EXISTS public.store_key_custody (
+ custody_id uuid PRIMARY KEY, key_id uuid NOT NULL, location_id integer NOT NULL,
+ holder_user_id integer NOT NULL REFERENCES public.users(user_id),
+ checked_out_by integer NOT NULL REFERENCES public.users(user_id), checked_out_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ returned_by integer REFERENCES public.users(user_id), returned_at timestamptz,
+ return_kind text CHECK(return_kind IN ('RETURN','FORCED_RETURN')), return_reason text,
+ FOREIGN KEY(key_id,location_id) REFERENCES public.store_keys(key_id,location_id),
+ CHECK((returned_at IS NULL AND returned_by IS NULL AND return_kind IS NULL) OR
+       (returned_at IS NOT NULL AND returned_by IS NOT NULL AND return_kind IS NOT NULL)),
+ CHECK(return_kind IS DISTINCT FROM 'FORCED_RETURN' OR (return_reason IS NOT NULL AND length(trim(return_reason))>0))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS store_key_one_holder ON public.store_key_custody(key_id) WHERE returned_at IS NULL;
+CREATE INDEX IF NOT EXISTS store_key_holder_lookup ON public.store_key_custody(location_id,holder_user_id,checked_out_at DESC);
+CREATE TABLE IF NOT EXISTS public.store_key_events (
+ event_id uuid PRIMARY KEY, key_id uuid NOT NULL, location_id integer NOT NULL,
+ custody_id uuid REFERENCES public.store_key_custody(custody_id),
+ event_type text NOT NULL CHECK(event_type IN ('CREATE','LABEL','PAIR','RETIRE','CHECKOUT','RETURN','FORCED_RETURN')),
+ actor_user_id integer NOT NULL REFERENCES public.users(user_id), actor_name text NOT NULL,
+ holder_user_id integer REFERENCES public.users(user_id), holder_name text,
+ method text NOT NULL CHECK(method IN ('MANUAL','NFC')), reason text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ FOREIGN KEY(key_id,location_id) REFERENCES public.store_keys(key_id,location_id)
+);
+CREATE INDEX IF NOT EXISTS store_key_history_lookup ON public.store_key_events(location_id,created_at DESC,event_id);
+CREATE INDEX IF NOT EXISTS store_key_history_key ON public.store_key_events(key_id,created_at DESC);
+CREATE OR REPLACE FUNCTION public.store_key_events_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'Store key history is append-only'; END; $$;
+DROP TRIGGER IF EXISTS store_key_events_immutable ON public.store_key_events;
+CREATE TRIGGER store_key_events_immutable BEFORE UPDATE OR DELETE ON public.store_key_events
+ FOR EACH ROW EXECUTE FUNCTION public.store_key_events_immutable();
+
+-- Store-owned reusable tags. Public visibility is projected only by StorefrontService.
+CREATE TABLE IF NOT EXISTS public.product_tag_definitions (
+    tag_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name text NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 80),
+    is_public boolean NOT NULL DEFAULT false,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS product_tag_definitions_name_key
+    ON public.product_tag_definitions (lower(btrim(name)));
+CREATE TABLE IF NOT EXISTS public.product_tags (
+    product_id integer NOT NULL REFERENCES public.products(product_id) ON DELETE CASCADE,
+    tag_id uuid NOT NULL REFERENCES public.product_tag_definitions(tag_id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (product_id, tag_id)
+);
+CREATE INDEX IF NOT EXISTS product_tags_tag_product_idx ON public.product_tags(tag_id,product_id);
+ALTER TABLE public.product_tag_definitions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.product_tags ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.product_tag_definitions,public.product_tags FROM PUBLIC;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+  REVOKE ALL ON public.product_tag_definitions,public.product_tags FROM anon;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+  REVOKE ALL ON public.product_tag_definitions,public.product_tags FROM authenticated;
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN
+  GRANT ALL ON public.product_tag_definitions,public.product_tags TO service_role;
+ END IF;
+END $$;
+
+ALTER TABLE public.customer_accounts
+    ADD COLUMN IF NOT EXISTS internal_expense_location_id integer REFERENCES public.locations(location_id);
+CREATE UNIQUE INDEX IF NOT EXISTS customer_accounts_expense_location_idx
+    ON public.customer_accounts(internal_expense_location_id) WHERE internal_expense_location_id IS NOT NULL;
+ALTER TABLE public.stock_ledger_entries
+    ADD COLUMN IF NOT EXISTS expense_checkout_id uuid,
+    ADD COLUMN IF NOT EXISTS representative_name text;

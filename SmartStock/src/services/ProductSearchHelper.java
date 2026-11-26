@@ -62,12 +62,14 @@ public final class ProductSearchHelper {
                     COALESCE((SELECT CONCAT_WS(' ',pg.name,pg.barcode,pg.additional_barcodes::text) FROM product_groups pg WHERE pg.group_id=%1$s.group_id), ''),
                     COALESCE(%1$s.variant_options::text, ''),
                     COALESCE(%1$s.description, ''),
+                    COALESCE((SELECT STRING_AGG(td.name, ' ') FROM product_tags pt JOIN product_tag_definitions td USING(tag_id) WHERE pt.product_id=%1$s.product_id), ''),
                     COALESCE(%1$s.sku, ''),
                     COALESCE(%1$s.barcode, ''),
                     COALESCE(%1$s.product_type, ''),
                     COALESCE((SELECT c.name FROM categories c WHERE c.category_id = %1$s.category_id), ''),
                     COALESCE((SELECT it.name FROM item_types it WHERE it.item_type_id = %1$s.item_type_id), ''),
                     COALESCE((SELECT ib.name FROM item_brands ib WHERE ib.brand_id = %1$s.brand_id), ''),
+                    %4$s,
                     %3$s
                     COALESCE((SELECT STRING_AGG(pb.barcode, ' ') FROM product_barcodes pb WHERE pb.product_id = %1$s.product_id), ''),
                     COALESCE((
@@ -78,7 +80,7 @@ public final class ProductSearchHelper {
                         WHERE psa.product_id = %1$s.product_id%2$s
                     ), '')
                 ))
-                """.formatted(p, locationPredicate, vendorExpression).trim();
+                """.formatted(p, locationPredicate, vendorExpression, ProductSearchAliases.sql(p,p + ".description")).trim();
     }
 
     public static String customItemPredicate(String customItemAlias, String searchText) {

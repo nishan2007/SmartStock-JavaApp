@@ -1,0 +1,9 @@
+SmartStock 1.1.115 — inventory consolidation across stores
+
+Administrators can review duplicate photos, item details and separate stock totals for each store. Merge into the original item, archive its duplicate, keep the original price and photos, combine descriptions, and retain all duplicate barcodes and its old SKU as additional scan aliases.
+
+Each store consolidates its own authoritative inventory once. Shared product aliases prevent retired records from being reactivated. Linked sales, returns, orders, receiving and stock-ledger records follow the retained product without recalculating monetary amounts. Historical source costs are retained for profit reporting.
+
+Stock by store allows an administrator at Skeldon to request a Rosehall stock change. The owning store checks the reviewed quantity before applying it; offline changes remain queued and conflicts never silently overwrite stock. Merge progress shows per-store acknowledgements.
+
+Both store servers must run compatible software before cross-store commands can complete. Updates do not require database credentials on registers. Application packages remain model-free.

@@ -3,7 +3,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.hostname !== 'timeclock.deckers.gy') return new Response('Not found', {status:404});
-    if (url.pathname === '/') return Response.redirect('https://timeclock.deckers.gy/employees/',302);
+    if (url.pathname === '/') return Response.redirect('https://timeclock.deckers.gy/employees/mobile-management/',302);
     if (url.pathname === '/employees/overseas-entry.js') return new Response(`
       (()=>{const inviteHash=location.hash;document.addEventListener('DOMContentLoaded',()=>{const link=document.createElement('a');const invited=new URLSearchParams(inviteHash.slice(1)).has('activate');
       link.textContent=invited?'Activate this browser for Overseas Orders':'Open Overseas Orders';
@@ -28,7 +28,7 @@ export default {
       {cf:{cacheTtl:0,cacheEverything:false}});
     const response = new Response(upstream.body, upstream);
     response.headers.set('Cache-Control','no-store');
-    if(response.ok && response.headers.get('Content-Type')?.includes('text/html')) {
+    if(response.ok && ['/employees','/employees/','/employees/index.html'].includes(url.pathname) && response.headers.get('Content-Type')?.includes('text/html')) {
       const metadata = '<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Time Clock"><link rel="apple-touch-icon" sizes="180x180" href="/employees/icons/timeclock-180.png"><link rel="icon" type="image/png" href="/employees/icons/timeclock-192.png"><link rel="manifest" href="/employees/manifest.webmanifest">';
       return new HTMLRewriter()
         .on('meta[name="apple-mobile-web-app-capable"],meta[name="apple-mobile-web-app-title"],link[rel="apple-touch-icon"],link[rel="icon"],link[rel="manifest"]',{element(element){element.remove();}})

@@ -294,7 +294,7 @@ public class DatabaseSetup extends JFrame {
     private void updateModeVisibility() {
         DatabaseMode mode = selectedMode();
         boolean server = mode == DatabaseMode.SERVER;
-        boolean client = mode == DatabaseMode.CLIENT;
+        boolean client = mode == DatabaseMode.CLIENT || mode == DatabaseMode.DISPLAY;
         boolean remote = mode == DatabaseMode.REMOTE_ADMIN;
         boolean serverAdvanced = server && advancedSettingsVisible;
         setupTabs.setEnabledAt(1, server);
@@ -346,7 +346,9 @@ public class DatabaseSetup extends JFrame {
         localDbStatusLabel.setVisible(server);
         lanServiceStatusLabel.setVisible(server);
 
-        if (client) {
+        if (mode == DatabaseMode.DISPLAY) {
+            statusLabel.setText("Status: Display mode opens the read-only queue without employee login after administrator pairing.");
+        } else if (client) {
             statusLabel.setText(LanApiClient.isPaired()
                     ? "Status: This register is paired. Employees can log in normally."
                     : "Status: Enter the server host or find it automatically, then an administrator pairs this register once.");
@@ -442,7 +444,7 @@ public class DatabaseSetup extends JFrame {
     private boolean saveConfigWithLocation(Integer locationId) {
         char[] serverCredential = serverCloudCredentialField.getPassword();
         try {
-            boolean apiClient = selectedMode() == DatabaseMode.CLIENT || selectedMode() == DatabaseMode.REMOTE_ADMIN;
+            boolean apiClient = selectedMode() == DatabaseMode.CLIENT || selectedMode() == DatabaseMode.DISPLAY || selectedMode() == DatabaseMode.REMOTE_ADMIN;
             if (apiClient) LanApiClient.configureEndpoint(serverHostField.getText(), (Integer) serverPortSpinner.getValue());
             DatabaseConfig config = DatabaseConfig.fromForm(
                     selectedMode(),
@@ -646,7 +648,7 @@ public class DatabaseSetup extends JFrame {
 
     private void loadSavedCredentials() {
         DatabaseCredentials credentials = DatabaseCredentials.load();
-        if (selectedMode() == DatabaseMode.CLIENT) return;
+        if (selectedMode() == DatabaseMode.CLIENT || selectedMode() == DatabaseMode.DISPLAY) return;
         if (!credentials.hasServerCredentials()) {
             JOptionPane.showMessageDialog(
                     this,
@@ -889,6 +891,7 @@ public class DatabaseSetup extends JFrame {
                         + "• Install automatic Windows startup\n"
                         + "• Allow port 8443 only from " + lanSubnet + "\n"
                         + "• Start the LAN and background sync service\n\n"
+                        + "Production setup also prepares protected remote maintenance for approved administrator keys.\n\n"
                         + "Windows will ask for administrator approval. Continue?",
                 "Complete Windows Server Setup", JOptionPane.YES_NO_OPTION,
                 JOptionPane.QUESTION_MESSAGE);

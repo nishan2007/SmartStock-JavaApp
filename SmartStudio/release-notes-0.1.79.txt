@@ -1,0 +1,5 @@
+SmartStudio 0.1.79 (build 1079) - Windows quick update
+
+Refreshes the shared SmartStock client dependency to 1.1.83 so completed publication, font and rendering changes are consistent across the desktop apps. Includes the completed Studio editing, save/read-back compatibility, PDF, ribbon, numbering and print/cut work already present in the source.
+
+Export any open draft before restarting to update. Existing Java runtime and separately installed AI models are retained. Physical printer/cutter calibration and live shared-save acceptance remain separate checks.

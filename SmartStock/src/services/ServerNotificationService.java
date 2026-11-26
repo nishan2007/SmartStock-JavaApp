@@ -257,28 +257,28 @@ public final class ServerNotificationService {
         }
 
         if (PermissionManager.hasPermission("INVENTORY_STOCK_NOTIFICATIONS") && hasTable(conn, "custom_order_items")) {
-            String sql = """
+            String sql = ("""
                     SELECT custom_item_id::text AS id, item_name, '' AS variant_name,
-                           COALESCE(quantity_on_hand, 0) AS quantity_on_hand,
-                           COALESCE(reorder_level, 0) AS reorder_level
+                           COALESCE(custom_stock_value(custom_order_items.custom_item_id,NULL,__CUSTOM_STORE__,'quantity_on_hand'), 0) AS quantity_on_hand,
+                           COALESCE(custom_stock_value(custom_order_items.custom_item_id,NULL,__CUSTOM_STORE__,'reorder_level'), 0) AS reorder_level
                     FROM custom_order_items
                     WHERE is_active = TRUE AND is_archived=FALSE
                       AND COALESCE(has_variants, FALSE) = FALSE
-                      AND COALESCE(reorder_level, 0) > 0
-                      AND COALESCE(quantity_on_hand, 0) <= COALESCE(reorder_level, 0)
+                      AND COALESCE(custom_stock_value(custom_order_items.custom_item_id,NULL,__CUSTOM_STORE__,'reorder_level'), 0) > 0
+                      AND COALESCE(custom_stock_value(custom_order_items.custom_item_id,NULL,__CUSTOM_STORE__,'quantity_on_hand'), 0) <= COALESCE(custom_stock_value(custom_order_items.custom_item_id,NULL,__CUSTOM_STORE__,'reorder_level'), 0)
                     UNION ALL
                     SELECT v.custom_variant_id::text AS id, i.item_name, v.variant_name,
-                           COALESCE(v.quantity_on_hand, 0) AS quantity_on_hand,
-                           COALESCE(v.reorder_level, 0) AS reorder_level
+                           COALESCE(custom_stock_value(v.custom_item_id,v.custom_variant_id,__CUSTOM_STORE__,'quantity_on_hand'), 0) AS quantity_on_hand,
+                           COALESCE(custom_stock_value(v.custom_item_id,v.custom_variant_id,__CUSTOM_STORE__,'reorder_level'), 0) AS reorder_level
                     FROM custom_order_item_variants v
                     JOIN custom_order_items i ON i.custom_item_id = v.custom_item_id
                     WHERE i.is_active = TRUE AND i.is_archived=FALSE
                       AND v.is_active = TRUE
-                      AND COALESCE(v.reorder_level, 0) > 0
-                      AND COALESCE(v.quantity_on_hand, 0) <= COALESCE(v.reorder_level, 0)
+                      AND COALESCE(custom_stock_value(v.custom_item_id,v.custom_variant_id,__CUSTOM_STORE__,'reorder_level'), 0) > 0
+                      AND COALESCE(custom_stock_value(v.custom_item_id,v.custom_variant_id,__CUSTOM_STORE__,'quantity_on_hand'), 0) <= COALESCE(custom_stock_value(v.custom_item_id,v.custom_variant_id,__CUSTOM_STORE__,'reorder_level'), 0)
                     ORDER BY item_name, variant_name
                     LIMIT 50
-                    """;
+                    """).replace("__CUSTOM_STORE__",Integer.toString(request().locationId()));
             try (PreparedStatement ps = conn.prepareStatement(sql);
                  ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {

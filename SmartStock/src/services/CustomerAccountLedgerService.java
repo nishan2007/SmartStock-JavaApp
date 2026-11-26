@@ -13,13 +13,18 @@ import java.sql.Statement;
 public final class CustomerAccountLedgerService {
     private static final String BALANCE_DELTA_CASE = """
             CASE
-                WHEN COALESCE(transaction_type, '') IN ('SALE_CREDIT', 'CUSTOM_ORDER_CREDIT', 'INVOICE_CREDIT', 'MANUAL_CHARGE')
+                WHEN transaction_type IN ('CUSTOM_ORDER_CREDIT','CUSTOM_ORDER_REFUND')
+                  AND EXISTS (SELECT 1 FROM custom_orders credit_order
+                    WHERE credit_order.custom_order_id=customer_account_transactions.custom_order_id
+                      AND credit_order.payment_method='ACCOUNT') THEN 0
+                WHEN COALESCE(transaction_type, '') IN ('SALE_CREDIT', 'CUSTOM_ORDER_CREDIT', 'INVOICE_CREDIT', 'MANUAL_CHARGE', 'MINUTES_CREDIT')
                     THEN ABS(COALESCE(amount, 0))
                 WHEN COALESCE(transaction_type, '') = 'PAYMENT'
                     THEN -ABS(COALESCE(credit_applied_amount, amount, 0))
                 WHEN COALESCE(transaction_type, '') IN ('RETURN', 'CUSTOM_ORDER_REFUND')
                     THEN -ABS(COALESCE(amount, 0))
-                WHEN COALESCE(transaction_type, '') IN ('SALE_PAID', 'CUSTOM_ORDER_PAID', 'CUSTOM_ORDER_BALANCE', 'CUSTOM_ORDER_PAYMENT')
+                WHEN COALESCE(transaction_type, '') IN ('SALE_PAID', 'CUSTOM_ORDER_PAID', 'CUSTOM_ORDER_BALANCE',
+                    'CUSTOM_ORDER_PAYMENT', 'CUSTOM_ORDER_DEPOSIT', 'CUSTOM_ORDER_DEPOSIT_REFUND', 'MINUTES_PAID')
                     THEN 0
                 WHEN COALESCE(amount, 0) < 0
                     THEN COALESCE(amount, 0)
@@ -47,6 +52,8 @@ public final class CustomerAccountLedgerService {
                         UNION ALL
                         SELECT customer_id,%s AS balance_delta FROM sync_cross_store_customer_history_cache
                         WHERE event_key LIKE 'LEDGER:%%'
+                        UNION ALL SELECT customer_id,COALESCE(balance_due,0) AS balance_delta FROM custom_orders WHERE payment_method='ACCOUNT' AND pricing_state='FINAL' AND status<>'CANCELLED' AND NOT COALESCE(invoice_billed,FALSE)
+                        UNION ALL SELECT customer_id,COALESCE(document_balance,0) AS balance_delta FROM sync_cross_store_customer_history_cache WHERE event_type='CUSTOM_ORDER' AND payment_method='ACCOUNT' AND cache_status='CURRENT' AND COALESCE(document_status,'')<>'CANCELLED'
                     ), ledger AS (
                         SELECT customer_id,COALESCE(SUM(balance_delta),0) AS balance FROM ledger_events GROUP BY customer_id
                     )
@@ -61,12 +68,12 @@ public final class CustomerAccountLedgerService {
                     UPDATE customer_accounts ca
                     SET current_balance = 0,
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE NOT EXISTS (
+                    WHERE NOT EXISTS (SELECT 1 FROM custom_orders o WHERE o.customer_id=ca.customer_id AND o.payment_method='ACCOUNT' AND o.pricing_state='FINAL' AND o.status<>'CANCELLED' AND NOT COALESCE(o.invoice_billed,FALSE) AND o.balance_due>0) AND NOT EXISTS (
                         SELECT 1
                         FROM customer_account_transactions t WHERE t.customer_id = ca.customer_id
                     ) AND NOT EXISTS (
                         SELECT 1 FROM sync_cross_store_customer_history_cache r
-                        WHERE r.customer_id=ca.customer_id AND r.event_key LIKE 'LEDGER:%%'
+                        WHERE r.customer_id=ca.customer_id AND (r.event_key LIKE 'LEDGER:%%' OR (r.event_type='CUSTOM_ORDER' AND r.payment_method='ACCOUNT' AND r.cache_status='CURRENT' AND COALESCE(r.document_status,'')<>'CANCELLED'))
                     )
                       AND ca.current_balance IS DISTINCT FROM 0
                     """);
@@ -131,6 +138,7 @@ public final class CustomerAccountLedgerService {
             return BALANCE_DELTA_CASE;
         }
         return BALANCE_DELTA_CASE
+                .replace("customer_account_transactions.", tableAlias + ".")
                 .replace("transaction_type", tableAlias + ".transaction_type")
                 .replace("credit_applied_amount", "__CREDIT_APPLIED__")
                 .replace("amount", tableAlias + ".amount")
@@ -153,11 +161,15 @@ public final class CustomerAccountLedgerService {
                   UNION ALL
                   SELECT %s AS balance_delta FROM sync_cross_store_customer_history_cache
                   WHERE customer_id=? AND event_key LIKE 'LEDGER:%%'
+                  UNION ALL SELECT balance_delta FROM (SELECT customer_id,COALESCE(balance_due,0) AS balance_delta FROM custom_orders WHERE payment_method='ACCOUNT' AND pricing_state='FINAL' AND status<>'CANCELLED' AND NOT COALESCE(invoice_billed,FALSE)) account_orders WHERE customer_id=?
+                  UNION ALL SELECT balance_delta FROM (SELECT customer_id,COALESCE(document_balance,0) AS balance_delta FROM sync_cross_store_customer_history_cache WHERE event_type='CUSTOM_ORDER' AND payment_method='ACCOUNT' AND cache_status='CURRENT' AND COALESCE(document_status,'')<>'CANCELLED') account_orders WHERE customer_id=?
                 ) all_store_ledger
                 """.formatted(BALANCE_DELTA_CASE, remoteDelta);
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setInt(1, customerId);
             ps.setInt(2, customerId);
+            ps.setInt(3, customerId);
+            ps.setInt(4, customerId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
                     BigDecimal balance = rs.getBigDecimal("balance");
@@ -170,10 +182,16 @@ public final class CustomerAccountLedgerService {
 
     static String remoteBalanceDeltaSql(){return """
             CASE
-              WHEN COALESCE(event_type,'') IN ('SALE_CREDIT','CUSTOM_ORDER_CREDIT','INVOICE_CREDIT','MANUAL_CHARGE') THEN ABS(COALESCE(amount,0))
+              WHEN event_type IN ('CUSTOM_ORDER_CREDIT','CUSTOM_ORDER_REFUND')
+                AND EXISTS (SELECT 1 FROM sync_cross_store_customer_history_cache credit_order
+                  WHERE credit_order.source_location_id=sync_cross_store_customer_history_cache.source_location_id
+                    AND credit_order.source_id=sync_cross_store_customer_history_cache.source_id
+                    AND credit_order.event_type='CUSTOM_ORDER' AND credit_order.payment_method='ACCOUNT') THEN 0
+              WHEN COALESCE(event_type,'') IN ('SALE_CREDIT','CUSTOM_ORDER_CREDIT','INVOICE_CREDIT','MANUAL_CHARGE','MINUTES_CREDIT') THEN ABS(COALESCE(amount,0))
               WHEN COALESCE(event_type,'')='PAYMENT' THEN -ABS(COALESCE(credit_applied_amount,amount,0))
               WHEN COALESCE(event_type,'') IN ('RETURN','CUSTOM_ORDER_REFUND') THEN -ABS(COALESCE(amount,0))
-              WHEN COALESCE(event_type,'') IN ('SALE_PAID','CUSTOM_ORDER_PAID','CUSTOM_ORDER_BALANCE','CUSTOM_ORDER_PAYMENT') THEN 0
+              WHEN COALESCE(event_type,'') IN ('SALE_PAID','CUSTOM_ORDER_PAID','CUSTOM_ORDER_BALANCE',
+                  'CUSTOM_ORDER_PAYMENT','CUSTOM_ORDER_DEPOSIT','CUSTOM_ORDER_DEPOSIT_REFUND','MINUTES_PAID') THEN 0
               WHEN COALESCE(amount,0)<0 THEN COALESCE(amount,0)
               ELSE COALESCE(amount,0)
             END
@@ -181,10 +199,16 @@ public final class CustomerAccountLedgerService {
 
     static String legacyRemoteBalanceDeltaSql(){return """
             CASE
-              WHEN COALESCE(event_type,'') IN ('SALE_CREDIT','CUSTOM_ORDER_CREDIT','INVOICE_CREDIT','MANUAL_CHARGE') THEN ABS(COALESCE(amount,0))
+              WHEN event_type IN ('CUSTOM_ORDER_CREDIT','CUSTOM_ORDER_REFUND')
+                AND EXISTS (SELECT 1 FROM sync_cross_store_customer_history_cache credit_order
+                  WHERE credit_order.source_location_id=sync_cross_store_customer_history_cache.source_location_id
+                    AND credit_order.source_id=sync_cross_store_customer_history_cache.source_id
+                    AND credit_order.event_type='CUSTOM_ORDER' AND credit_order.payment_method='ACCOUNT') THEN 0
+              WHEN COALESCE(event_type,'') IN ('SALE_CREDIT','CUSTOM_ORDER_CREDIT','INVOICE_CREDIT','MANUAL_CHARGE','MINUTES_CREDIT') THEN ABS(COALESCE(amount,0))
               WHEN COALESCE(event_type,'')='PAYMENT' THEN -ABS(COALESCE(amount,0))
               WHEN COALESCE(event_type,'') IN ('RETURN','CUSTOM_ORDER_REFUND') THEN -ABS(COALESCE(amount,0))
-              WHEN COALESCE(event_type,'') IN ('SALE_PAID','CUSTOM_ORDER_PAID','CUSTOM_ORDER_BALANCE','CUSTOM_ORDER_PAYMENT') THEN 0
+              WHEN COALESCE(event_type,'') IN ('SALE_PAID','CUSTOM_ORDER_PAID','CUSTOM_ORDER_BALANCE',
+                  'CUSTOM_ORDER_PAYMENT','CUSTOM_ORDER_DEPOSIT','CUSTOM_ORDER_DEPOSIT_REFUND','MINUTES_PAID') THEN 0
               WHEN COALESCE(amount,0)<0 THEN COALESCE(amount,0)
               ELSE COALESCE(amount,0)
             END

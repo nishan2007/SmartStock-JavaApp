@@ -66,6 +66,52 @@ public final class PcscNfcService {
         });
     }
 
+    /** Pairs an existing key card, or writes a blank card; never overwrites an employee badge. */
+    public static String prepareKeyCard(String newToken) throws Exception {
+        ServerStoreKeyService.validateCardToken(newToken);
+        return withCard(channel -> {
+            CardFamily family=cardFamily(channel.getCard().getATR().getBytes());
+            byte[] raw;
+            if(family==CardFamily.MIFARE_CLASSIC) {
+                authenticateClassicSector(channel);
+                ByteArrayOutputStream memory=new ByteArrayOutputStream();
+                for(int i=0;i<CLASSIC_DATA_BLOCK_COUNT;i++)memory.writeBytes(transmit(channel,
+                        new byte[]{(byte)0xff,(byte)0xb0,0,(byte)(CLASSIC_FIRST_DATA_BLOCK+i),CLASSIC_BLOCK_SIZE},"read key card"));
+                raw=memory.toByteArray();
+            } else {
+                ensureType2Tag(channel);
+                ByteArrayOutputStream memory=new ByteArrayOutputStream();
+                int capacity=(readPages(channel,0)[14]&0xff)*8;
+                for(int page=4;memory.size()<capacity;page+=4)memory.writeBytes(readPages(channel,page));
+                raw=memory.toByteArray();
+            }
+            boolean blank=isBlankKeyCard(raw,family==CardFamily.MIFARE_CLASSIC);
+            if(!blank) {
+                String existing=new String(family==CardFamily.MIFARE_CLASSIC?decodeClassicRecord(raw):decodeMimeNdef(raw),StandardCharsets.UTF_8);
+                ServerStoreKeyService.validateCardToken(existing);
+                return existing;
+            }
+            byte[] payload=newToken.getBytes(StandardCharsets.UTF_8);
+            if(family==CardFamily.MIFARE_CLASSIC)writeClassicRecord(channel,payload);
+            else writePages(channel,wrapNdefTlv(encodeMimeNdef(payload)));
+            byte[] actual=family==CardFamily.MIFARE_CLASSIC?readClassicRecord(channel):readSmartStockPayload(channel);
+            if(!Arrays.equals(payload,actual))throw new IllegalStateException("The key card failed read-back verification. It was not paired.");
+            return newToken;
+        });
+    }
+
+    static boolean isBlankKeyCard(byte[] memory,boolean classic) {
+        boolean emptyNdefSeen=false;
+        for(int i=0;i<memory.length;i++) {
+            int value=memory[i]&0xff;
+            if(value==0||value==0xff||(!classic&&value==0xfe))continue;
+            // Factory-formatted Type 2 tags may contain a zero-length NDEF TLV.
+            if(!classic&&!emptyNdefSeen&&value==3&&i+1<memory.length&&memory[i+1]==0){emptyNdefSeen=true;i++;continue;}
+            return false;
+        }
+        return true;
+    }
+
     public static TestResult test(String expectedPayload) throws Exception {
         ReadResult read = read(CARD_TIMEOUT);
         return new TestResult(read.payload(), read.payload().equals(expectedPayload), read.cardUid());
@@ -95,7 +141,9 @@ public final class PcscNfcService {
         List<CardTerminal> terminals = matchingTerminals();
         if (terminals.isEmpty()) {
             throw new IllegalStateException("No PC/SC NFC reader is available. The ACR122U may be connected at USB level, "
-                    + "but macOS must also list it as a Smart Card reader.");
+                    + "but the operating system must also list it as a Smart Card reader. "
+                    + "Check the USB connection and reader driver. On Windows, check that the Smart Card "
+                    + "(SCardSvr) service is running, then restart SmartStock.");
         }
         CardTerminal terminal = terminals.get(0);
         long deadline = System.nanoTime() + timeout.toNanos();
@@ -117,7 +165,14 @@ public final class PcscNfcService {
     }
 
     private static List<CardTerminal> matchingTerminals() throws CardException {
-        List<CardTerminal> all = TerminalFactory.getDefault().terminals().list();
+        List<CardTerminal> all;
+        try {
+            all = TerminalFactory.getDefault().terminals().list();
+        } catch (CardException ex) {
+            throw new CardException("Unable to list PC/SC NFC readers. Check the reader USB connection and driver. "
+                    + "On Windows, open Services as administrator and start the Smart Card (SCardSvr) service, "
+                    + "then restart SmartStock and retry. No badge data was written.", ex);
+        }
         List<CardTerminal> acr = all.stream()
                 .filter(t -> t.getName().toUpperCase().contains("ACR122"))
                 .toList();

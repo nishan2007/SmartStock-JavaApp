@@ -1,0 +1,7 @@
+SmartStock 1.1.146 Windows quick update
+
+Show fixed prices for individual plaques and mark out-of-stock products on store pages, product cards, and Quick View.
+
+Includes shared SmartStock changes for quotation and invoice workflows, customer account and document printing, custom-catalog layout, and employee web reliability.
+
+Update store servers before registers. The Windows update keeps AI model weights in the store profile.

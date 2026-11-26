@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SmartDrive</title>
+    <link rel="stylesheet" href="./app.css">
+    <script type="module" src="./app.js"></script>
+</head>
+<body>
+<header><img src="./storage-icon.png" alt="" width="30" height="34"><strong id="brand">SmartDrive</strong><span>Smart Suite</span><button id="logout" hidden>Sign out</button></header>
+<main>
+    <p id="notice" role="status"></p>
+    <section id="account" class="account" hidden>
+        <div class="brand-panel">
+            <img class="brand-icon" src="./storage-icon.png" alt="Two-bay storage enclosure">
+            <h1 id="welcome">SmartDrive</h1>
+            <p class="suite-label">Smart Suite</p>
+            <p>Shared files, previews, and recovery for your team.</p>
+        </div>
+        <div class="account-form">
+            <h2>Employee sign in</h2>
+            <p class="muted">Use your existing staff account.</p>
+            <button id="activate" hidden>Activate this browser</button>
+            <form id="login" hidden>
+                <label>Employee email or username<input id="identifier" autocomplete="username" required></label>
+                <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+                <button>Sign in</button>
+            </form>
+            <form id="verify" hidden>
+                <img id="qr" alt="Authenticator setup QR code" hidden>
+                <p id="secret"></p>
+                <label>Authenticator code<input id="code" inputmode="numeric" autocomplete="one-time-code" required></label>
+                <button>Verify</button>
+            </form>
+        </div>
+    </section>
+    <section id="workspace" class="workspace" hidden>
+        <nav class="workspace-nav" aria-label="Workspace"><button id="filesTab" aria-pressed="true">Files</button><button id="managementTab" aria-pressed="false" hidden>Drive Console</button></nav>
+        <section id="management" hidden>
+            <h1>Drive Console</h1>
+            <p class="muted">Manage storage, scan processing, and recovery.</p>
+            <nav id="managementNav" aria-label="Management sections">
+                <button data-panel="overview" aria-pressed="true">Overview</button>
+                <button data-panel="workstations" aria-pressed="false">Workstations</button>
+                <button data-panel="scanners" aria-pressed="false">Scanners</button>
+                <button data-panel="backups" aria-pressed="false">Backups</button>
+                <button data-panel="activity" aria-pressed="false">Activity</button>
+                <button data-panel="settings" aria-pressed="false">Settings</button>
+            </nav>
+            <section data-management-panel="overview"><h2>Service and storage</h2><div id="health"></div><button id="refreshHealth">Refresh status</button></section>
+            <section data-management-panel="settings" hidden><h2>Effective settings</h2>
+                <p class="muted">Server configuration currently in use. Company folder/share changes require a maintenance window and the administrator rebranding tool.</p>
+                <div id="effectiveSettings"></div><button id="refreshSettings">Refresh settings</button>
+            </section>
+            <section data-management-panel="workstations" hidden>
+                <h2>Workstation access</h2>
+                <button id="loadWorkstations">Refresh workstations</button>
+                <div id="workstationList"></div>
+                <form id="enrollWorkstation">
+                    <label>Workstation name<input id="workstationName" maxlength="80" required></label>
+                    <label>Store<select id="workstationStore" required></select></label>
+                    <button>Generate setup code</button>
+                </form>
+                <p id="setupCode" role="status"></p>
+            </section>
+            <section data-management-panel="scanners" hidden>
+            <h2>Scanners</h2><p class="muted">Manage copier access and processing of received documents.</p>
+            <form id="enrollScanner">
+                <h3>Add a copier</h3>
+                <label>Machine ID <input id="scannerId" required maxlength="48" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}" placeholder="Canon-C5040"></label>
+                <label>Display name <input id="scannerName" required maxlength="80" placeholder="Front office copier"></label>
+                <label>Model <input id="scannerModel" maxlength="120" placeholder="Canon imageRUNNER ADVANCE C5040"></label>
+                <label>Store <select id="scannerStore" required></select></label>
+                <label>Reserved IP address (optional) <input id="scannerAddress" maxlength="45" placeholder="192.168.1.50"></label>
+                <p class="muted">Creates a dedicated copier account and scan folder. Confirm that its network is approved and the copier supports SMB2/3.</p>
+                <button>Add copier</button>
+            </form>
+            <button id="loadScannerControls">Scanner processing controls</button>
+            <div id="scannerControls"></div>
+            <dialog id="scannerCredential"><h3>New scanner credential</h3><p id="scannerCredentialAccount"></p>
+                <p>Copy this password into the copier configuration. It is shown once.</p>
+                <input id="scannerPassword" type="password" readonly aria-label="New scanner password" autocomplete="off">
+                <button type="button" id="revealScannerPassword">Show password</button>
+                <button type="button" id="closeScannerCredential">Close and clear</button></dialog>
+            </section>
+            <section data-management-panel="backups" hidden>
+            <h2>OneDrive backup and recovery</h2>
+            <p class="muted">Select folders in Files. Restore verified versions into Recovery.</p>
+            <button id="loadVersions">View backup versions</button>
+            <button id="retryBackups">Retry pending uploads</button>
+            <button id="loadSelections">View selected folders</button>
+            <div id="selectedFolders"></div>
+            <div id="backupVersions"></div>
+            </section>
+            <section data-management-panel="activity" hidden>
+            <h2>Management activity</h2>
+            <button id="loadActivity">View recent activity</button>
+            <div id="activity"></div>
+            </section>
+        </section>
+        <section id="fileBrowser">
+        <h1>Files</h1>
+        <p class="muted">Browse your store folders and preview shared documents.</p>
+        <nav id="crumbs" aria-label="Current folder"></nav>
+        <button id="protectFolder" hidden>Back up this folder</button>
+        <button id="unprotectFolder" hidden>Stop backing up this folder</button>
+        <div class="files">
+            <ul id="entries"></ul>
+            <section id="preview" aria-label="File preview" hidden>
+                <h2 id="filename"></h2>
+                <p>Read-only preview</p>
+                <div id="previewContent"></div>
+            </section>
+        </div>
+        </section>
+    </section>
+</main>
+</body>
+</html>

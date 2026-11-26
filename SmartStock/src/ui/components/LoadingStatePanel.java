@@ -1,5 +1,7 @@
 package ui.components;
 
+import ui.design.DeckersPalette;
+
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JLabel;
@@ -44,8 +46,13 @@ public final class LoadingStatePanel extends JPanel {
         progress.setVisible(false);
         retry.setVisible(false);
         retry.addActionListener(event -> retryAction.run());
-        retry.setBackground(new Color(71, 85, 105));
+        retry.setBackground(DeckersPalette.PURPLE);
         retry.setForeground(Color.WHITE);
+        retry.putClientProperty("SmartStock.ownedButtonBackground", DeckersPalette.PURPLE);
+        retry.putClientProperty("SmartStock.ownedButtonForeground", Color.WHITE);
+        retry.setUI(new javax.swing.plaf.basic.BasicButtonUI());
+        retry.setOpaque(true);
+        retry.setContentAreaFilled(true);
         retry.putClientProperty("SmartStock.preserveBackground", Boolean.TRUE);
         retry.putClientProperty("SmartStock.preserveForeground", Boolean.TRUE);
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));

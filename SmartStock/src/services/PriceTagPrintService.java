@@ -205,6 +205,17 @@ public final class PriceTagPrintService {
 
     public static void print(Component parent, List<PriceTagItem> items, CompanyCustomizationManager.PriceTagTemplateSettings settings) throws Exception {
         if (items == null || items.isEmpty()) throw new IllegalArgumentException("Add at least one price tag before printing.");
+        if (SharedLabelPrinting.usesSharedPrinter()) {
+            List<PriceTagItem> batch = List.copyOf(items);
+            if (SwingUtilities.isEventDispatchThread()) {
+                java.awt.Window owner = parent instanceof java.awt.Window w ? w : SwingUtilities.getWindowAncestor(parent);
+                ui.helpers.UiTaskRunner.submit(owner, "price-tags.shared-print",
+                        () -> printOnConfiguredLabelOrReceiptPrinter(batch, settings),
+                        message -> JOptionPane.showMessageDialog(parent, message, "Shared Label Printer", JOptionPane.INFORMATION_MESSAGE),
+                        failure -> JOptionPane.showMessageDialog(parent, failure.getMessage(), "Shared Label Printer", JOptionPane.ERROR_MESSAGE));
+            } else { printOnConfiguredLabelOrReceiptPrinter(batch, settings); }
+            return;
+        }
         List<BufferedImage> images = new ArrayList<>(); for (PriceTagItem item : items) images.add(render(item, settings));
         PrinterJob job = PrinterJob.getPrinterJob(); job.setJobName("SmartStock Price Tags");
         String defaultName = HardwareSettingsManager.getDefaultPriceTagPrinterName();
@@ -236,6 +247,14 @@ public final class PriceTagPrintService {
             throws Exception {
         if (items == null || items.isEmpty()) throw new IllegalArgumentException("Select at least one item to print.");
         if (settings == null) throw new IllegalArgumentException("Select a price-tag template first.");
+        if (SharedLabelPrinting.usesSharedPrinter()) {
+            if (items.size() > 200) throw new IllegalArgumentException("Print at most 200 price tags per batch.");
+            List<BufferedImage> sharedImages = new ArrayList<>();
+            for (PriceTagItem item : items) sharedImages.add(render(item, settings));
+            SharedLabelPrinting.submitPriceTags(arrangeRawRows(sharedImages, settings), settings.rowWidthInches(),
+                    settings.heightInches(), settings.rowGapInches());
+            return "Price tags queued for the shared CT221B. Check Shared Label Printer for job status.";
+        }
         HardwareSettingsManager.PosPrinter labelPrinter = HardwareSettingsManager.getDefaultOrderLabelPrinter();
         if (labelPrinter == null) return printOnReceiptPrinter(items, settings);
         PrintService service = HardwareSettingsManager.findPrintService(labelPrinter.systemName());
@@ -273,12 +292,16 @@ public final class PriceTagPrintService {
 
     static byte[] formatCt221bGapJob(List<BufferedImage> rows,
                                      CompanyCustomizationManager.PriceTagTemplateSettings settings) {
+        return formatCt221bGapJob(rows, settings.rowWidthInches(), settings.heightInches(), settings.rowGapInches());
+    }
+
+    static byte[] formatCt221bGapJob(List<BufferedImage> rows, double widthInches, double heightInches, double gapInches) {
         if (rows == null || rows.isEmpty()) throw new IllegalArgumentException("At least one label row is required.");
-        double widthMm = settings.rowWidthInches() * 25.4;
-        double labelMm = settings.heightInches() * 25.4;
-        double gapMm = settings.rowGapInches() * 25.4;
+        double widthMm = widthInches * 25.4;
+        double labelMm = heightInches * 25.4;
+        double gapMm = gapInches * 25.4;
         if (gapMm <= 0) gapMm = 2.0;
-        int labelDots = Math.max(1, (int) Math.round(settings.heightInches() * RENDER_SCALE));
+        int labelDots = Math.max(1, (int) Math.round(heightInches * RENDER_SCALE));
         int gapDots = Math.max(1, (int) Math.round(gapMm / 25.4 * RENDER_SCALE));
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         appendAscii(out, String.format(Locale.ROOT,

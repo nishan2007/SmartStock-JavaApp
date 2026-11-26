@@ -57,6 +57,8 @@ public final class StorefrontService {
         s.add("products",rows(c,"""
             SELECT p.product_id AS id,p.name,p.sku,COALESCE(p.size,'') AS size,COALESCE(p.color,'') AS color,
               p.group_id AS "groupId",p.variant_options AS "variantOptions",
+              __PUBLIC_TAGS__ AS tags,
+              __SEARCH_ALIASES__ AS "searchAliases",
               COALESCE(g.name,'') AS "groupName",COALESCE(g.option_names,'[]'::jsonb) AS "optionNames",
               COALESCE(NULLIF(w.description,''),p.description,'') AS description,
               COALESCE(w.promotional_price,w.website_price,p.price) AS price,
@@ -70,7 +72,8 @@ public final class StorefrontService {
             LEFT JOIN inventory i ON i.product_id=p.product_id AND i.location_id=w.location_id
             LEFT JOIN categories cat ON cat.category_id=p.category_id
             WHERE w.location_id=? AND w.published AND p.is_active AND p.product_type='INVENTORY' ORDER BY p.name,p.product_id
-            """,location));
+            """.replace("__PUBLIC_TAGS__",ProductTagService.PUBLIC_TAGS_SQL)
+                .replace("__SEARCH_ALIASES__",ProductSearchAliases.sql("p","COALESCE(NULLIF(w.description,''),p.description)")),location));
         for(var e:s.getAsJsonArray("products")){
             var product=e.getAsJsonObject();var manifest=ServerImageAssetService.storefrontManifest(c,text(product,"image"));
             if(manifest!=null){product.add("_imageManifest",manifest);product.addProperty("image",ImageAssetReference.format(UUID.fromString(text(manifest,"id"))));}
@@ -79,32 +82,43 @@ public final class StorefrontService {
         s.add("shirts",ShirtDesignerService.catalog(c,location));
         s.add("sublimationProducts",rows(c,"""
             SELECT custom_item_id AS id,item_name AS name,COALESCE(description,'') AS description,
-                   COALESCE(size,'') AS size,COALESCE(color,'') AS color
+                   COALESCE(size,'') AS size,COALESCE(color,'') AS color,COALESCE(image_url,'') AS "_imageReference",additional_image_urls::text AS "_galleryReferences",
+                   CASE WHEN custom_order_items.pricing_type='FIXED' THEN CASE WHEN custom_order_items.has_variants THEN (SELECT MIN(v.fixed_price) FROM custom_order_item_variants v WHERE v.custom_item_id=custom_order_items.custom_item_id AND v.is_active AND v.fixed_price>=0) ELSE custom_order_items.fixed_price END END AS price,custom_order_items.has_variants AS "priceFrom",
+                   COALESCE((SELECT t.name FROM item_types t WHERE t.item_type_id=custom_order_items.item_type_id),'') AS "itemType"
             FROM custom_order_items
             WHERE is_sublimation AND NOT is_shirt AND NOT is_business_cards AND NOT is_large_format_printing AND NOT is_laser AND is_active AND NOT is_archived AND product_type='INVENTORY'
             ORDER BY item_name,custom_item_id
             """));
         s.add("businessCardsProducts",rows(c,"""
             SELECT custom_item_id AS id,item_name AS name,COALESCE(description,'') AS description,
-                   COALESCE(size,'') AS size,COALESCE(color,'') AS color
+                   COALESCE(size,'') AS size,COALESCE(color,'') AS color,COALESCE(image_url,'') AS "_imageReference",additional_image_urls::text AS "_galleryReferences",
+                   CASE WHEN custom_order_items.pricing_type='FIXED' THEN CASE WHEN custom_order_items.has_variants THEN (SELECT MIN(v.fixed_price) FROM custom_order_item_variants v WHERE v.custom_item_id=custom_order_items.custom_item_id AND v.is_active AND v.fixed_price>=0) ELSE custom_order_items.fixed_price END END AS price,custom_order_items.has_variants AS "priceFrom",
+                   COALESCE((SELECT t.name FROM item_types t WHERE t.item_type_id=custom_order_items.item_type_id),'') AS "itemType"
             FROM custom_order_items
             WHERE is_business_cards AND NOT is_shirt AND NOT is_sublimation AND NOT is_large_format_printing AND NOT is_laser AND is_active AND NOT is_archived
             ORDER BY item_name,custom_item_id
             """));
         s.add("largeFormatPrintingProducts",rows(c,"""
             SELECT custom_item_id AS id,item_name AS name,COALESCE(description,'') AS description,
-                   COALESCE(size,'') AS size,COALESCE(color,'') AS color
+                   COALESCE(size,'') AS size,COALESCE(color,'') AS color,COALESCE(image_url,'') AS "_imageReference",additional_image_urls::text AS "_galleryReferences",
+                   CASE WHEN custom_order_items.pricing_type='FIXED' THEN CASE WHEN custom_order_items.has_variants THEN (SELECT MIN(v.fixed_price) FROM custom_order_item_variants v WHERE v.custom_item_id=custom_order_items.custom_item_id AND v.is_active AND v.fixed_price>=0) ELSE custom_order_items.fixed_price END END AS price,custom_order_items.has_variants AS "priceFrom",
+                   COALESCE((SELECT t.name FROM item_types t WHERE t.item_type_id=custom_order_items.item_type_id),'') AS "itemType"
             FROM custom_order_items
             WHERE is_large_format_printing AND NOT is_shirt AND NOT is_sublimation AND NOT is_business_cards AND NOT is_laser AND is_active AND NOT is_archived
             ORDER BY item_name,custom_item_id
             """));
         s.add("laserProducts",rows(c,"""
             SELECT custom_item_id AS id,item_name AS name,COALESCE(description,'') AS description,
-                   COALESCE(size,'') AS size,COALESCE(color,'') AS color
+                   COALESCE(size,'') AS size,COALESCE(color,'') AS color,COALESCE(image_url,'') AS "_imageReference",additional_image_urls::text AS "_galleryReferences",
+                   CASE WHEN custom_order_items.pricing_type='FIXED' THEN CASE WHEN custom_order_items.has_variants THEN (SELECT MIN(v.fixed_price) FROM custom_order_item_variants v WHERE v.custom_item_id=custom_order_items.custom_item_id AND v.is_active AND v.fixed_price>=0) ELSE custom_order_items.fixed_price END END AS price,custom_order_items.has_variants AS "priceFrom",
+                   COALESCE((SELECT t.name FROM item_types t WHERE t.item_type_id=custom_order_items.item_type_id),'') AS "itemType"
             FROM custom_order_items
             WHERE is_laser AND NOT is_shirt AND NOT is_sublimation AND NOT is_business_cards AND NOT is_large_format_printing AND is_active AND NOT is_archived
             ORDER BY item_name,custom_item_id
             """));
+        ServiceProductPhotos.attach(c,s);
+        PlaqueCatalog.attach(c,s.getAsJsonArray("laserProducts"));
+        PlaqueCatalog.attach(c,s.getAsJsonArray("sublimationProducts"));
         s.add("projects",rows(c,"""
             SELECT project_id AS id,title,summary,category,materials,production_method AS "productionMethod",service_slug AS "serviceSlug",
                    customization,tags,starting_price AS "startingPrice",product_ids AS "productIds",cover_reference AS cover,
@@ -167,6 +181,8 @@ public final class StorefrontService {
     }
     static JsonObject catalog(JsonObject s){
         JsonObject out=new JsonObject();for(String k:List.of("locationId","capturedAt","settings","store","products","projects","customItemCategories","shirts","sublimationProducts","businessCardsProducts","largeFormatPrintingProducts","laserProducts","branding","unavailableServices"))out.add(k,s.has(k)?s.get(k).deepCopy():JsonNull.INSTANCE);
+        ServiceProductPhotos.redact(out);
+
         JsonObject settings=out.get("settings").isJsonObject()?out.getAsJsonObject("settings"):new JsonObject();
         JsonObject campaign=new JsonObject();
         for(String[] field:new String[][]{{"topic","campaign_topic"},{"eyebrow","campaign_eyebrow"},{"headline","campaign_headline"},

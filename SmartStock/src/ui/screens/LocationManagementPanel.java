@@ -122,6 +122,9 @@ public class LocationManagementPanel extends JPanel {
         buttons.add(refreshButton);
         buttons.add(processEmailButton);
         buttons.add(whatsappButton);
+        JButton keysButton=new JButton("Store Keys");
+        keysButton.addActionListener(e->{if(selectedLocationId==null){JOptionPane.showMessageDialog(this,"Select a saved location first.");return;}new StoreKeysDialog(SwingUtilities.getWindowAncestor(this),selectedLocationId).setVisible(true);});
+        buttons.add(keysButton);
         searchPanel.add(buttons, BorderLayout.EAST);
 
         searchButton.addActionListener(e -> loadLocations());

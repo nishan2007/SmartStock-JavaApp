@@ -1,0 +1,5 @@
+SmartStock 1.1.123 - cumulative Windows release
+
+Includes all current SmartStock application, server, inventory, customer account, custom order, work queue, quotation, receipt, printing and embedded web changes. Retains signed stock during duplicate inventory merges and custom quotation item search by name, SKU and barcode. Includes current customer type/account classification and per-store custom inventory migrations, current web storefront designers and photo handling.
+
+Update store servers before registers. AI models remain separate downloads. SmartDrive quick update is excluded. Hosted web workers are published separately. No live store installation or service restart is performed by publication.

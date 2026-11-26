@@ -1,0 +1,5 @@
+SmartStudio 0.1.105 - cumulative creative application release
+
+Includes current creative editing, PDF, templates, badges, banners, printing, preview, clipboard, layers, table, ribbon and workspace changes, using SmartStock 1.1.123 client libraries. AI model weights remain outside application packages. SmartDrive quick update is excluded.
+
+Physical printer and cutter behavior requires separate installed hardware verification. Publication does not install or restart a live store application.

@@ -7,34 +7,44 @@ import java.awt.*;
 
 final class PassportPhotosPanel extends JPanel {
     private final JComboBox<PassportPhotos.Template> template=new JComboBox<>(PassportPhotos.Template.values());
-    private final JCheckBox bleed=new JCheckBox("2 mm bleed + trim marks",true);
+    private final JCheckBox bleed=new JCheckBox("0.079 in bleed + trim marks",true);
     private final SheetPreview preview=new SheetPreview();
     private final JLabel status=new JLabel("Choose a photo, then frame it before printing.");
     private PhotoFraming photo;
     private boolean loading;
+    private Runnable photoQueueChooser=()->status.setText("Open the Photo Queue workspace to select a photo.");
+    void setPhotoQueueChooser(Runnable chooser){photoQueueChooser=java.util.Objects.requireNonNull(chooser);}
     private String queuePhotoId;
     private long deleteAfter;
     private int revision;
-    private final javax.swing.Timer expiry=new javax.swing.Timer(60000,e->{if(deleteAfter>0&&System.currentTimeMillis()>=deleteAfter){reset();status.setText("Printed photo expired and was cleared. Choose the next photo.");}});
+    private final javax.swing.Timer expiry=new javax.swing.Timer(60000,e->{if(deleteAfter>0&&System.currentTimeMillis()>=deleteAfter){reset();status.setText("Queued photo expired and was cleared. Choose the next photo.");}});
     private final StudioPhoneCapture phone=new StudioPhoneCapture(this,image->{revision++;expiry.stop();queuePhotoId=null;deleteAfter=0;photo=PhotoFraming.initial(image);refresh();framePhoto();},status::setText);
 
     PassportPhotosPanel() {
         super(new BorderLayout(8,8));setOpaque(false);
-        JPanel tools=DeckersSwing.panel();tools.setLayout(new BoxLayout(tools,BoxLayout.X_AXIS));
+        StudioRibbon ribbon=new StudioRibbon();ribbon.responsive();
         template.getAccessibleContext().setAccessibleName("Passport photo template");
-        tools.add(template);
         bleed.setOpaque(false);bleed.setToolTipText("Extra image/background outside the finished photo for trimming; photo size and framing stay unchanged.");
-        bleed.addActionListener(e->refresh());tools.add(bleed);
-        tools.add(StudioWorkspaceShell.button("Choose photo…",this::choosePhoto));
-        tools.add(StudioWorkspaceShell.button("Take photo on phone…",()->{if(!loading)phone.start();}));
-        tools.add(StudioWorkspaceShell.button("Frame photo…",this::framePhoto));
-        tools.add(StudioWorkspaceShell.button("Print 4 × 6…",this::printPhotos));
-        tools.add(StudioWorkspaceShell.button("Mark printed",()->markPrinted(queuePhotoId)));
-        JScrollPane toolbar=new JScrollPane(tools,JScrollPane.VERTICAL_SCROLLBAR_NEVER,JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
-        toolbar.setBorder(null);toolbar.setPreferredSize(new Dimension(300,58));
-        add(toolbar,BorderLayout.NORTH);add(preview);
-        JPanel footer=DeckersSwing.panel();footer.setLayout(new GridLayout(0,1));
-        footer.add(new JLabel("4 × 6 inch photo paper · Actual size · Check face position and background before printing."));
+        bleed.addActionListener(e->refresh());
+        JButton choose=StudioRibbon.button("Choose photo…",this::choosePhoto);
+        JButton queue=StudioRibbon.button("Photo Queue",()->{if(!loading){phone.cancel();photoQueueChooser.run();}});
+        queue.setToolTipText("Select an uploaded photo from the shared store queue, then use it in Passport Pictures.");
+        JButton takePhoto=StudioRibbon.button("Take photo on phone…",()->{if(!loading)phone.start();});
+        JButton print=StudioRibbon.button("Print 4 × 6…",this::printPhotos);
+        JButton markPrinted=StudioRibbon.button("Mark printed",()->markPrinted(queuePhotoId));
+        ribbon.add("Home","Source",choose);ribbon.add("Home","Source",queue);ribbon.add("Home","Source",takePhoto);
+        ribbon.add("Home","Framing",StudioRibbon.button("Frame photo…",this::framePhoto));
+        ribbon.add("Layout","Photo format",StudioRibbon.field("Template",template,200));
+        ribbon.add("Print Setup","Page",bleed);
+        ribbon.add("Print Setup","Output",print);ribbon.add("Print Setup","Output",markPrinted);
+        JPanel primary=new JPanel(new FlowLayout(FlowLayout.RIGHT,8,0));
+        for(JButton command:new JButton[]{choose,print,markPrinted}){
+            JButton shortcut=StudioRibbon.shortcut(command,command.getText());
+            StudioVisuals.headerButton(shortcut);primary.add(shortcut);
+        }
+        JPanel top=DeckersSwing.panel();top.setLayout(new BorderLayout(8,8));primary.setOpaque(false);ribbon.outputActions(primary);top.add(ribbon);add(top,BorderLayout.NORTH);add(preview);
+        JPanel footer=DeckersSwing.panel();footer.setLayout(new BorderLayout(16,0));
+        footer.add(new JLabel("4 × 6 inch photo paper · Actual size"),BorderLayout.WEST);
         footer.add(status);add(footer,BorderLayout.SOUTH);
         template.addActionListener(e->{phone.cancel();refresh();});refresh();
     }
@@ -47,6 +57,9 @@ final class PassportPhotosPanel extends JPanel {
     private void choosePhoto(){
         if(loading)return;
         phone.cancel();
+        int source=StudioPhotoPicker.source(this);
+        if(source==1){var selected=StudioPhotoPicker.queued(this);if(selected!=null)useQueued(selected);return;}
+        if(source!=0)return;
         JFileChooser chooser=new JFileChooser();
         chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("Photos (JPEG, PNG)","jpg","jpeg","png"));
         if(chooser.showOpenDialog(this)!=JFileChooser.APPROVE_OPTION)return;
@@ -67,7 +80,7 @@ final class PassportPhotosPanel extends JPanel {
         if(framed!=null){photo=framed;refresh();}
     }
     void printPhotos(){
-        if(deleteAfter>0&&System.currentTimeMillis()>=deleteAfter){reset();status.setText("This printed photo expired. Choose the next photo.");return;}
+        if(deleteAfter>0&&System.currentTimeMillis()>=deleteAfter){reset();status.setText("This queued photo expired. Choose the next photo.");return;}
         if(loading){status.setText("Wait for the photo to finish loading.");return;}
         if(photo==null){status.setText("Choose a photo first.");return;}
         if(queuePhotoId!=null){
@@ -86,10 +99,10 @@ final class PassportPhotosPanel extends JPanel {
     }
     private void markPrinted(String id){
         if(id==null){status.setText("This photo is not from the shared queue.");return;}
-        if(JOptionPane.showConfirmDialog(this,"Has this person's sheet printed successfully?\nThe queued photo will be deleted 24 hours after marking it printed.","Mark printed",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
+        if(JOptionPane.showConfirmDialog(this,"Has this person's sheet printed successfully?\nThe queued photo expires 24 hours after upload, whether printed or not.","Mark printed",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
         int version=revision;new SwingWorker<com.google.gson.JsonObject,Void>(){
             protected com.google.gson.JsonObject doInBackground()throws Exception{return StudioPhotoQueuePanel.request("PRINTED",id);}
-            protected void done(){if(version!=revision)return;try{deleteAfter=get().get("deleteAfter").getAsLong();expiry.start();status.setText("Marked printed. This photo will be removed 24 hours after its first confirmed print.");}catch(Exception ex){error(ex);}}
+            protected void done(){if(version!=revision)return;try{deleteAfter=get().get("deleteAfter").getAsLong();expiry.start();status.setText("Marked printed. This photo still expires 24 hours after upload.");}catch(Exception ex){error(ex);}}
         }.execute();
     }
     private void error(Throwable ex){status.setText("Photo operation failed.");JOptionPane.showMessageDialog(this,ex.getMessage(),"Passport photos",JOptionPane.ERROR_MESSAGE);}

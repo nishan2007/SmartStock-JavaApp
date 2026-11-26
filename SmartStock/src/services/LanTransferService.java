@@ -44,7 +44,7 @@ final class LanTransferService {
         StringBuilder sql = new StringBuilder("""
                 SELECT p.product_id,COALESCE(p.sku,''),p.name||
                   CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END,
-                  COALESCE(i.quantity_on_hand,0)
+                  COALESCE(i.quantity_on_hand,0),COALESCE(p.color,''),COALESCE(p.flavor,''),COALESCE(p.size,''),COALESCE(p.description,'')
                 FROM products p JOIN inventory i ON i.product_id=p.product_id
                 WHERE i.location_id=? AND COALESCE(p.product_type,'INVENTORY')='INVENTORY' AND p.is_active=TRUE
                 """);
@@ -55,7 +55,7 @@ final class LanTransferService {
             ps.setInt(1,locationId); if(!search.isBlank())ProductSearchHelper.bindTokens(ps,2,search);
             try(ResultSet rs=ps.executeQuery()){while(rs.next())rows.add(map(
                     "productId",rs.getInt(1),"sku",rs.getString(2),"name",rs.getString(3),
-                    "availableQuantity",rs.getInt(4)));}
+                    "availableQuantity",rs.getInt(4),"color",rs.getString(5),"flavor",rs.getString(6),"size",rs.getString(7),"description",rs.getString(8)));}
         }
         return rows;
     }
@@ -80,29 +80,30 @@ final class LanTransferService {
         requirePermission(c,userId); List<Map<String,Object>>rows=new ArrayList<>();
         try(PreparedStatement ps=c.prepareStatement("""
                 SELECT st.transfer_id,COALESCE(l.name,'Unknown'),st.created_at,COALESCE(st.user_name,''),
-                  COALESCE(st.note,''),COUNT(i.transfer_item_id),COALESCE(SUM(i.quantity),0)
+                  COALESCE(st.note,''),COUNT(i.transfer_item_id),COALESCE(SUM(i.quantity),0),st.status,st.to_location_id
                 FROM store_transfers st LEFT JOIN store_transfer_items i ON i.transfer_id=st.transfer_id
                 LEFT JOIN locations l ON l.location_id=st.to_location_id
-                WHERE st.from_location_id=? AND UPPER(COALESCE(st.status,'PENDING'))='PENDING'
+                WHERE st.from_location_id=? AND (UPPER(COALESCE(st.status,'PENDING'))='PENDING' OR st.status LIKE 'CHANGE_PENDING:%')
                 GROUP BY st.transfer_id,l.name,st.created_at,st.user_name,st.note
                 ORDER BY st.created_at,st.transfer_id LIMIT 1000
                 """)){ps.setInt(1,locationId);try(ResultSet rs=ps.executeQuery()){while(rs.next())rows.add(map(
                         "transferId",rs.getLong(1),"toStore",rs.getString(2),"createdAtEpochMillis",rs.getTimestamp(3).getTime(),
-                        "sentBy",rs.getString(4),"note",rs.getString(5),"itemCount",rs.getInt(6),"unitCount",rs.getInt(7)));}}
+                        "sentBy",rs.getString(4),"note",rs.getString(5),"itemCount",rs.getInt(6),"unitCount",rs.getInt(7),"status",rs.getString(8),"destinationLocationId",rs.getInt(9)));}}
         return rows;
     }
 
     static List<Map<String,Object>> items(Connection c,long transferId,int userId,int locationId)throws Exception{
         requirePermission(c,userId); List<Map<String,Object>>rows=new ArrayList<>();
         try(PreparedStatement ps=c.prepareStatement("""
-                SELECT i.product_id,COALESCE(p.sku,''),COALESCE(p.name,'Unknown'),i.quantity
+                SELECT i.product_id,COALESCE(p.sku,''),COALESCE(p.name,'Unknown')||CASE WHEN COALESCE(p.size,'')='' THEN '' ELSE ' ('||p.size||')' END,i.quantity,inv.quantity_on_hand
                 FROM store_transfer_items i JOIN store_transfers st ON st.transfer_id=i.transfer_id
                 LEFT JOIN products p ON p.product_id=i.product_id
+                LEFT JOIN inventory inv ON inv.product_id=i.product_id AND inv.location_id=st.from_location_id
                 WHERE i.transfer_id=? AND (st.to_location_id=? OR st.from_location_id=?)
-                  AND UPPER(COALESCE(st.status,'PENDING'))='PENDING'
+                  AND (UPPER(COALESCE(st.status,'PENDING'))='PENDING' OR st.status LIKE 'CHANGE_PENDING:%')
                 ORDER BY p.name,i.product_id
                 """)){ps.setLong(1,transferId);ps.setInt(2,locationId);ps.setInt(3,locationId);try(ResultSet rs=ps.executeQuery()){while(rs.next())rows.add(map(
-                        "productId",rs.getInt(1),"sku",rs.getString(2),"name",rs.getString(3),"quantity",rs.getInt(4)));}}
+                        "productId",rs.getInt(1),"sku",rs.getString(2),"name",rs.getString(3),"quantity",rs.getInt(4),"availableQuantity",rs.getObject(5)));}}
         if(rows.isEmpty())throw rule(404,"TRANSFER_NOT_FOUND","Pending transfer was not found for this store.");
         return rows;
     }
@@ -146,8 +147,71 @@ final class LanTransferService {
         return map("transferId",transferId,"lineCount",lines.size());
     }
 
+    static Map<String,Object> change(Connection c, JsonObject body, UUID deviceId, int userId,
+                                     String userName, int locationId) throws Exception {
+        requirePermission(c,userId);
+        long id;String action;
+        try {
+            id=body.has("transferId")?body.get("transferId").getAsLong():0;
+            action=body.has("action")?body.get("action").getAsString():"";
+        } catch(RuntimeException ex) {throw rule(400,"VALIDATION_ERROR","Invalid transfer change request.");}
+        if (!Set.of("EDIT","CANCEL").contains(action)) throw rule(400,"VALIDATION_ERROR","Invalid transfer action.");
+        try(PreparedStatement ps=c.prepareStatement("SELECT status FROM store_transfers WHERE transfer_id=? AND from_location_id=? FOR UPDATE")) {
+            ps.setLong(1,id);ps.setInt(2,locationId);
+            try(ResultSet rs=ps.executeQuery()) {
+                if(!rs.next())throw rule(404,"TRANSFER_NOT_FOUND","Outgoing transfer was not found for this store.");
+                if(!"PENDING".equalsIgnoreCase(rs.getString(1)))throw rule(409,"TRANSFER_CHANGED","Only pending outgoing transfers can be edited or cancelled. Refresh the list.");
+            }
+        }
+        JsonObject envelope=CrossStoreTransferSyncService.changeEnvelope(c,id,locationId);
+        List<TransferLine> original=new ArrayList<>();
+        for(var element:envelope.getAsJsonArray("items")){var item=element.getAsJsonObject();original.add(new TransferLine(item.get("product_id").getAsInt(),item.get("quantity").getAsInt()));}
+        requireExpectedItems(body,original);
+        if(body.has("expectedNote")) {
+            String expectedNote;
+            try{expectedNote=body.get("expectedNote").getAsString();}catch(RuntimeException ex){throw rule(400,"VALIDATION_ERROR","Invalid transfer verification note.");}
+            if(!clean(expectedNote,1000).equals(envelope.get("note").getAsString()))throw rule(409,"TRANSFER_CHANGED","Transfer notes changed. Refresh and review the transfer before saving.");
+        }
+        // Legacy pending transfers may not have announced their initial envelope yet.
+        try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM sync_outbox WHERE event_type='STORE_TRANSFER_CREATED' AND payload->>'transfer_uuid'=? LIMIT 1")) {
+            ps.setString(1,envelope.get("transfer_uuid").getAsString());
+            try(ResultSet rs=ps.executeQuery()){if(!rs.next())CrossStoreTransferSyncService.announceTransfer(c,id,locationId);}
+        }
+        if("EDIT".equals(action)) {
+            CreateRequest request;
+            try {request=GSON.fromJson(body,CreateRequest.class);}
+            catch(RuntimeException ex) {throw rule(400,"VALIDATION_ERROR","Invalid transfer items.");}
+            if(request.lines()==null||request.lines().isEmpty()||request.lines().size()>300)
+                throw rule(400,"VALIDATION_ERROR","Add between 1 and 300 transfer items.");
+            Set<Integer> seen=new HashSet<>();
+            com.google.gson.JsonArray items=new com.google.gson.JsonArray();
+            for(TransferLine line:request.lines()) {
+                if(line==null||line.productId()<=0||line.quantity()<=0||line.quantity()>1_000_000||!seen.add(line.productId()))
+                    throw rule(400,"VALIDATION_ERROR","Every product must appear once with a valid quantity.");
+                try(PreparedStatement ps=c.prepareStatement("SELECT 1 FROM products p JOIN inventory i ON i.product_id=p.product_id WHERE p.product_id=? AND i.location_id=? AND p.is_active=TRUE AND COALESCE(p.product_type,'INVENTORY')='INVENTORY'")) {
+                    ps.setInt(1,line.productId());ps.setInt(2,locationId);
+                    try(ResultSet rs=ps.executeQuery()){if(!rs.next())throw rule(400,"PRODUCT_NOT_FOUND","A transfer product is unavailable at this store.");}
+                }
+                JsonObject item=new JsonObject();item.addProperty("product_id",line.productId());item.addProperty("quantity",line.quantity());items.add(item);
+            }
+            envelope.add("items",items);envelope.addProperty("note",clean(request.note(),1000));
+        }
+        String requestId=UUID.randomUUID().toString();
+        envelope.addProperty("change_action",action);envelope.addProperty("change_request_id",requestId);
+        envelope.addProperty("change_user_name",userName);envelope.addProperty("change_user_id",userId);
+        envelope.addProperty("change_device_id",deviceId.toString());
+        try(PreparedStatement ps=c.prepareStatement("UPDATE store_transfers SET status=? WHERE transfer_id=?")) {
+            ps.setString(1,"CHANGE_PENDING:"+requestId);ps.setLong(2,id);ps.executeUpdate();
+        }
+        CrossStoreTransferSyncService.requestChange(c,envelope,locationId,deviceId,userId);
+        return map("transferId",id,"lineCount",envelope.getAsJsonArray("items").size());
+    }
+
     static Map<String,Object> receive(Connection c,long transferId,UUID deviceId,int userId,String userName,
-                                      int locationId)throws Exception{
+                                      int locationId)throws Exception{return receive(c,transferId,deviceId,userId,userName,locationId,null);}
+
+    static Map<String,Object> receive(Connection c,long transferId,UUID deviceId,int userId,String userName,
+                                      int locationId,JsonObject body)throws Exception{
         requirePermission(c,userId);int fromLocation;
         try(PreparedStatement ps=c.prepareStatement("SELECT from_location_id,to_location_id,COALESCE(status,'PENDING') FROM store_transfers WHERE transfer_id=? AND to_location_id=? FOR UPDATE")){
             ps.setLong(1,transferId);ps.setInt(2,locationId);try(ResultSet rs=ps.executeQuery()){
@@ -161,6 +225,7 @@ final class LanTransferService {
             ps.setLong(1,transferId);try(ResultSet rs=ps.executeQuery()){while(rs.next())lines.add(new TransferLine(rs.getInt(1),rs.getInt(2)));}
         }
         if(lines.isEmpty())throw rule(409,"TRANSFER_EMPTY","Transfer has no items.");
+        requireExpectedItems(body,lines);
         ServerReceiptNumberManager.ReceiveNumber receive=ServerReceiptNumberManager.nextReceive(c,locationId,deviceId);
         try(PreparedStatement ps=c.prepareStatement("INSERT INTO receiving_batches(receive_id,location_id,user_id,user_name,receive_device_id,receive_sequence) VALUES (?,?,?,?,?,?)")){
             ps.setString(1,receive.receiveId());ps.setInt(2,locationId);ps.setInt(3,userId);ps.setString(4,userName);ps.setString(5,receive.deviceId());ps.setInt(6,receive.sequence());ps.executeUpdate();
@@ -189,6 +254,18 @@ final class LanTransferService {
                 locationId,deviceId.toString(),userId);
         CrossStoreTransferSyncService.recordReceived(c,transferId,locationId,deviceId,userId);
         return map("transferId",transferId,"receiveId",receive.receiveId(),"lineCount",lines.size());
+    }
+
+    private static void requireExpectedItems(JsonObject body,List<TransferLine> actual)throws Exception {
+        if(body==null||!body.has("expectedLines"))return; // Compatibility with earlier registers.
+        TransferLine[] expected;
+        try {expected=GSON.fromJson(body.get("expectedLines"),TransferLine[].class);}
+        catch(RuntimeException ex){throw rule(400,"VALIDATION_ERROR","Invalid transfer verification items.");}
+        if(expected==null||expected.length==0||expected.length>300)throw rule(400,"VALIDATION_ERROR","Invalid transfer verification items.");
+        Map<Integer,Integer> reviewed=new java.util.TreeMap<>(),current=new java.util.TreeMap<>();
+        for(TransferLine line:expected){if(line==null||line.productId()<=0||line.quantity()<=0||line.quantity()>1_000_000||reviewed.putIfAbsent(line.productId(),line.quantity())!=null)throw rule(400,"VALIDATION_ERROR","Invalid transfer verification quantity.");}
+        for(TransferLine line:actual)current.put(line.productId(),line.quantity());
+        if(!current.equals(reviewed))throw rule(409,"TRANSFER_CHANGED","Transfer items changed. Refresh and verify the items and quantities again before continuing.");
     }
 
     private static String clean(String value,int max)throws RuleViolation{String v=value==null?"":value.trim();if(v.length()>max)throw rule(400,"VALIDATION_ERROR","Transfer note is too long.");return v;}

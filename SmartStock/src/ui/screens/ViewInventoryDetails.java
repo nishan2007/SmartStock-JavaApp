@@ -6,6 +6,7 @@ import ui.helpers.ProductImageHelper;
 import ui.helpers.StoreTimeZoneHelper;
 import ui.helpers.ThemeManager;
 import ui.components.LoadingStatePanel;
+import ui.components.ProductImageViewer;
 import ui.helpers.CachedUiLoader;
 import ui.helpers.SessionDataCache;
 
@@ -142,17 +143,33 @@ public class ViewInventoryDetails extends JDialog {
         metricsPanel.add(buildMetricPanel("Sold", itemDetails.get("Total Sold", "0")));
         metricsPanel.add(buildMetricPanel("Sales", moneyValue(itemDetails.get("Total Sales Amount", "0"))));
 
-        List<String> photos=imageUrls==null?List.of():imageUrls;
+        String fallbackImage = itemDetails.get("Image Url", "");
+        List<String> photos = imageUrls == null ? List.of() : imageUrls.stream()
+                .filter(url -> url != null && !url.isBlank()).toList();
+        if (photos.isEmpty() && !fallbackImage.isBlank()) photos = List.of(fallbackImage);
+        final List<String> galleryPhotos = photos;
+        final int[] selected={0};
         JLabel imagePreview = ProductImageHelper.createImagePreview(
                 photos.isEmpty()?itemDetails.get("Image Url", ""):photos.get(0), 150, 110);
         JPanel gallery=new JPanel(new BorderLayout(2,2));gallery.setOpaque(false);
         gallery.add(imagePreview,BorderLayout.CENTER);
+        if (!photos.isEmpty()) {
+            imagePreview.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            imagePreview.setToolTipText("Double-click to enlarge, zoom and move around the photo");
+            imagePreview.addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override public void mouseClicked(java.awt.event.MouseEvent e) {
+                    if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
+                        new ProductImageViewer(ViewInventoryDetails.this, itemDetails.get("Name", "Item") + " — Photos",
+                                galleryPhotos, selected[0]).setVisible(true);
+                    }
+                }
+            });
+        }
         if(photos.size()>1){
-            final int[] selected={0};
             JLabel count=new JLabel("1 / "+photos.size(),SwingConstants.CENTER);
             JButton previous=new JButton("‹"),next=new JButton("›");
-            previous.addActionListener(e->{selected[0]=(selected[0]+photos.size()-1)%photos.size();ProductImageHelper.setPreviewImage(imagePreview,photos.get(selected[0]),150,110);count.setText((selected[0]+1)+" / "+photos.size());});
-            next.addActionListener(e->{selected[0]=(selected[0]+1)%photos.size();ProductImageHelper.setPreviewImage(imagePreview,photos.get(selected[0]),150,110);count.setText((selected[0]+1)+" / "+photos.size());});
+            previous.addActionListener(e->{selected[0]=(selected[0]+galleryPhotos.size()-1)%galleryPhotos.size();ProductImageHelper.setPreviewImage(imagePreview,galleryPhotos.get(selected[0]),150,110);count.setText((selected[0]+1)+" / "+galleryPhotos.size());});
+            next.addActionListener(e->{selected[0]=(selected[0]+1)%galleryPhotos.size();ProductImageHelper.setPreviewImage(imagePreview,galleryPhotos.get(selected[0]),150,110);count.setText((selected[0]+1)+" / "+galleryPhotos.size());});
             JPanel controls=new JPanel(new BorderLayout());controls.setOpaque(false);controls.add(previous,BorderLayout.WEST);controls.add(count,BorderLayout.CENTER);controls.add(next,BorderLayout.EAST);gallery.add(controls,BorderLayout.SOUTH);
         }
         header.add(gallery, BorderLayout.WEST);

@@ -1,0 +1,1 @@
+Combined SmartStudio quick update. Fixes multi-page template navigation staying collapsed after a single-page template: page navigation remains available for billbooks, business cards, labels and banners. Includes all current shared Studio changes and the SmartStock 1.1.91 client dependency. Save drafts before restarting. Update SmartStock first.

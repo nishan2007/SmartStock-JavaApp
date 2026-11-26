@@ -1,0 +1,5 @@
+SmartStudio 0.1.88 - combined Windows quick update
+
+Built from the current shared Studio sources using the exact SmartStock 1.1.92 dependency. Includes Canon PCL6 native raster direct printing, original-resolution artwork and vector PDF exports, retained multi-page navigation, and the wide-banner landscape/custom-paper orientation correction.
+
+The C5240 direct-print path was physically verified with Evergreen's 12-card Letter layout. Heavy 2 cardstock and physical banner/roll printing remain separate acceptance checks. Save drafts before updating. Update SmartStock first.

@@ -639,6 +639,11 @@ public final class ServerTimeClockManager {
 
     public static void markPayrollPaid(Connection conn, PayrollSummary summary, BigDecimal amountPaid,
                                        String paymentMethod, String paymentReference) throws SQLException {
+        markPayrollPaid(conn,summary,amountPaid,paymentMethod,paymentReference,null);
+    }
+    public static void markPayrollPaid(Connection conn, PayrollSummary summary, BigDecimal amountPaid,
+                                       String paymentMethod,String paymentReference,LocalDate paymentDate)throws SQLException {
+        if(paymentDate!=null&&paymentDate.isAfter(LocalDate.now(ZoneId.of(currentStoreZoneId()))))throw new SQLException("Payment date cannot be in the future.");
         if (amountPaid == null || amountPaid.stripTrailingZeros().scale() > 0) {
             throw new SQLException("The amount paid must be entered in whole GYD.");
         }
@@ -690,7 +695,8 @@ public final class ServerTimeClockManager {
                 )
                 SELECT ?, ?, ?, ?, ?, ?,
                        COALESCE(MAX(payment_number), 0) + 1,
-                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       COALESCE((?::date + (CURRENT_TIMESTAMP AT TIME ZONE ?)::time) AT TIME ZONE ?, CURRENT_TIMESTAMP), ?, ?
                 FROM payroll_payments
                 WHERE user_id = ?
                   AND pay_period_start = ?
@@ -722,14 +728,16 @@ public final class ServerTimeClockManager {
                 ps.setString(19, summary.locationName());
                 ps.setString(20, normalizedMethod);
                 ps.setString(21, normalizedReference);
-                setNullableInteger(ps, 22, request().userId());
-                ps.setString(23, request().actorName());
-                ps.setInt(24, summary.userId());
-                ps.setDate(25, java.sql.Date.valueOf(summary.payPeriodStart()));
-                ps.setDate(26, java.sql.Date.valueOf(summary.payPeriodEnd()));
+                if(paymentDate==null)ps.setNull(22,java.sql.Types.DATE);else ps.setDate(22,java.sql.Date.valueOf(paymentDate));
+                ps.setString(23,currentStoreZoneId());ps.setString(24,currentStoreZoneId());
+                setNullableInteger(ps, 25, request().userId());
+                ps.setString(26, request().actorName());
+                ps.setInt(27, summary.userId());
+                ps.setDate(28, java.sql.Date.valueOf(summary.payPeriodStart()));
+                ps.setDate(29, java.sql.Date.valueOf(summary.payPeriodEnd()));
                 try (ResultSet rs = ps.executeQuery()) {
                     if (rs.next()) {
-                        LocalDate paidDate = LocalDate.now(ZoneId.of(currentStoreZoneId()));
+                        LocalDate paidDate = paymentDate==null?LocalDate.now(ZoneId.of(currentStoreZoneId())):paymentDate;
                         long payrollPaymentId = rs.getLong("payroll_payment_id");
                         String payrollDescription = "Pay period " + summary.payPeriodStart() + " - " + summary.payPeriodEnd()
                                 + "; scheduled pay date " + summary.payDate();
@@ -1294,7 +1302,7 @@ public final class ServerTimeClockManager {
                 status == null ? null : status.latestPaymentMethod());
     }
 
-    static BigDecimal paymentAmountDue(BigDecimal totalPay, BigDecimal paid, String latestPaymentMethod) {
+    public static BigDecimal paymentAmountDue(BigDecimal totalPay, BigDecimal paid, String latestPaymentMethod) {
         BigDecimal target = "CASH".equalsIgnoreCase(latestPaymentMethod)
                 ? utils.CurrencyFormatter.roundToNearestTwenty(defaultZero(totalPay))
                 : defaultZero(totalPay);

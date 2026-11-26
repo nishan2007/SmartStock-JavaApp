@@ -1,0 +1,7 @@
+SmartStock 1.1.80 - PDF editor moved to SmartStudio
+
+Removes the PDF Editor from SmartStock's Operations menu and application code. PDF editing is a SmartStudio workspace, shipped in SmartStudio 0.1.67.
+
+Retains all current SmartStock changes, including the mobile Edit Items app and Orders presentation/branding refinements.
+
+Build 101080. Windows update ZIP only. Update the store server before registers. AI models remain separate. No Orders gateway deployment or first-install selection change.

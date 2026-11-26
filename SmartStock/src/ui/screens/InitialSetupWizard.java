@@ -152,7 +152,7 @@ public final class InitialSetupWizard extends JFrame {
 
     private JPanel buildModePage() {
         JPanel panel = DeckersSwing.panel();
-        panel.setLayout(new GridLayout(1, 3, 16, 0));
+        panel.setLayout(new GridLayout(2, 2, 16, 16));
         panel.add(modeCard(
                 DatabaseMode.SERVER,
                 "Store Server",
@@ -160,6 +160,8 @@ public final class InitialSetupWizard extends JFrame {
                 new String[]{"Bundled Java", "PostgreSQL 15+", "Windows service and firewall"},
                 DeckersPalette.ORANGE
         ));
+        panel.add(modeCard(DatabaseMode.DISPLAY, "Display", "Shows the live staff work queue without employee login.",
+                new String[]{"Read-only work board", "One-time administrator pairing", "Fullscreen and automatic scrolling"}, DeckersPalette.PURPLE));
         panel.add(modeCard(
                 DatabaseMode.CLIENT,
                 "Register",
@@ -174,7 +176,11 @@ public final class InitialSetupWizard extends JFrame {
                 new String[]{"No PostgreSQL", "Trusted-device enrollment", "Physical actions blocked"},
                 DeckersPalette.MAGENTA
         ));
-        return panel;
+        panel.setPreferredSize(new Dimension(820,640));
+        JScrollPane scroll=new JScrollPane(panel);
+        scroll.setBorder(null);scroll.getVerticalScrollBar().setUnitIncrement(24);
+        JPanel wrapper=DeckersSwing.panel();wrapper.setLayout(new BorderLayout());wrapper.add(scroll);
+        return wrapper;
     }
 
     private JPanel modeCard(DatabaseMode mode, String title, String description,
@@ -271,6 +277,7 @@ public final class InitialSetupWizard extends JFrame {
         titleLabel.setText(switch (selectedMode) {
             case SERVER -> "Prepare this Store Server";
             case CLIENT -> "Connect this Register";
+            case DISPLAY -> "Connect this Display";
             case REMOTE_ADMIN -> "Enroll Remote Admin";
         });
         subtitleLabel.setText("Review what SmartStock will configure, then continue.");
@@ -280,6 +287,7 @@ public final class InitialSetupWizard extends JFrame {
         continueButton.setText(switch (selectedMode) {
             case SERVER -> "Continue to Server Setup";
             case CLIENT -> "Continue to Register Setup";
+            case DISPLAY -> "Continue to Display Setup";
             case REMOTE_ADMIN -> "Continue to Remote Admin Setup";
         });
         pages.show(pageHost, "review");
@@ -302,6 +310,10 @@ public final class InitialSetupWizard extends JFrame {
                     "Run connection, sync, and recovery readiness checks",
                     "Maven is not installed or required"
             };
+        } else if (selectedMode == DatabaseMode.DISPLAY) {
+            intro = "This screen will show the staff work queue from the local Store Server.";
+            steps = new String[]{"Find or enter the Store Server", "Pair once and approve this device as a display",
+                "Open directly without employee login", "Read-only fullscreen board with automatic scrolling"};
         } else if (selectedMode == DatabaseMode.CLIENT) {
             intro = "This computer will connect to a Store Server without database credentials.";
             steps = new String[]{
@@ -433,6 +445,12 @@ public final class InitialSetupWizard extends JFrame {
 
     private void openModeSetup() {
         if (selectedMode == null) return;
+        if (selectedMode == DatabaseMode.DISPLAY) {
+            if (RegisterConnectionSetup.open(this, DatabaseMode.DISPLAY)) {
+                dispose(); if(owner!=null)owner.dispose(); WorkQueueDisplay.open();
+            }
+            return;
+        }
         if (selectedMode == DatabaseMode.CLIENT) {
             if (RegisterConnectionSetup.open(this)) {
                 if (owner instanceof WelcomeFrame welcome) welcome.refreshAfterSetup();

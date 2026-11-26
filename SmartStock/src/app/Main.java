@@ -58,6 +58,10 @@ public class Main {
                 ui.helpers.TouchScrollSupport.install();
                 ui.helpers.TouchSearchKeyboard.installGlobal();
                 LanApiClient.setConnectionLossHandler(NavigationManager::returnToWelcomeForConnectionLoss);
+                if (DatabaseConfig.load().mode() == DatabaseMode.DISPLAY && !hasArg(args, "--setup-wizard")) {
+                    ui.screens.WorkQueueDisplay.open();
+                    return;
+                }
                 WelcomeFrame frame = new WelcomeFrame();
                 frame.setVisible(true);
                 frame.toFront();
@@ -87,7 +91,7 @@ public class Main {
 
     private static void startSilentLanCredentialMaintenance() {
         DatabaseMode mode = DatabaseConfig.load().mode();
-        if (mode != DatabaseMode.CLIENT && mode != DatabaseMode.SERVER && mode != DatabaseMode.REMOTE_ADMIN) return;
+        if (mode != DatabaseMode.CLIENT && mode != DatabaseMode.SERVER && mode != DatabaseMode.REMOTE_ADMIN && mode != DatabaseMode.DISPLAY) return;
         Thread maintenance = new Thread(() -> {
             try {
                 if (mode == DatabaseMode.SERVER && !LanApiClient.isPaired()) {
@@ -173,6 +177,7 @@ public class Main {
             DatabaseMode mode = switch (arg) {
                 case "--server" -> DatabaseMode.SERVER;
                 case "--client" -> DatabaseMode.CLIENT;
+                case "--display" -> DatabaseMode.DISPLAY;
                 case "--remote-admin" -> DatabaseMode.REMOTE_ADMIN;
                 default -> null;
             };

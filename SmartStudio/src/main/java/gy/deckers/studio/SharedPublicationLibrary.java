@@ -17,6 +17,7 @@ final class SharedPublicationLibrary {
     private final String kind;
     private final Transport transport;
     volatile boolean online;
+    volatile boolean smartDrive;
     volatile String status="OFFLINE — cached templates; server saves unavailable.";
     volatile String migrationProgress="";
     final StoreTemplateFolders stores;
@@ -28,18 +29,23 @@ final class SharedPublicationLibrary {
                 billBooks?"BILL_BOOKS":labels?"LABELS":"BUSINESS_CARDS",LanApiClient::studioTemplates);
     }
     SharedPublicationLibrary(Path folder,String kind,Transport transport){this.folder=folder.toAbsolutePath().normalize();this.kind=kind;this.transport=transport;this.stores=new StoreTemplateFolders(this.folder);}
+    void requireUniqueName(String name,Path except)throws Exception{
+        for(Path file:files())if(!file.equals(except)){var row=stores.metadata(file);if(row.has("name")&&row.get("name").getAsString().equalsIgnoreCase(name))throw new java.io.IOException("A shared template with that name already exists. Choose a different name.");}
+    }
     Path folder(){return folder;}
     boolean contains(Path file){return file!=null&&folder.equals(file.toAbsolutePath().normalize().getParent());}
     private JsonObject request(String action){var r=new JsonObject();r.addProperty("action",action);r.addProperty("kind",kind);return r;}
     private JsonObject send(JsonObject r)throws Exception{return transport.send(r);}
     private Path meta(Path file){return file.resolveSibling(file.getFileName()+".meta.json");}
     private void atomic(Path file,byte[] data)throws Exception{Files.createDirectories(folder);Path temp=Files.createTempFile(folder,".template-",".tmp");try{Files.write(temp,data);Files.move(temp,file,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);}finally{Files.deleteIfExists(temp);}}
-    List<Path> files()throws IOException{if(!Files.isDirectory(folder))return List.of();try(var files=Files.list(folder)){return files.filter(Files::isRegularFile).filter(p->p.toString().endsWith(".sspub")&&Files.isRegularFile(meta(p))).filter(stores::visible).sorted().toList();}}
+    List<Path> files()throws IOException{if(smartDrive||!Files.isDirectory(folder))return List.of();try(var files=Files.list(folder)){return files.filter(Files::isRegularFile).filter(p->p.toString().endsWith(".sspub")&&Files.isRegularFile(meta(p))).filter(stores::visible).sorted().toList();}}
     String label(Path file){try{return stores.label(file,JsonParser.parseString(Files.readString(meta(file))).getAsJsonObject().get("name").getAsString());}catch(Exception ex){return file.getFileName().toString();}}
     private static String digest(byte[] bytes)throws Exception{return HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));}
     void refresh()throws Exception{
         try{
             JsonObject response=send(allStoresRequest());
+            smartDrive=response.has("smartDrive")&&response.get("smartDrive").getAsBoolean();
+            if(smartDrive){online=false;status="SmartDrive shared library • Open a shared file to edit and save directly.";return;}
             if(!response.has("kind")||!kind.equals(response.get("kind").getAsString()))throw new IOException("Update the SmartStock server to enable shared card and label templates.");
             stores.accept(response);JsonArray rows=response.getAsJsonArray("templates");if(rows.size()>10000)throw new IOException("Shared template list exceeds 10000 designs.");int pending=0;Set<Path> retained=new HashSet<>();
             for(var entry:rows){var row=entry.getAsJsonObject();String id=UUID.fromString(row.get("id").getAsString()).toString(),hash=row.get("sha256").getAsString();int size=row.get("size").getAsInt();
@@ -83,13 +89,30 @@ final class SharedPublicationLibrary {
         try{
             for(int offset=0;offset<archive.length;offset+=524288){if(!active.getAsBoolean())throw new IOException("Template save cancelled after sign-out.");JsonObject chunk=request("CHUNK");stores.target(chunk,metadata);chunk.addProperty("uploadId",upload);chunk.addProperty("offset",offset);chunk.addProperty("bytes",Base64.getEncoder().encodeToString(Arrays.copyOfRange(archive,offset,Math.min(archive.length,offset+524288))));send(chunk);}
             if(!active.getAsBoolean())throw new IOException("Template save cancelled after sign-out.");JsonObject end=request("FINISH");stores.target(end,metadata);end.addProperty("uploadId",upload);JsonObject row=send(end);
-            if(!id.equals(row.get("id").getAsString())||!digest(archive).equals(row.get("sha256").getAsString())||!contentHash.equals(row.get("contentSha256").getAsString()))throw new IOException("Server template acknowledgement differs from saved content.");finished=true;return row.get("sha256").getAsString();
+            if(!id.equals(row.get("id").getAsString())||!digest(archive).equals(row.get("sha256").getAsString()))throw new IOException("The store's template acknowledgement does not match the uploaded file. Your draft is still unsaved; export a local template copy before retrying.");
+            if(!row.has("contentSha256")||!contentHash.equals(row.get("contentSha256").getAsString())){
+                // Older servers can omit newer fields from their semantic fingerprint.
+                // Verify the committed archive byte for byte before accepting that mismatch.
+                int offset=0;
+                while(offset<archive.length){
+                    if(!active.getAsBoolean())throw new IOException("Template save cancelled after sign-out.");
+                    JsonObject read=request("READ");stores.target(read,metadata);read.addProperty("id",id);read.add("sha256",row.get("sha256"));read.addProperty("offset",offset);
+                    JsonObject chunk=send(read);
+                    if(chunk.get("size").getAsInt()!=archive.length||!digest(archive).equals(chunk.get("sha256").getAsString()))throw new IOException("Saved template changed during verification. Your draft is still unsaved.");
+                    byte[] block=Base64.getDecoder().decode(chunk.get("bytes").getAsString());
+                    if(block.length<1||block.length>524288||(long)offset+block.length>archive.length)throw new IOException("Invalid saved template verification chunk. Your draft is still unsaved.");
+                    for(int i=0;i<block.length;i++)if(block[i]!=archive[offset+i])throw new IOException("Saved template differs from your draft. Your draft is still unsaved; export a local copy before retrying.");
+                    offset+=block.length;
+                }
+            }
+            finished=true;return row.get("sha256").getAsString();
         }finally{if(!finished&&active.getAsBoolean())try{JsonObject abort=request("ABORT");stores.target(abort,metadata);abort.addProperty("uploadId",upload);send(abort);}catch(Exception ignored){}}
     }
     private JsonObject allStoresRequest(){JsonObject r=request("LIST");r.addProperty("viewStoreId",0);return r;}
     void assign(JsonObject body)throws Exception{if(!online)throw new IOException("Reconnect before changing template stores.");body.addProperty("kind",kind);send(body);refresh();}
     String migrate(List<Path> localFiles,BooleanSupplier active)throws Exception{return migrate(localFiles,active,false);}
     String migrate(List<Path> localFiles,BooleanSupplier active,boolean includeNewFiles)throws Exception{
+        if(smartDrive)return "Shared designs are stored in SmartDrive.";
         if(!online||!active.getAsBoolean())return "Template migration pending until online sign-in.";
         Path marker=folder.resolve("local-template-migration-v1.json");JsonObject state;
         if(Files.exists(marker)){if(Files.size(marker)>4*1024*1024)throw new IOException("Template migration record is too large.");state=JsonParser.parseString(Files.readString(marker)).getAsJsonObject();if(state.get("finished").getAsBoolean()&&!includeNewFiles)return "Existing templates migrated to the server.";}

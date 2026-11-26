@@ -41,7 +41,13 @@ final class LanSalesService {
     static Map<String,Object> preview(Connection connection,JsonObject body,UUID deviceId,int userId,String userName,int locationId,ApprovalConsumer approvalConsumer)throws Exception {
         return checkoutInternal(connection,body,deviceId,userId,userName,locationId,approvalConsumer,null,true);
     }
+    static Map<String,Object> checkoutSalesTask(Connection c,JsonObject body,UUID device,int user,String name,int location,ApprovalConsumer approvals,JsonObject quote,BigDecimal advance)throws Exception {
+        return checkoutInternal(c,body,device,user,name,location,approvals,quote,false,advance);
+    }
     private static Map<String,Object> checkoutInternal(Connection connection,JsonObject body,UUID deviceId,int userId,String userName,int locationId,ApprovalConsumer approvalConsumer,JsonObject lockedQuote,boolean preview)throws Exception {
+        return checkoutInternal(connection,body,deviceId,userId,userName,locationId,approvalConsumer,lockedQuote,preview,null);
+    }
+    private static Map<String,Object> checkoutInternal(Connection connection,JsonObject body,UUID deviceId,int userId,String userName,int locationId,ApprovalConsumer approvalConsumer,JsonObject lockedQuote,boolean preview,BigDecimal taskAdvance)throws Exception {
         StorefrontService.lock(connection,locationId);
         CheckoutRequest request = GSON.fromJson(body, CheckoutRequest.class);
         validateRequest(request);
@@ -50,7 +56,7 @@ final class LanSalesService {
 
         CashDrawerContext drawer = CashDrawerService.resolveDrawerForDevice(
                 connection, locationId, deviceId.toString());
-        boolean cashPayment = "CASH".equals(request.paymentMethod());
+        boolean cashPayment = "CASH".equals(request.paymentMethod()) && (taskAdvance==null || taskAdvance.compareTo(lockedQuote.get("total").getAsBigDecimal())<0);
         boolean accountPayment = "ACCOUNT".equals(request.paymentMethod());
         if (cashPayment) {
             if (!drawer.isAssigned()) {
@@ -71,6 +77,7 @@ final class LanSalesService {
         boolean canAddMiscItem = permissions.contains("ADD_MISC_SALE_ITEM");
         BigDecimal manualSaleDiscount = percent(request.saleDiscountPercent());
         BigDecimal customerSaleDiscount=loadCustomerSaleDiscount(connection,request.customerId(),request.applyCustomerDiscount());
+        if(lockedQuote!=null&&lockedQuote.has("customerDiscount"))customerSaleDiscount=lockedQuote.get("customerDiscount").getAsBigDecimal();
         BigDecimal saleDiscount=manualSaleDiscount.max(customerSaleDiscount);
         Approval saleApproval = null;
         if (lockedQuote==null && manualSaleDiscount.compareTo(config.discountLimit()) > 0) {
@@ -91,6 +98,19 @@ final class LanSalesService {
         }
         productIds.sort(Integer::compareTo);
         Map<Integer, CatalogLine> catalogs = lockCatalogLines(connection, productIds);
+        if(taskAdvance!=null) {
+            Map<Integer,Integer> quantities=new java.util.TreeMap<>();
+            for(CheckoutLine line:request.lines())quantities.merge(line.productId(),line.quantity(),Integer::sum);
+            for(var entry:quantities.entrySet()) {
+                CatalogLine catalog=catalogs.get(entry.getKey());
+                if(!"INVENTORY".equals(catalog.productType()))continue;
+                if(catalog.customItemId()!=null)continue; // Custom stock is checked by its existing inventory workflow.
+                try(var p=connection.prepareStatement("SELECT quantity_on_hand FROM inventory WHERE product_id=? AND location_id=? FOR UPDATE")) {
+                    p.setInt(1,entry.getKey());p.setInt(2,locationId);
+                    try(var r=p.executeQuery()){if(!r.next()||r.getBigDecimal(1).compareTo(BigDecimal.valueOf(entry.getValue()))<0)throw new SQLException("Insufficient stock to collect this task: "+catalog.name());}
+                }
+            }
+        }
 
         List<ValidatedLine> lines = new ArrayList<>();
         BigDecimal grossSubtotal = BigDecimal.ZERO;
@@ -110,7 +130,7 @@ final class LanSalesService {
                 priceApproval = approvalConsumer.consume(requested.priceApprovalToken(),
                         "CHANGE_SALE_ITEM_PRICE", "Price Override", requested.priceOverrideReason());
             }
-            if (lineDiscount.signum() > 0 && !canDiscount) {
+            if (lineDiscount.signum() > 0 && !canDiscount && (lockedQuote==null || taskAdvance==null)) {
                 discountApproval = approvalConsumer.consume(requested.discountApprovalToken(),
                         "APPLY_SALE_DISCOUNT", "Item Discount Override", requested.discountOverrideReason());
             }
@@ -155,16 +175,34 @@ final class LanSalesService {
         BigDecimal unroundedTotal = money(preVatTotal.add(vatAmount));
         BigDecimal total = roundSaleTotal(unroundedTotal, config.roundToNearestTwenty());
         if(lockedQuote!=null) total=lockedQuote.get("total").getAsBigDecimal();
-        if(preview)return Map.of("total",total,"discount",loyaltyDiscount,"eligible",loyaltyEligible);
+        if(preview) {
+            List<Map<String,Object>> quoteLines=new ArrayList<>();
+            for(ValidatedLine line:lines)quoteLines.add(Map.of("id",line.catalog().productId(),"vatRate",line.miscItem()?BigDecimal.ZERO:config.vatEnabled()?(config.departmentVat()?line.catalog().departmentVatRate():config.fixedVatRate()):BigDecimal.ZERO));
+            return Map.of("total",total,"discount",loyaltyDiscount,"eligible",loyaltyEligible,"lines",quoteLines,"vat",vatAmount,"customerDiscount",customerSaleDiscount);
+        }
         if (total.signum() <= 0) throw new SQLException("Sale total must be greater than zero.");
+        BigDecimal settlement=taskAdvance==null?total:total.subtract(taskAdvance);
+        if(settlement.signum()<0)throw new SQLException("Refund excess advances before collection.");
         BigDecimal cashCollected = money(request.cashCollected());
-        if (cashPayment && cashCollected.compareTo(total) < 0) {
+        if (cashPayment && cashCollected.compareTo(settlement) < 0) {
             throw new SQLException("Cash collected is less than the sale total.");
+        }
+        if (request.customerId() != null) {
+            try (var ps = connection.prepareStatement("""
+                    SELECT internal_expense_location_id FROM customer_accounts WHERE customer_id=? FOR SHARE
+                    """)) {
+                ps.setInt(1, request.customerId());
+                try (var rs = ps.executeQuery()) {
+                    if (rs.next() && rs.getObject(1) != null) {
+                        throw new RuleViolation(409, "EXPENSE_ACCOUNT", "Select the store expense account from the checkout picker.", false);
+                    }
+                }
+            }
         }
         if (accountPayment) {
             if (request.customerId() == null) throw new SQLException("Select a customer account for account payment.");
             CustomerChargeAuthorizationService.validateRequired(connection,request.customerId(),request.authorization());
-            chargeCustomerAccount(connection, request.customerId(), total, userId, userName, deviceId, locationId);
+            if(settlement.signum()>0)chargeCustomerAccount(connection, request.customerId(), settlement, userId, userName, deviceId, locationId);
         }
 
         ServerReceiptNumberManager.ReceiptNumber receipt = ServerReceiptNumberManager.nextReceipt(
@@ -172,6 +210,9 @@ final class LanSalesService {
         int saleId = insertSale(connection, request, deviceId, userId, userName, locationId, drawer,
                 receipt, grossSubtotal, money(grossSubtotal.subtract(preVatTotal).add(vatAmount).subtract(vatAmount)),
                 saleDiscount, vatAmount, total, saleApproval,customerSaleDiscount,loyaltyDocument,loyaltyDiscount);
+        if(taskAdvance!=null)try(var p=connection.prepareStatement("UPDATE sales SET amount_paid=?,payment_status=? WHERE sale_id=?")) {
+            p.setBigDecimal(1,accountPayment?taskAdvance:total);p.setString(2,accountPayment&&settlement.signum()>0?(taskAdvance.signum()>0?"PARTIAL":"UNPAID"):"PAID");p.setInt(3,saleId);p.executeUpdate();
+        }
         insertSaleAudit(connection, saleId, null, request.customerId(), null, locationId, userId, userName,
                 deviceId, "SALE_CREATED", "SALE", total,
                 "receipt=" + receipt.receiptNumber() + "; payment_method=" + request.paymentMethod()+
@@ -207,20 +248,20 @@ final class LanSalesService {
         LoyaltyWorker.captureLines(connection,loyaltyDocument);
         if (request.customerId() != null) {
             long accountTransactionId=insertCustomerTransaction(connection, request.customerId(), saleId,
-                    accountPayment ? total : BigDecimal.ZERO,
+                    accountPayment ? settlement : BigDecimal.ZERO,
                     accountPayment ? "SALE_CREDIT" : "SALE_PAID", userName, deviceId, locationId);
             if(accountPayment)CustomerChargeAuthorizationService.insert(connection,accountTransactionId,request.customerId(),locationId,
                     "SALE",saleId,request.authorization(),userId,userName,deviceId,null);
         }
         insertOutbox(connection, saleId, receipt.receiptNumber(), locationId, userId, deviceId,
-                request.paymentMethod(), accountPayment ? "UNPAID" : "PAID", total, drawer.sessionId());
+                request.paymentMethod(), accountPayment && settlement.signum()>0 ? (taskAdvance!=null&&taskAdvance.signum()>0?"PARTIAL":"UNPAID") : "PAID", total, drawer.sessionId());
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("saleId", saleId);
         result.put("receiptNumber", receipt.receiptNumber());
         result.put("total", total);
         result.put("cashCollected", cashPayment ? cashCollected : null);
-        result.put("changeDue", cashPayment ? money(cashCollected.subtract(total)) : null);
+        result.put("changeDue", cashPayment ? money(cashCollected.subtract(settlement)) : null);
         result.put("cashDrawerName", drawer.drawerName());
         result.put("autoPrintSaleReceipt", autoPrintSaleReceipt(connection, request.customerId()));
         return result;
@@ -295,7 +336,7 @@ final class LanSalesService {
         return new SaleConfig(false, false, BigDecimal.ZERO, BigDecimal.valueOf(5), true);
     }
 
-    private static Map<Integer, CatalogLine> lockCatalogLines(Connection connection,
+    static Map<Integer, CatalogLine> lockCatalogLines(Connection connection,
                                                                List<Integer> productIds) throws SQLException, RuleViolation {
         if (productIds.isEmpty()) throw new SQLException("Cart is empty.");
         String placeholders = String.join(",", java.util.Collections.nCopies(productIds.size(), "?"));
@@ -454,24 +495,23 @@ final class LanSalesService {
     }
 
     private static void applyCustomInventory(Connection c,int saleId,int saleItemId,ValidatedLine line,int locationId,int userId,String userName,UUID deviceId)throws SQLException{
-        String table=line.catalog().customVariantId()==null?"custom_order_items":"custom_order_item_variants";String key=line.catalog().customVariantId()==null?"custom_item_id":"custom_variant_id";long id=line.catalog().customVariantId()==null?line.catalog().customItemId():line.catalog().customVariantId();
-        try(PreparedStatement ps=c.prepareStatement("UPDATE "+table+" SET quantity_on_hand=quantity_on_hand-?,sold_quantity=COALESCE(sold_quantity,0)+?,updated_at=CURRENT_TIMESTAMP WHERE "+key+"=?")){ps.setInt(1,line.quantity());ps.setInt(2,line.quantity());ps.setLong(3,id);if(ps.executeUpdate()!=1)throw new SQLException("Custom item inventory could not be updated.");}
-        if(line.catalog().customVariantId()!=null)try(PreparedStatement ps=c.prepareStatement("UPDATE custom_order_items i SET quantity_on_hand=(SELECT COALESCE(SUM(quantity_on_hand),0) FROM custom_order_item_variants WHERE custom_item_id=i.custom_item_id AND is_active),sold_quantity=(SELECT COALESCE(SUM(sold_quantity),0) FROM custom_order_item_variants WHERE custom_item_id=i.custom_item_id),updated_at=CURRENT_TIMESTAMP WHERE custom_item_id=?")){ps.setLong(1,line.catalog().customItemId());ps.executeUpdate();}
+        CustomItemStockService.move(c,line.catalog().customItemId(),line.catalog().customVariantId(),locationId,BigDecimal.valueOf(-line.quantity()),BigDecimal.valueOf(line.quantity()),false);
         try(PreparedStatement ps=c.prepareStatement("INSERT INTO custom_order_item_movements(custom_item_id,custom_variant_id,location_id,change_qty,reason,note,user_name,user_id,device_id,sale_id,sale_item_id) VALUES(?,?,?,?,'SALE',?,?,?,?,?,?)")){ps.setLong(1,line.catalog().customItemId());setLong(ps,2,line.catalog().customVariantId());ps.setInt(3,locationId);ps.setInt(4,-line.quantity());ps.setString(5,"sale_id="+saleId);ps.setString(6,userName);ps.setInt(7,userId);ps.setString(8,deviceId.toString());ps.setInt(9,saleId);ps.setInt(10,saleItemId);ps.executeUpdate();}
     }
 
     private static void chargeCustomerAccount(Connection c, int customerId, BigDecimal amount, int userId,
                                               String userName, UUID deviceId, int locationId) throws SQLException {
         CustomerAccountLedgerService.requireCurrentMultiStoreBalance(c,locationId);
+        PhoneMinutesService.lockCustomer(c,customerId,true);
         CustomerAccountLedgerService.repairCustomerBalance(c,customerId);
-        try (PreparedStatement lock = c.prepareStatement("SELECT credit_limit,current_balance,customer_card_expires_on FROM customer_accounts WHERE customer_id=? AND is_active=TRUE FOR UPDATE")) {
+        try (PreparedStatement lock = c.prepareStatement("SELECT credit_limit,current_balance,customer_card_expires_on FROM customer_accounts WHERE customer_id=? AND is_active=TRUE AND internal_expense_location_id IS NULL FOR UPDATE")) {
             lock.setInt(1, customerId);
             try (ResultSet rs = lock.executeQuery()) {
                 if (!rs.next()) throw new SQLException("Customer account is not active.");
                 java.time.LocalDate expiry=rs.getObject(3,java.time.LocalDate.class);
                 if(expiry!=null&&expiry.isBefore(java.time.LocalDate.now()))throw new SQLException("This customer card has expired. Renew it before charging this purchase to the account.");
                 BigDecimal next = money(rs.getBigDecimal(2)).add(amount);
-                if (next.compareTo(money(rs.getBigDecimal(1))) > 0) throw new SQLException("Customer account credit limit would be exceeded.");
+                if (next.subtract(PhoneMinutesService.minutesDue(c,customerId)).max(BigDecimal.ZERO).compareTo(money(rs.getBigDecimal(1))) > 0) throw new SQLException("Customer account credit limit would be exceeded.");
                 try (PreparedStatement update = c.prepareStatement("UPDATE customer_accounts SET current_balance=? WHERE customer_id=?")) {
                     update.setBigDecimal(1, next); update.setInt(2, customerId); update.executeUpdate();
                 }
@@ -576,7 +616,7 @@ final class LanSalesService {
     record Approval(int approverUserId,String approverName,String reason) { }
     private record SaleConfig(boolean vatEnabled,boolean departmentVat,BigDecimal fixedVatRate,
                               BigDecimal discountLimit,boolean roundToNearestTwenty) { }
-    private record CatalogLine(int productId,String name,BigDecimal catalogPrice,String productType,BigDecimal departmentVatRate,String sku,Long customItemId,Long customVariantId,String brand,String size,String color) { }
+    record CatalogLine(int productId,String name,BigDecimal catalogPrice,String productType,BigDecimal departmentVatRate,String sku,Long customItemId,Long customVariantId,String brand,String size,String color) { }
     private record ValidatedLine(CatalogLine catalog,int quantity,BigDecimal enteredPrice,BigDecimal discountPercent,
                                  BigDecimal lineDiscountAmount,Approval priceApproval,Approval discountApproval,
                                  String miscItemName,boolean miscItem) {

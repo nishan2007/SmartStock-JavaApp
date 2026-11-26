@@ -136,6 +136,9 @@ public class DeviceManagement extends JFrame {
         controlsPanel.add(new JLabel("Activity:"));
         controlsPanel.add(activityFilterCombo);
         controlsPanel.add(refreshButton);
+        JButton mobileManagementButton=new JButton("Mobile Management");
+        mobileManagementButton.addActionListener(e->new MobileManagement(this).setVisible(true));
+        controlsPanel.add(mobileManagementButton);
         controlsPanel.add(serversButton);
         controlsPanel.add(securityStatusButton);
 

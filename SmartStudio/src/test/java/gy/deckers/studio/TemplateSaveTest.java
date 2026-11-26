@@ -18,6 +18,7 @@ class TemplateSaveTest {
             SwingUtilities.invokeAndWait(()->{try{
                 var panel=new BusinessCardsPanel(labels);holder[0]=panel;
                 Publication p=(Publication)get(panel,"document");
+                panel.loadRows(java.util.List.of("ticket"), java.util.List.of(java.util.Map.of("ticket","500")));
                 if(p.pages.get(0).objects.isEmpty())p.pages.get(0).objects.add(new Publication.Element());
                 Files.write(file,PublicationFiles.archive(p));
                 set(panel,"currentLocalFile",file);set(panel,"currentLocalHash",BadgeTemplateLibrary.fingerprint(file));
@@ -30,6 +31,8 @@ class TemplateSaveTest {
             while(busy[0]&&System.nanoTime()<deadline){Thread.sleep(30);SwingUtilities.invokeAndWait(()->{try{busy[0]=(boolean)get(holder[0],"working");}catch(Exception ex){throw new RuntimeException(ex);}});}
             assertFalse(busy[0]);Publication saved=PublicationFiles.read(Files.readAllBytes(file));
             assertEquals("Saved edit",saved.pages.get(0).objects.get(0).text);
+            assertEquals(java.util.List.of("ticket"), saved.mergeColumns);
+            assertEquals(java.util.List.of(java.util.Map.of("ticket","500")), saved.mergeRows);
             assertEquals("Black",saved.pages.get(0).risoPages.get(0).name);
             SwingUtilities.invokeAndWait(()->{try{assertFalse((boolean)get(holder[0],"dirty"));((Timer)get(holder[0],"refresh")).stop();((Timer)get(holder[0],"thumbnailRefresh")).stop();}catch(Exception ex){throw new RuntimeException(ex);}});
         }

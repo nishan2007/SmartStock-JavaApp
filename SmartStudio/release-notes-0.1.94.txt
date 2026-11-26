@@ -1,0 +1,5 @@
+SmartStudio 0.1.94
+
+Combined current Studio changes across chats with the SmartStock 1.1.104 client dependency. Retains Canon direct-print page fitting, current template and shared-library handling, publication/PDF, barcode, numbering, passport-photo and print/cut improvements.
+
+Save open drafts before updating. Update the store server first. AI models remain separate and preserved. Physical printer/cutter and paired store workflows require separate verification.

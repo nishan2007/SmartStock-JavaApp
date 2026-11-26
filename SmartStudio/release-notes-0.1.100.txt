@@ -1,0 +1,9 @@
+SmartStudio 0.1.100 - Automatic banner paper size
+
+Banner printing now passes the template dimensions to the Windows printer driver as a temporary custom paper size. Choose the banner printer, confirm the automatically populated Page Setup, and select paper and quality in the native print dialog. No typed dimensions or saved preset is required for each banner size.
+
+Fixes custom roll paper reverting to Letter or the nearest named poster size after Canon printer Properties. Keeps the short edge across the roll and preserves actual-size artwork and printer quality choices. Paper that is too small is still rejected.
+
+Validated with the installed Canon GP-4600S driver using a 72 x 44 inch banner: Canon Properties inherited Custom Size 44 x 72 inches without manual entry, and the dimensions survived final print confirmation. Physical output was not printed during validation.
+
+32 focused banner/document/printing tests passed. Includes SmartStock 1.1.109 client support. Update-only installer for existing SmartStudio installations; runtime and model weights remain outside the update. Existing profile models are preserved.

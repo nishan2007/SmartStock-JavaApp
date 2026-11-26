@@ -1,0 +1,5 @@
+SmartStock 1.1.97
+
+Combined SmartStock workspace update: main-item Item Type selection in desktop and web Add/Edit Item, inherited variant types, and Item Type in desktop Custom Inventory and web inventory. Includes plaque variant galleries and photo-based designer previews, corrected service layouts, customer account web support, shared CT221B label printing, receipt connection retries with duplicate-print protection, and consistent invoice payment rounding.
+
+Update POS-SERVER before registers. AI models remain separate from the application update and existing profile models are preserved. Verify printer output and other connected hardware on the installed system. SmartStudio uses its separate release channel.

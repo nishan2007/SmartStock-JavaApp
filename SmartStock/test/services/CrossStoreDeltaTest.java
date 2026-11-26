@@ -53,6 +53,23 @@ class CrossStoreDeltaTest {
         }
     }
 
+    @Test void optionalOrderDetailsKeepOlderCloudsCompatible() throws Exception {
+        var base=manifest(GENERATION,Map.of(),Map.of());
+        var tables=new LinkedHashMap<>(base.tables());
+        tables.put("custom_order_lines",new CloudSyncManifest.TableInfo(1,Set.of(),CHANGED));
+        var available=new CloudSyncManifest(tables,GENERATION,Instant.parse("2026-10-01T00:00:00Z"),1,true,1);
+        var rpc=new Fake(Map.of("custom_order_lines",List.of(row(1,CHANGED))));
+        var upgraded=CrossStoreDelta.download(2,available,Map.of(),rpc);
+        assertEquals(1,upgraded.tables().get("custom_order_lines").size());
+        var legacy=CrossStoreDelta.download(2,available,Map.of(),(operation,request)->{
+            if(request.get("p_table_name").getAsString().equals("custom_order_lines"))
+                throw new SQLException("Unsupported cross-store table","0A000");
+            return rpc.call(operation,request);
+        });
+        assertFalse(legacy.tables().containsKey("custom_order_lines"));
+        assertTrue(legacy.tables().keySet().containsAll(CrossStoreDelta.TABLES));
+    }
+
     @Test void unchangedTablesAndUnrelatedNewGenerationDownloadNoBodiesOrHashes()throws Exception {
         Map<String,List<CrossStoreDelta.Row>> source=Map.of("products",List.of(row(1,CHANGED)));
         var first=manifest(GENERATION,source,Map.of("products",CHANGED));var initial=new Fake(source);

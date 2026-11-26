@@ -6,7 +6,7 @@ import {DecalGeometry} from 'three/addons/geometries/DecalGeometry.js';
 import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
 import {renderShirt,type Shirt,type ShirtDesign} from './shirtDesign';
 
-function modelPath(shirt:Shirt){return `/shop/assets/shirts/${shirt.config.shirtType==='COLLARED'?'polo':shirt.config.neckline==='V'?'vneck':'crew'}.glb`;}
+function modelPath(shirt:Shirt){return `/shop/assets/shirts/${shirt.config.shirtType==='COLLARED'?'polo':shirt.config.neckline==='V'?'vneck':'crew'}.glb${shirt.config.shirtType==='COLLARED'?'?v=3':''}`;}
 // Cache source bytes only: every viewer owns its geometry and textures.
 const sources=new Map<string,Promise<ArrayBuffer>>();
 function source(path:string){let request=sources.get(path);if(!request){request=fetch(path).then(r=>{if(!r.ok)throw new Error('Garment model unavailable');return r.arrayBuffer();}).catch(e=>{sources.delete(path);throw e;});sources.set(path,request);}return request;}
@@ -45,14 +45,14 @@ export default function ShirtPreview3D({shirt,design,color,artwork,side,onEdit}:
    garment.traverse(object=>{if(object instanceof THREE.Mesh){
     if(object.name==='T_Shirt_male')body=object;
     for(const material of Array.isArray(object.material)?object.material:[object.material])if(material instanceof THREE.MeshStandardMaterial&&material.name!=='Buttons'){
-     material.color.set(color);material.roughness=dry?.66:.9;material.metalness=0;material.normalScale.setScalar(dry?.48:.85);material.aoMapIntensity=.7;
+     material.color.set(color).multiplyScalar(material.name==='Polo collar'?.78:1);material.roughness=dry?.66:.9;material.metalness=0;material.normalScale.setScalar(dry?.48:.85);material.aoMapIntensity=.7;
      if(material.normalMap)material.normalMap.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
     }
    }});
    scene.add(garment);if(!body)throw new Error('Garment print surface missing');
    const printSurface=body;let revision=0,decals=new THREE.Group();scene.add(decals);
    const paint=async()=>{delete node.dataset.ready;const ticket=++revision,{design,color,artwork}=latest.current;
-    garment.traverse(object=>{if(object instanceof THREE.Mesh)for(const m of Array.isArray(object.material)?object.material:[object.material])if(m instanceof THREE.MeshStandardMaterial&&m.name!=='Buttons')m.color.set(color);});
+    garment.traverse(object=>{if(object instanceof THREE.Mesh)for(const m of Array.isArray(object.material)?object.material:[object.material])if(m instanceof THREE.MeshStandardMaterial&&m.name!=='Buttons')m.color.set(color).multiplyScalar(m.name==='Polo collar'?.78:1);});
     const next=new THREE.Group();
    await Promise.all(([false,true] as const).map(async rear=>{
     const canvas=document.createElement('canvas');canvas.width=canvas.height=1024;

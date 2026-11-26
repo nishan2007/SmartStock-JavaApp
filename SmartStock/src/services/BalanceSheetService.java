@@ -14,6 +14,12 @@ import java.util.UUID;
 public final class BalanceSheetService {
     private static final Gson GSON = LanJson.create();
     private BalanceSheetService() { }
+    private static final ThreadLocal<JsonObject> WORKSPACE_CHANGE = new ThreadLocal<>();
+    public static JsonObject workspace(String action,JsonObject body)throws SQLException {
+        JsonObject request=body.deepCopy();request.addProperty("workspaceAction",action);try{return LanApiClient.balanceSheetWorkspace(request);}catch(Exception e){throw sql(e);}
+    }
+    /** Bound only on the worker performing one mutation; never shared between Swing windows. */
+    public static void useWorkspaceForNextChange(JsonObject context){WORKSPACE_CHANGE.set(context.deepCopy());}
 
     public static void addManualExpense(ExpenseEntry entry) throws SQLException {
         mutate("ADD_EXPENSE", object("expense", entry));
@@ -105,7 +111,7 @@ public final class BalanceSheetService {
 
     public static void withdrawOverseasCash(BigDecimal amount,String reason,String key)throws SQLException {
         JsonObject b=new JsonObject();b.addProperty("amount",amount);b.addProperty("reason",reason);
-        try{LanApiClient.balanceSheetMutation("OVERSEAS_WITHDRAW",b,key);}catch(Exception e){throw sql(e);}
+        try{mutate("OVERSEAS_WITHDRAW",b,key);}catch(Exception e){throw sql(e);}
     }
     public static void setBalanceBf(LocalDate periodStart, BigDecimal amount) throws SQLException {
         JsonObject body=new JsonObject();
@@ -116,7 +122,7 @@ public final class BalanceSheetService {
 
     public static LegacyCashRecovery recoverLegacyCash(String sourceType,long sourceId,String reason,String idempotencyKey)throws SQLException{
         JsonObject body=new JsonObject();body.addProperty("sourceType",sourceType);body.addProperty("sourceId",sourceId);body.addProperty("reason",reason);
-        try{return GSON.fromJson(LanApiClient.balanceSheetMutation("RECOVER_LEGACY_CASH",body,idempotencyKey).get("recovery"),LegacyCashRecovery.class);}
+        try{return GSON.fromJson(mutate("RECOVER_LEGACY_CASH",body,idempotencyKey).get("recovery"),LegacyCashRecovery.class);}
         catch(Exception e){throw sql(e);}
     }
 
@@ -130,7 +136,15 @@ public final class BalanceSheetService {
     public static List<DrawerHistoryOption> drawerHistoryOptions(Long submissionId,String label,LocalDate from,LocalDate to,String zone)throws SQLException{JsonObject body=range(from,to);if(submissionId!=null)body.addProperty("submissionId",submissionId);body.addProperty("label",label);body.addProperty("storeZoneId",zone);return array(read("DRAWER_HISTORY_OPTIONS",body),"rows",DrawerHistoryOption[].class);}
 
     private static JsonObject read(String action,JsonObject body)throws SQLException{try{return LanApiClient.balanceSheetRead(action,body);}catch(Exception e){throw sql(e);}}
-    private static JsonObject mutate(String action,JsonObject body)throws SQLException{try{return LanApiClient.balanceSheetMutation(action,body,UUID.randomUUID().toString());}catch(Exception e){throw sql(e);}}
+    private static JsonObject mutate(String action,JsonObject body)throws SQLException{return mutate(action,body,UUID.randomUUID().toString());}
+    private static JsonObject mutate(String action,JsonObject body,String key)throws SQLException {
+        JsonObject context=WORKSPACE_CHANGE.get();WORKSPACE_CHANGE.remove();
+        try {
+            if(context==null)return LanApiClient.balanceSheetMutation(action,body,key);
+            context.addProperty("change",action);context.addProperty("eventKey",key);context.add("payload",body);
+            return workspace("MUTATE",context);
+        }catch(Exception e){throw sql(e);}
+    }
     private static JsonObject range(LocalDate from,LocalDate to){JsonObject b=new JsonObject();b.addProperty("from",from.toString());b.addProperty("to",to.toString());return b;}
     private static JsonObject object(String key,Object value){JsonObject b=new JsonObject();b.add(key,GSON.toJsonTree(value));return b;}
     private static <T>List<T>array(JsonObject value,String key,Class<T[]>type){T[]rows=GSON.fromJson(value.get(key),type);return rows==null?List.of():List.of(rows);}

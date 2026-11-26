@@ -1,0 +1,9 @@
+SmartStock 1.1.141 - Cumulative quick update
+
+Improves iPhone saved-password sign-in by sequencing the initial session check and waiting for AutoFill values. Fixes payroll employee photos sharing their circle with initials; missing or failed photos retain the initials fallback.
+
+Scheduler starts with Weekly view and Skeldon when available, moves Auto Schedule to the top on phones and desktop, and adds a distinct touch-friendly export-image icon.
+
+Includes digital overseas items that use a code and do not require physical arrival or collection, alongside the latest cumulative Store Keys, NFC custody management, ad-review size guides, employee-photo and desktop changes present in this source snapshot.
+
+Windows update only. Update the store server before registers. Publishing does not install or restart applications. Real iPhone, live database/service, printer, drawer and NFC acceptance remain separate checks. AI models are separate and preserved.

@@ -1,0 +1,7 @@
+SmartStock 1.1.84 (build 101084) - Windows quick update
+
+Includes the completed Orders redesign with production progress, assignment, files and latest design approvals, payment and delivery workflows, and additional actions under More.
+Adds the new Work Queue screen for custom orders and sales tasks: New orders, In progress and Ready lanes, search, staff and deadline filters, My work, sorting, catalogue thumbnails, payment and approval badges, and direct job navigation.
+Includes all completed Sales Tasks, Balance Sheet web workspace, product photo review, customer-order retry/phone lookup, overseas/time-clock, web item/order editor, shirt/polo preview, and shared publication/font/rendering changes in the source snapshot.
+
+Quick update only. Update the store server first, then registers. AI model weights remain separately hosted and are not included. Live database/service upgrades, paired business flows and hardware acceptance remain separate rollout checks.

@@ -1,0 +1,11 @@
+SmartStock 1.1.82 - Sales Tasks and combined Orders Work Queue
+
+Adds Sales Tasks for copying, printing, laminating and other work collected later. Record customer instructions, deadlines, staff assignment, attachments and optional advances without finalizing quantities or prices at drop-off. Complete the work, finalize the bill, then collect payment or charge an eligible customer account at pickup.
+
+Adds Orders > Work Queue as the first Orders tab. Pending custom orders and Sales Tasks appear together with deadlines, assignees, instructions, overdue indicators and awaiting-pricing/ready-for-pickup stages. Search or filter the list and open each job's existing workflow. Work visibility is enforced by store and employee permissions.
+
+Includes task payment/refund history, claim slips, final receipts, audit history and recovery coverage. Stock is deducted only on collection, and advances are included in cash reconciliation without counting them again when the final sale is created. Task management uses the new MANAGE_SALES_TASKS permission, initially granted to Admin; normal financial permissions remain required.
+
+Retains the existing customer phone reuse, order retry, mobile Edit Items, publication rendering and Studio photo queue improvements.
+
+Build 101082. Windows update ZIP and all-in-one installer. Update the store server before registers. AI models remain separate. No live store installation or service restart is performed by publication.

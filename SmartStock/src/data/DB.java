@@ -19,7 +19,7 @@ public class DB {
         BlockingCallGuard.check("primary database connection");
         long started = System.nanoTime();
         DatabaseConfig config = DatabaseConfig.load();
-        if (config.mode() == DatabaseMode.CLIENT || config.mode() == DatabaseMode.REMOTE_ADMIN) {
+        if (config.mode() == DatabaseMode.CLIENT || config.mode() == DatabaseMode.DISPLAY || config.mode() == DatabaseMode.REMOTE_ADMIN) {
             throw new SQLException("Direct database access is disabled on this device. SmartStock must use its authenticated API service.", "28000");
         }
         if (config.mode() == DatabaseMode.SERVER && !isLoopbackJdbcUrl(config.jdbcUrl())

@@ -106,6 +106,8 @@ public class EmployeeManagement extends JFrame {
     private JTextField emailField;
     private JTextField phoneField;
     private JTextField employeePhotoField;
+    private String employeePhotoSource="",employeePhotoFrame="";
+    private final java.util.Map<Integer,LanEmployeeAdminService.Employee> employeePhotoMetadata=new java.util.HashMap<>();
     private JLabel employeePhotoPreviewLabel;
     private JTextField employeeIdCardDocumentField;
     private JTextField dateOfBirthField;
@@ -930,7 +932,7 @@ public class EmployeeManagement extends JFrame {
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
         buttons.setOpaque(false);
         JButton chooseButton = new JButton("Choose");
-        JButton previewButton = new JButton("Preview");
+        JButton previewButton = new JButton("Reframe");
         JButton clearButton = new JButton("Clear");
         styleButton(chooseButton, false);
         styleButton(previewButton, false);
@@ -941,9 +943,10 @@ public class EmployeeManagement extends JFrame {
         fieldPanel.add(buttons, BorderLayout.SOUTH);
         panel.add(fieldPanel, BorderLayout.CENTER);
         chooseButton.addActionListener(e -> chooseEmployeePhoto());
-        previewButton.addActionListener(e -> refreshEmployeePhotoPreview());
+        previewButton.addActionListener(e -> reframeEmployeePhoto());
         clearButton.addActionListener(e -> {
             employeePhotoField.setText("");
+            employeePhotoSource="";employeePhotoFrame="";
             refreshEmployeePhotoPreview();
         });
         return panel;
@@ -1028,17 +1031,45 @@ public class EmployeeManagement extends JFrame {
         }
         Path source = chooser.getSelectedFile().toPath();
         try {
-            Path targetDirectory = Path.of(System.getProperty("user.home"), ".smartstock", "employee-photos");
-            Files.createDirectories(targetDirectory);
-            String extension = extension(source.getFileName().toString());
-            String namePrefix = selectedUserId == null ? "pending" : "employee-" + selectedUserId;
-            Path target = targetDirectory.resolve(namePrefix + "-" + System.currentTimeMillis() + "." + extension);
-            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
-            employeePhotoField.setText(target.toString());
-            refreshEmployeePhotoPreview();
+            if(Files.size(source)>12L*1024*1024)throw new IllegalArgumentException("Choose a photo up to 12 MB.");
+            frameEmployeePhoto(source.toString(),services.EmployeePhotoFraming.fit());
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to copy employee photo.\n\n" + ex.getMessage(), "Employee Photo", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private void reframeEmployeePhoto() {
+        String reference=employeePhotoSource.isBlank()?employeePhotoField.getText().trim():employeePhotoSource;
+        if(reference.isBlank()){JOptionPane.showMessageDialog(this,"Choose an employee photo first.");return;}
+        try{frameEmployeePhoto(reference,services.EmployeePhotoFraming.decode(employeePhotoFrame));}
+        catch(Exception ex){JOptionPane.showMessageDialog(this,"Unable to reframe photo: "+ex.getMessage(),"Employee photo",JOptionPane.ERROR_MESSAGE);}
+    }
+
+    private void frameEmployeePhoto(String reference,services.EmployeePhotoFraming.Frame initial)throws Exception {
+        Integer targetEmployee=selectedUserId;
+        var targetRegistration=selectedRegistration;
+        // Load through the existing authenticated image cache off the Swing event thread.
+        UiTaskRunner.submit(this,"employees.photo-frame",()->{
+            var image=utils.ImageCacheManager.loadImage(reference);
+            if(image==null)throw new IllegalArgumentException("The original photo could not be loaded.");
+            return image;
+        },image->{
+            if(!java.util.Objects.equals(targetEmployee,selectedUserId)||targetRegistration!=selectedRegistration)return;
+            var frame=EmployeePhotoFrameEditor.show(this,image,initial);
+            if(frame==null)return;
+            try {
+                Path directory=Path.of(System.getProperty("user.home"),".smartstock","employee-photos");Files.createDirectories(directory);
+                String original=reference;
+                if(!utils.ImageCacheManager.isRemoteImageUrl(reference)) {
+                    Path copy=directory.resolve(java.util.UUID.randomUUID()+"-original."+extension(reference));
+                    Files.copy(Path.of(reference),copy);original=copy.toString();
+                }
+                Path rendered=directory.resolve(java.util.UUID.randomUUID()+"-framed.png");
+                javax.imageio.ImageIO.write(services.EmployeePhotoFraming.render(image,frame),"png",rendered.toFile());
+                employeePhotoSource=original;employeePhotoFrame=services.EmployeePhotoFraming.encode(frame);
+                employeePhotoField.setText(rendered.toString());refreshEmployeePhotoPreview();
+            }catch(Exception ex){JOptionPane.showMessageDialog(this,"Unable to prepare photo: "+ex.getMessage(),"Employee photo",JOptionPane.ERROR_MESSAGE);}
+        },ex->JOptionPane.showMessageDialog(this,"Unable to load photo: "+ex.getMessage(),"Employee photo",JOptionPane.ERROR_MESSAGE));
     }
 
     private void refreshEmployeePhotoPreview() {
@@ -1387,7 +1418,9 @@ public class EmployeeManagement extends JFrame {
             roleBox.addItem(new RoleOption("USER"));
         }
         employeeModel.setRowCount(0);
+        employeePhotoMetadata.clear();
         for(var row:state.employees()) {
+                employeePhotoMetadata.put(row.userId(),row);
                 employeeModel.addRow(new Object[]{
                         row.userId(),row.username(),row.fullName(),row.firstName(),row.middleName(),row.lastName(),row.email(),row.phone(),row.photoUrl(),dateText(row.dateOfBirth()),row.badgeId(),row.badgePrintCount(),row.compensationType(),row.salary(),row.role(),row.active(),row.idCardUrl(),dateText(row.hireDate()),dateText(row.deactivationDate()),row.nickname()
                 });
@@ -1433,6 +1466,9 @@ public class EmployeeManagement extends JFrame {
         emailField.setText(employeeModel.getValueAt(selectedRow, 6) == null ? "" : employeeModel.getValueAt(selectedRow, 6).toString());
         phoneField.setText(employeeModel.getValueAt(selectedRow, 7) == null ? "" : employeeModel.getValueAt(selectedRow, 7).toString());
         employeePhotoField.setText(employeeModel.getValueAt(selectedRow, 8) == null ? "" : employeeModel.getValueAt(selectedRow, 8).toString());
+        var photoMetadata=employeePhotoMetadata.get(selectedUserId);
+        employeePhotoSource=photoMetadata==null?"":java.util.Objects.toString(photoMetadata.photoSourceUrl(),"");
+        employeePhotoFrame=photoMetadata==null?"":java.util.Objects.toString(photoMetadata.photoFrame(),"");
         refreshEmployeePhotoPreview();
         employeeIdCardDocumentField.setText(employeeModel.getValueAt(selectedRow, 16) == null ? "" : employeeModel.getValueAt(selectedRow, 16).toString());
         dateOfBirthField.setText(employeeModel.getValueAt(selectedRow, 9) == null ? "" : employeeModel.getValueAt(selectedRow, 9).toString());
@@ -1548,11 +1584,13 @@ public class EmployeeManagement extends JFrame {
             return;
         }
         String requestedUsername=username,requestedEmployeeName=fullName,photoInput=employeePhotoUrl,documentInput=idCardDocumentUrl;
+        String sourceInput=employeePhotoSource,frameInput=employeePhotoFrame;
         String mutationKey=UUID.randomUUID().toString();
         UiTaskRunner.submit(this,"employees.create",()->{
                 String uploadedPhoto=EmployeePhotoService.uploadLocalPhotoIfNeeded(photoInput,requestedEmployeeName);
+            String uploadedSource=EmployeePhotoService.uploadOriginalIfNeeded(sourceInput,requestedEmployeeName);
                 String uploadedDocument=EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(documentInput,requestedEmployeeName);
-                LanEmployeeAdminService.SaveRequest request=new LanEmployeeAdminService.SaveRequest(requestedUsername,password,firstName,middleName,lastName,fullName,nickname,email,phoneNumber,uploadedPhoto,uploadedDocument,dateOfBirth,hireDate,compensationType,salary,role,isActive,selectedLocationIds,payrollPeriodType,workHourLimit,true,null);
+                LanEmployeeAdminService.SaveRequest request=new LanEmployeeAdminService.SaveRequest(requestedUsername,password,firstName,middleName,lastName,fullName,nickname,email,phoneNumber,uploadedPhoto,uploadedDocument,dateOfBirth,hireDate,compensationType,salary,role,isActive,selectedLocationIds,payrollPeriodType,workHourLimit,true,null,uploadedSource,frameInput);
                 int newUserId=(registration==null?LanApiClient.updateEmployeeAdmin("CREATE",null,request,null,null,mutationKey):LanApiClient.employeeRegistrationAction("APPROVE",registration.id(),request,null,false)).get("userId").getAsInt();
                 return new EmployeeSaveResult(newUserId,uploadedPhoto,uploadedDocument);
         },result->{
@@ -1623,15 +1661,17 @@ public class EmployeeManagement extends JFrame {
             return;
         }
         String requestedUsername=username,requestedEmployeeName=fullName,photoInput=employeePhotoUrl,documentInput=idCardDocumentUrl;
+        String sourceInput=employeePhotoSource,frameInput=employeePhotoFrame;
         Integer targetUserId=selectedUserId;String mutationKey=UUID.randomUUID().toString();
         boolean payrollChanged=payrollPeriodType!=originalPayrollPeriodType||workHourLimit.compareTo(originalWorkHourLimit)!=0;
         UiTaskRunner.submit(this,"employees.update",()->{
             String uploadedPhoto=EmployeePhotoService.uploadLocalPhotoIfNeeded(photoInput,requestedEmployeeName);
+            String uploadedSource=EmployeePhotoService.uploadOriginalIfNeeded(sourceInput,requestedEmployeeName);
             String uploadedDocument=EmployeeDocumentService.uploadLocalIdCardDocumentIfNeeded(documentInput,requestedEmployeeName);
             LanEmployeeAdminService.SaveRequest request = new LanEmployeeAdminService.SaveRequest(
                     requestedUsername, password, firstName, middleName, lastName, fullName, nickname, email, phoneNumber,
                     uploadedPhoto, uploadedDocument, dateOfBirth, hireDate, compensationType, salary,
-                    role, isActive, selectedLocationIds, payrollPeriodType, workHourLimit, payrollChanged, null);
+                    role, isActive, selectedLocationIds, payrollPeriodType, workHourLimit, payrollChanged, null,uploadedSource,frameInput);
             LanApiClient.updateEmployeeAdmin("UPDATE",targetUserId,request,null,null,mutationKey);
             return new EmployeeSaveResult(targetUserId,uploadedPhoto,uploadedDocument);
         },result->{
@@ -1670,6 +1710,7 @@ public class EmployeeManagement extends JFrame {
         emailField.setText("");
         phoneField.setText("");
         employeePhotoField.setText("");
+            employeePhotoSource="";employeePhotoFrame="";
         refreshEmployeePhotoPreview();
         employeeIdCardDocumentField.setText("");
         dateOfBirthField.setText("");

@@ -27,10 +27,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class QuotationInvoiceDocumentPreview extends JFrame {
+    private final LetterDocumentView letterView = new LetterDocumentView();
     private final JTextArea documentArea = new JTextArea();
     private final JEditorPane documentPane = new JEditorPane();
     private String documentText = "";
     private boolean compactTemplate;
+    private boolean printOnReady;
     private final JComboBox<String> templateBox = new JComboBox<>(new String[]{"Grid", "Compact"});
     private final String emailDocumentType;
     private final Long emailDocumentId;
@@ -54,12 +56,27 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
         this(title, null, showPrintDialogOnOpen, emailDocumentType, emailDocumentId, true);
     }
 
+    public QuotationInvoiceDocumentPreview(String title, boolean showPrintDialogOnOpen,
+                                           String emailDocumentType, long emailDocumentId, boolean compact) {
+        this(title, null, showPrintDialogOnOpen, emailDocumentType, emailDocumentId, true, compact);
+    }
+
     private QuotationInvoiceDocumentPreview(String title, String initialDocumentText, boolean showPrintDialogOnOpen,
                                             String emailDocumentType, Long emailDocumentId,
                                             boolean loadDocument) {
+        this(title, initialDocumentText, showPrintDialogOnOpen, emailDocumentType, emailDocumentId, loadDocument, false);
+    }
+
+    private QuotationInvoiceDocumentPreview(String title, String initialDocumentText, boolean showPrintDialogOnOpen,
+                                            String emailDocumentType, Long emailDocumentId,
+                                            boolean loadDocument, boolean compact) {
         this.emailDocumentType = emailDocumentType;
         this.emailDocumentId = emailDocumentId;
+        this.printOnReady = showPrintDialogOnOpen;
+        this.compactTemplate = compact;
+        templateBox.setSelectedIndex(compact ? 1 : 0);
         setTitle(title);
+        getRootPane().putClientProperty("SmartStock.responsiveMinimumSize", new Dimension(800, 560));
         setSize(980, 780);
         setLocationRelativeTo(null);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
@@ -82,13 +99,18 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
         JScrollPane previewScrollPane = new JScrollPane(documentPane);
         previewScrollPane.getVerticalScrollBar().setUnitIncrement(16);
         previewScrollPane.getHorizontalScrollBar().setUnitIncrement(16);
-        mainPanel.add(previewScrollPane, BorderLayout.CENTER);
+        mainPanel.add(letterView, BorderLayout.CENTER);
 
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        JPanel buttons = new JPanel(new ui.components.WrappingToolbarLayout());
         JButton emailButton = new JButton("Email");
         JButton whatsappButton = new JButton("Send WhatsApp");
         JButton printButton = new JButton("Print");
         JButton closeButton = new JButton("Close");
+        letterView.addPropertyChangeListener("documentReady", event -> {
+            boolean ready = Boolean.TRUE.equals(event.getNewValue());
+            printButton.setEnabled(ready);
+            if (ready && printOnReady) { printOnReady = false; openPrintDialogLater(); }
+        });
         emailButton.setEnabled(!loadDocument);
         whatsappButton.setEnabled(!loadDocument);
         printButton.setEnabled(!loadDocument);
@@ -108,7 +130,7 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
                         () -> buildDocument(emailDocumentType, emailDocumentId), text -> {
                             applyDocument(text);
                             templateBox.setEnabled(true);
-                            printButton.setEnabled(true);
+                            printButton.setEnabled(letterView.isDocumentReady());
                         }, error -> {
                             templateBox.setEnabled(true);
                             JOptionPane.showMessageDialog(this, error.getMessage(), "Template", JOptionPane.ERROR_MESSAGE);
@@ -127,22 +149,21 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
         printButton.addActionListener(e -> printDocument());
         closeButton.addActionListener(e -> dispose());
         WindowHelper.configurePosWindow(this);
+        ui.components.DocumentWorkspace.applyReadableTypography(mainPanel);
         if (loadDocument) {
-            String cacheKey = "document-preview:" + emailDocumentType + ":" + emailDocumentId;
+            String cacheKey = "document-preview:" + emailDocumentType + ":" + emailDocumentId + ":" + compactTemplate;
             CachedUiLoader.load(this, "document-preview.load", cacheKey, String.class,
                     SessionDataCache.SCREEN_TTL, loadingState,
                     () -> buildDocument(emailDocumentType, emailDocumentId), text -> {
                         applyDocument(text);
                         emailButton.setEnabled(true);
                         whatsappButton.setEnabled(true);
-                        printButton.setEnabled(true);
+                        printButton.setEnabled(letterView.isDocumentReady());
                         templateBox.setEnabled(true);
-                        if (showPrintDialogOnOpen) openPrintDialogLater();
                     });
         } else {
             applyDocument(initialDocumentText);
             loadingState.ready(java.time.Instant.now());
-            if (showPrintDialogOnOpen) openPrintDialogLater();
         }
     }
 
@@ -158,10 +179,12 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
     private void applyDocument(String text) {
         String safeText = text == null ? "" : text;
         documentText = safeText;
+        letterView.setDocument(safeText);
         documentArea.setText(stripHtml(safeText));
         documentArea.setCaretPosition(0);
         documentPane.setContentType(safeText.stripLeading().startsWith("<html") ? "text/html" : "text/plain");
-        documentPane.setText(HtmlImageSourceResolver.resolveForSwing(safeText));
+        // The visible letter renderer handles logos; this hidden pane is only a plain-text fallback.
+        documentPane.setText(safeText);
         documentPane.setCaretPosition(0);
     }
 
@@ -213,6 +236,10 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
     }
 
     private void printDocument() {
+        if (isSalesDocumentHtml(documentText)) {
+            letterView.printDocument(this, getTitle());
+            return;
+        }
         try {
             PrinterJob job = PrinterJob.getPrinterJob();
             job.setJobName(getTitle());
@@ -236,7 +263,12 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
     }
 
     private PageFormat createLetterPageFormat(PrinterJob job) {
-        PageFormat pageFormat = job.defaultPage();
+        PageFormat pageFormat = letterPageFormat();
+        return pageFormat;
+    }
+
+    static PageFormat letterPageFormat() {
+        PageFormat pageFormat = new PageFormat();
         Paper paper = new Paper();
         double width = 8.5 * 72.0;
         double height = 11.0 * 72.0;
@@ -258,7 +290,7 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
         return value != null && value.contains("class='page'");
     }
 
-    private List<String> extractSalesDocumentPages(String html) {
+    static List<String> extractSalesDocumentPages(String html) {
         List<String> pages = new ArrayList<>();
         String safeHtml = html == null ? "" : html;
         int bodyIndex = safeHtml.indexOf("<body>");
@@ -283,12 +315,19 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
         return pages;
     }
 
-    private static class HtmlPagePrintable implements Printable {
+    static class HtmlPagePrintable implements Printable {
         private static final Pattern IMG_SRC_PATTERN = Pattern.compile("(?is)<img\\b[^>]*\\bsrc=['\"]([^'\"]+)['\"][^>]*>");
         private final List<String> pages;
+        private final java.util.Map<String, List<ImageIcon>> preparedImages = new java.util.HashMap<>();
+        private boolean imagesPrepared;
 
-        private HtmlPagePrintable(List<String> pages) {
+        HtmlPagePrintable(List<String> pages) {
             this.pages = pages == null || pages.isEmpty() ? List.of("") : pages;
+        }
+
+        void prepareImages() {
+            for (String page : pages) preparedImages.put(page, preloadImages(page));
+            imagesPrepared = true;
         }
 
         @Override
@@ -307,7 +346,8 @@ public class QuotationInvoiceDocumentPreview extends JFrame {
                 pagePane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
                 pagePane.setContentType("text/html");
                 String pageHtml = pages.get(pageIndex);
-                List<ImageIcon> loadedImages = preloadImages(pageHtml);
+                List<ImageIcon> loadedImages = imagesPrepared
+                        ? preparedImages.getOrDefault(pageHtml, List.of()) : preloadImages(pageHtml);
                 pagePane.setText(removeImageTags(pageHtml));
                 pagePane.setCaretPosition(0);
                 int renderWidth = (int) Math.ceil(imageableWidth);

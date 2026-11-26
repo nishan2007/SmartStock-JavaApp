@@ -1,5 +1,17 @@
 const HOST='overseasshipping.deckers.gy';
 const API=/^\/employees\/api\/v1\/(?:auth\/(?:session|login|verify|logout)|activate|bootstrap|overseas)$/;
+const MOBILE=/^\/employees\/mobile-management\/(?:app\.(?:js|css)|screens\.js|device-info\.js|screen-modules\/[A-Z_]+\.js|screen-assets\/[a-zA-Z0-9_./-]+|signin\.css|reconnect\.js|repair-qr(?:\.js|-LICENSE\.txt)|manifest\.webmanifest|icons\.ttf|icons-LICENSE\.txt|(?:logo|icon-(?:180|192|512)|network|home|account)\.png|icons\/[A-Z_]+\.(?:png|svg)|pair|repair|redeem|state|open|screen|screen-api|network-challenge|link-request|link-status|link-info|approve-link)?$/;
+async function mobileManagement(request,env,url){
+  const route=url.pathname.split('/').pop();
+  const asset=['','app.js','screens.js','device-info.js','app.css','signin.css','reconnect.js','repair-qr.js','repair-qr-LICENSE.txt','manifest.webmanifest','logo.png','icon-180.png','icon-192.png','icon-512.png','network.png','home.png','account.png','icons.ttf','icons-LICENSE.txt'].includes(route)||url.pathname.includes('/icons/')||url.pathname.includes('/screen-assets/')||url.pathname.includes('/screen-modules/');
+  if(request.method!==(asset?'GET':'POST'))return error(405,'METHOD_NOT_ALLOWED',asset?'GET is required.':'POST is required.');
+  if(!asset&&request.headers.get('Origin')!==`https://${HOST}`)return error(403,'ORIGIN_DENIED','This web origin is not allowed.');
+  const headers=new Headers(request.headers);
+  for(const name of ['Forwarded','X-Forwarded-Host','X-Forwarded-For'])headers.delete(name);
+  url.hostname=env.EMPLOYEE_TUNNEL_HOST;
+  try{const upstream=await fetch(new Request(url,{method:request.method,headers,body:asset?undefined:request.body,duplex:'half',redirect:'manual'}),{cf:{cacheTtl:0,cacheEverything:false}});const response=secured(upstream);const policy=upstream.headers.get('Content-Security-Policy');if(policy)response.headers.set('Content-Security-Policy',policy);return response;}
+  catch{return error(503,'STORE_UNAVAILABLE','The store server is unavailable. Please try again.');}
+}
 const ASSET=/^\/employees\/(?:index\.html|app\.js|app\.css|overseas\.js|icons\/(?:timeclock|overseas-v1)-(?:180|192|512)\.png)$/;
 function secured(response){
   const r=new Response(response.body,response);r.headers.set('Cache-Control','no-store');
@@ -12,6 +24,7 @@ export default {
   async fetch(request,env){
     const url=new URL(request.url);
     if(url.hostname!==HOST)return error(404,'NOT_FOUND','Not found.');
+  if(MOBILE.test(url.pathname))return mobileManagement(request,env,url);
     if(url.pathname==='/')return secured(Response.redirect(`https://${HOST}/employees/`,302));
     if(url.pathname==='/employees/manifest.webmanifest')return secured(Response.json({id:'/employees/',name:'Deckers Overseas Orders',short_name:'Overseas Orders',start_url:'/employees/',scope:'/employees/',display:'standalone',theme_color:'#17324d',background_color:'#f5f7fa',icons:[{src:'/employees/icons/overseas-v1-192.png',sizes:'192x192',type:'image/png',purpose:'any maskable'},{src:'/employees/icons/overseas-v1-512.png',sizes:'512x512',type:'image/png',purpose:'any maskable'}]}));
     if(request.method==='GET'&&(url.pathname==='/employees/'||url.pathname==='/employees'||ASSET.test(url.pathname))){

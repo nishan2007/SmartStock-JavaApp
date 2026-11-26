@@ -1,0 +1,7 @@
+Device-specific sign-in and Orders loading reliability
+
+Adds Stay signed in on this device to the unified Deckers login, off by default. Remembered sessions survive reopening; temporary sessions sign out on close/reload when the browser sends the close event, otherwise expire after 15 minutes of inactivity. Device approval, employee permissions, MFA and revocation still apply.
+
+Recovers valid company settings when an individual preference entry is damaged, and uses atomic file replacement to prevent partial settings writes. Retains all changes from 1.1.134, including the new Account screen.
+
+Update store server first, then registers. Publication does not install the update.

@@ -1,0 +1,1 @@
+Deckers workspace: one employee login across all approved screens, in-place navigation with Home, device and employee permission enforcement, and fresh local-store connection checks for stock operations. Existing individual app links remain available.

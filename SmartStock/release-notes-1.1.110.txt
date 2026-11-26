@@ -1,0 +1,3 @@
+Receiving Inventory on iPhone and iPad now opens the selected item's photo gallery, supports adding photos and barcodes, and lets staff enter delivered quantities before adding items to a batch. On iPad the batch updates beside the item. Supports inventory products, custom inventory items, and custom variants.
+
+Administrators can create a custom order with a one-time customer name without creating a customer account. Deposits and remaining balances are tracked on the order.

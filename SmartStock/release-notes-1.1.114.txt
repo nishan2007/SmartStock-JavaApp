@@ -1,0 +1,11 @@
+SmartStock 1.1.114 - Inventory image coverage and catalogue fixes
+
+Adds Inventory > Product Image Coverage for active products, including products without source photos. Shows AI product photo status, the exact stored asset reference and gallery placement, and separate square (1:1), portrait (4:5), story (9:16) and landscape (16:9) ad coverage slots and needs-ad filters. Server-side assignment validates product ownership and image dimensions. Ad generation and approval screens are not included.
+
+Adds administrator duplicate review in View Inventory, with explicit keep/merge confirmation and blockers for linked business history, other-store identities and conflicting variants. No live inventory is automatically merged.
+
+Fixes archived/restored products remaining in Make a Sale through stale catalogue caches and older background loads. Adds fixed, From and quote-required pricing to website custom-item cards and individual plaque variants. Website activation still requires the updated server, catalogue sync and matching hosted frontend.
+
+Improves NFC reader diagnostics; the affected register's reader/service problem still requires hardware verification. Retains the completed Orders exchange and payment reversal work from 1.1.113 and the other bundled application resources.
+
+Model-free Windows release. Update the store server before registers. AI models remain in the store profile; inference runtime and licences are retained. This publication does not install or restart live store applications or services. SmartStudio, cloud schema changes, unfinished ad workflows and physical hardware acceptance are outside this release.

@@ -1,0 +1,9 @@
+SmartStock 1.1.144 - Windows quick update
+
+Automatically correct the existing Rosehall custom inventory on the first updated production-server startup: back up item and variant balances, record stock-count adjustments, and set Rosehall quantities to zero. Preserve Skeldon quantities, sold history, reorder settings and regular inventory. A persistent completion marker prevents later updates, restarts or recovery from resetting newly received stock. Recognize the previously supplied manual repair if already applied.
+
+Allow Store Keys checkout without an NFC tag; NFC pairing remains optional, while employee permissions, store assignment and custody checks remain enforced.
+
+Includes the current shared-workspace SmartStock changes from the other chats. SmartStudio is unchanged from 0.1.108.
+
+Update store servers before registers. The Rosehall correction runs on its server, not on registers. AI model weights remain separate. This publication does not install or restart live stores.

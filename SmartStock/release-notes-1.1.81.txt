@@ -1,0 +1,9 @@
+SmartStock 1.1.81 - Customer phone reuse and order retry fixes
+
+Releases a customer's removed phone number so it can be used for a new account. Repairs stale phone reservations during the local database upgrade and matches current customer contact details when looking up orders.
+
+Allows a rejected custom order to be corrected and submitted with an existing customer account. Retries after an uncertain connection failure still retain the original order to prevent duplicate orders.
+
+Retains the current SmartStock improvements, including the mobile Edit Items app, Orders presentation and branding refinements, publication rendering improvements, studio photo queue updates, and the move of PDF editing to SmartStudio.
+
+Build 101081. Windows update ZIP only. Update the store server before registers. AI models remain separate. No Orders gateway deployment or first-install selection change.

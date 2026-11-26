@@ -35,17 +35,20 @@ class CustomVariantPersistenceArchitectureTest {
 
     @Test void variantEditorCanExpandToTheUsableScreen()throws Exception{
         String screen=source("src/ui/screens/customorders/CustomOrderItems.java");
-        assertTrue(screen.contains("new JButton(\"Full Screen\")"));
-        assertTrue(screen.contains("fullScreen.setText(\"Restore\")"));
-        assertTrue(screen.contains("usableScreenBounds(d)"));
-        assertTrue(screen.contains("split.setDividerLocation(.6)"));
+        String design=source("src/ui/screens/customorders/CustomCatalogDesign.java");
+        assertTrue(screen.contains("expand = fullScreen(dialog, this::finishEditing"));
+        assertTrue(screen.contains("table.setFullScreen(full)"));
+        assertTrue(screen.contains("photo, fullScreen(dialog)"));
+        assertTrue(design.contains("dialog.setBounds(usableBounds(dialog))"));
+        assertTrue(design.contains("dialog.setBounds(restoreBounds)"));
     }
 
     @Test void variantEditorStaysOpenForConsecutiveAdds()throws Exception{
         String screen=source("src/ui/screens/customorders/CustomOrderItems.java");
-        String dialog=screen.substring(screen.indexOf("private void variantsDialog()"),screen.indexOf("private void selectMaterial()"));
-        assertFalse(dialog.contains("d.dispose()"));
-        assertTrue(dialog.contains("Variant saved. You can add another variant now."));
-        assertTrue(dialog.contains("state=loaded;render();if(inventoryPanel!=null)inventoryPanel.setState(loaded);load.run();reset.run()"));
+        String save=screen.substring(screen.indexOf("private void save()"),screen.indexOf("private void deactivate()"));
+        assertFalse(save.contains("dialog.dispose()"));
+        assertTrue(save.contains("reloadAfterSaved(dialog, () ->"));
+        assertTrue(save.contains("reset()"));
+        assertTrue(save.contains("Variant saved. You can add another variant now."));
     }
 }

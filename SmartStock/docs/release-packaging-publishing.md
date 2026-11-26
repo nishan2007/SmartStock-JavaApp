@@ -46,6 +46,11 @@ enforcement, update and rollback. Verify relevant database and hardware flows
 separately. Record outstanding checks instead of treating a successful build as
 proof of an installed release.
 
+When testing an Inno Setup updater with an isolated `/DIR`, preserve and restore
+the existing desktop and Start Menu shortcuts and verify their targets afterward.
+`/NOICONS` does not prevent every existing shortcut from being refreshed to the
+isolated path. Keep the live application files and service configuration untouched.
+
 ## Publish models separately
 
 For the initial split, first deploy the updated **installer portal** Worker

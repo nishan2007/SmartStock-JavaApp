@@ -1,0 +1,8 @@
+SmartStock 1.1.94
+
+- Receive inventory from a phone or computer on the store network: search by item or barcode, enter delivery quantities, review and post a batch, and view receiving history.
+- Status now includes Receiving Inventory Web App directly below Mobile Item Web App, with an activation QR that opens Receiving.
+- Receiving uses employee permissions, the active store database, stock-change checks, and safe retries to prevent duplicate delivery posting.
+- Stock corrections remain in the supervised register workflow. Application packages exclude AI model weights; existing profile models remain separate.
+
+Update the store server before registers. Hosted web deployments are separate.

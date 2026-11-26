@@ -5,7 +5,7 @@
 
   <groupId>edu.fiu</groupId>
   <artifactId>inventory-management</artifactId>
-  <version>1.1.77</version>
+  <version>1.1.152</version>
 
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
@@ -93,6 +93,8 @@
           <include>models/catalogue-v1.json</include>
           <include>windows/**</include>
           <include>mobile-web/**</include>
+          <include>shared-mobile/**</include>
+          <include>server-network/**</include>
           <include>scheduler-web/**</include>
             <include>employee-web/**</include>
           <include>employee-registration-web/**</include>
@@ -109,6 +111,7 @@
           <include>v1/**/*.sql</include>
           <include>storefront/*.sql</include>
           <include>customer-auth/*.sql</include>
+          <include>maintenance/*.sql</include>
         </includes>
       </resource>
       <resource>

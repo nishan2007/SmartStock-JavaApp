@@ -5,6 +5,10 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class CustomOrderProductionStatusTest {
+    @Test void notStartedSurvivesNormalization() {
+        assertEquals("NOT_STARTED", LanCustomOrderWorkflowService.productionStatus("NOT_STARTED"));
+        assertEquals("NOT_STARTED", LanCustomOrderWorkflowService.productionStatus("Not started"));
+    }
     @Test void earlyProductionStepsRemainInProgressAndSurviveNormalization() {
         for(String status:List.of("STARTED","WAITING_FOR_APPROVAL")) {
             assertEquals(status, LanCustomOrderWorkflowService.productionStatus(status));

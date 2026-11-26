@@ -1,0 +1,6 @@
+SmartStudio 0.1.87
+
+Fixes Canon PCL6 direct printing by selecting the native raster print pipeline at Windows startup. Original artwork and text render directly into printer-resolution bands, removing the 300-DPI intermediate that blurred card lettering and pictures.
+Requests supported 600-DPI/high-quality colour settings when no explicit user setting is present. Preserves chosen paper size, tray, duplex and quality settings.
+
+The user confirmed an uncropped, sharp Evergreen 12-card direct print on the C5240 using normal Letter paper. For cardstock, select the bypass tray and the matching Heavy paper type in printer properties and on the machine. No printer defaults are changed by the update.

@@ -3,6 +3,7 @@ package ui.screens;
 import ui.screens.customorders.NewCustomItem;
 
 import managers.SessionManager;
+import managers.PermissionManager;
 import managers.CompanyCustomizationManager;
 import services.LanApiClient;
 import services.InventoryCatalogCache;
@@ -53,6 +54,7 @@ public class NewItem extends JFrame {
     private VendorSelector vendorSelector;
     private JTextField quantityField;
     private ProductImageHelper.ImageSelector imageSelector;
+    private final JCheckBox addTagsAfterSave=new JCheckBox("Add tags after saving");
     private JButton saveButton;
     private JButton clearButton;
     private JButton cancelButton;
@@ -350,6 +352,7 @@ public class NewItem extends JFrame {
         JButton variantsButton=new JButton("Product with variants...");
         variantsButton.addActionListener(e->new ProductVariantsDialog(this,java.util.List.of(),null).setVisible(true));
         actions.add(variantsButton);
+        if(PermissionManager.hasPermission("EDIT_ITEM"))actions.add(addTagsAfterSave);
         actions.add(clearButton);
         actions.add(cancelButton);
         actions.add(saveButton);
@@ -539,7 +542,7 @@ public class NewItem extends JFrame {
                 pendingSaveKey = UUID.randomUUID().toString();
             }
             String mutationKey=pendingSaveKey;
-            UiTaskRunner.submit(this,"items.create",()->{var naming=new ProductImageHelper.ProductImageNaming(draft.name(),draft.brandName(),draft.itemTypeName(),draft.size(),"");String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,naming);List<String> extras=ProductImageHelper.uploadAdditionalImages(draft.additionalImageUrls(),naming,"PRODUCT");LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(draft.productId(),draft.name(),draft.size(),draft.sku(),draft.barcode(),draft.description(),draft.costPrice(),draft.price(),draft.productType(),draft.categoryId(),draft.vendorId(),uploaded,draft.itemTypeName(),draft.brandName(),draft.shelfName(),draft.storageShelfName(),draft.additionalBarcodes(),draft.quantity(),draft.reorderLevel(),draft.expectedQuantity(),draft.adjustQuantity(),draft.color(),draft.flavor(),extras);return new ProductSaveOutcome(LanApiClient.createProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());JOptionPane.showMessageDialog(this,"Item added successfully. SKU: "+outcome.saved().sku());clearFields(false);},ex->JOptionPane.showMessageDialog(this,"Failed to save item: "+ex.getMessage()));
+            UiTaskRunner.submit(this,"items.create",()->{var naming=new ProductImageHelper.ProductImageNaming(draft.name(),draft.brandName(),draft.itemTypeName(),draft.size(),"");String uploaded=ProductImageHelper.uploadLocalImageIfNeeded(imageInput,naming);List<String> extras=ProductImageHelper.uploadAdditionalImages(draft.additionalImageUrls(),naming,"PRODUCT");LanApiClient.ProductSaveRequest request=new LanApiClient.ProductSaveRequest(draft.productId(),draft.name(),draft.size(),draft.sku(),draft.barcode(),draft.description(),draft.costPrice(),draft.price(),draft.productType(),draft.categoryId(),draft.vendorId(),uploaded,draft.itemTypeName(),draft.brandName(),draft.shelfName(),draft.storageShelfName(),draft.additionalBarcodes(),draft.quantity(),draft.reorderLevel(),draft.expectedQuantity(),draft.adjustQuantity(),draft.color(),draft.flavor(),extras);return new ProductSaveOutcome(LanApiClient.createProduct(request,mutationKey),uploaded);},outcome->{pendingSaveKey=null;pendingSaveFingerprint=null;SessionDataCache.invalidate("inventory-");InventoryCatalogCache.refreshAfterMutation().exceptionally(failure->null);imageSelector.setImageUrl(outcome.imageUrl());JOptionPane.showMessageDialog(this,"Item added successfully. SKU: "+outcome.saved().sku());clearFields(false);if(addTagsAfterSave.isSelected())new ProductTagsDialog(this,java.util.List.of(outcome.saved().productId()),null).setVisible(true);},ex->JOptionPane.showMessageDialog(this,"Failed to save item: "+ex.getMessage()));
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Failed to save item: " + ex.getMessage());
         }

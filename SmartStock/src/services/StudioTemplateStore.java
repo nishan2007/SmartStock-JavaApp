@@ -86,15 +86,23 @@ public final class StudioTemplateStore {
         if(publication){var design=publishing.PublicationFiles.read(bytes);publishing.PublicationTemplates.requireTemplate(design);if(!name.equals(design.title))throw new IllegalArgumentException("Template name does not match its archive.");contentDigest=publishing.PublicationTemplates.fingerprint(design);}
         else {
         JsonObject design=JsonParser.parseString(content).getAsJsonObject();
-        if(!Set.of("formatVersion","name","widthMm","heightMm","elements","savePrintRecords").containsAll(design.keySet()))throw new IllegalArgumentException("Only portable template data may be shared.");
+        if(!Set.of("formatVersion","name","widthMm","heightMm","elements","backElements","savePrintRecords").containsAll(design.keySet()))throw new IllegalArgumentException("Only portable template data may be shared.");
         double width=number(design,"widthMm",10,300),height=number(design,"heightMm",10,300);
         if(design.get("formatVersion").getAsInt()!=1||!design.has("elements")||design.getAsJsonArray("elements").size()>64)throw new IllegalArgumentException("Invalid badge template");
+        if(design.has("backElements")&&(!design.get("backElements").isJsonArray()||design.getAsJsonArray("backElements").size()>64))throw new IllegalArgumentException("Invalid badge back page");
+        var badgeLayers=new JsonArray();badgeLayers.addAll(design.getAsJsonArray("elements"));if(design.has("backElements"))badgeLayers.addAll(design.getAsJsonArray("backElements"));
         // Only template data, never personal records or session photos, may be shared.
-        for(JsonElement item:design.getAsJsonArray("elements")){
+        for(JsonElement item:badgeLayers){
             JsonObject e=item.getAsJsonObject();
-            if(!Set.of("photoId","label","type","text","field","font","color","image","x","y","width","height","fontMm","bold","italic","underline","strike","textOutline","textOutlineColor","textOutlineWidth","photoBackgroundEnabled","photoOutlineEnabled","photoBackgroundColor","photoOutlineColor").containsAll(e.keySet()))throw new IllegalArgumentException("Only reusable template fields may be shared.");
-            String type=e.get("type").getAsString();if(!Set.of("TEXT","PHOTO","IMAGE","RECT","ELLIPSE","TRIANGLE","LINE").contains(type))throw new IllegalArgumentException("Invalid layer type");
-            number(e,"x",-1000,1000);number(e,"y",-1000,1000);number(e,"width",.01,width);number(e,"height",.01,height);
+            if(!Set.of("photoId","label","type","text","field","font","color","image","x","y","width","height","rotation","hidden","transparency","fontMm","bold","italic","underline","strike","textOutline","textOutlineColor","textOutlineWidth","photoBackgroundEnabled","photoOutlineEnabled","photoBackgroundColor","photoOutlineColor","textAlignment").containsAll(e.keySet()))throw new IllegalArgumentException("Only reusable template fields may be shared.");
+            String type=e.get("type").getAsString();if(!Set.of("TEXT","PHOTO","IMAGE","QR","RECT","ELLIPSE","TRIANGLE","LINE").contains(type))throw new IllegalArgumentException("Invalid layer type");
+            if(e.has("textAlignment")&&(!type.equals("TEXT")||!e.get("textAlignment").isJsonPrimitive()||!e.getAsJsonPrimitive("textAlignment").isString()||!Set.of("LEFT","CENTER","RIGHT").contains(e.get("textAlignment").getAsString())))throw new IllegalArgumentException("Invalid text alignment");
+            if(type.equals("QR")&&(!e.has("field")||!e.get("field").getAsString().matches("[A-Za-z][A-Za-z0-9_]{0,39}")))throw new IllegalArgumentException("A QR layer requires a data field.");
+            double rotation=e.has("rotation")?number(e,"rotation",-360,360):0;
+            boolean rotated=Math.abs(Math.sin(Math.toRadians(rotation)))>.001;
+            number(e,"x",-1000,1000);number(e,"y",-1000,1000);number(e,"width",.01,rotated?Math.max(width,height):width);number(e,"height",.01,rotated?Math.max(width,height):height);
+            if(e.has("transparency"))number(e,"transparency",0,100);
+            if(e.has("hidden")&&(!e.get("hidden").isJsonPrimitive()||!e.getAsJsonPrimitive("hidden").isBoolean()))throw new IllegalArgumentException("Invalid layer visibility");
             if(e.has("text")&&(e.get("text").isJsonNull()||e.get("text").getAsString().length()>1000))throw new IllegalArgumentException("Invalid layer text");
             if(e.has("textOutlineWidth"))number(e,"textOutlineWidth",0,5);
             if(e.has("textOutlineColor")&&!e.get("textOutlineColor").getAsString().matches("#[0-9a-fA-F]{6}"))throw new IllegalArgumentException("Invalid text outline colour");

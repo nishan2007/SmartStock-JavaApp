@@ -12,6 +12,7 @@ import java.awt.*;
 import java.util.List;
 
 public class CustomerInfoPanel extends JPanel {
+    private final JCheckBox oneTimeCustomerBox = new JCheckBox("Use a one-time customer name");
     private final JTextField searchField = new JTextField();
     private final JTextField nameField = new JTextField();
     private final JTextField phoneField = new JTextField();
@@ -61,10 +62,23 @@ public class CustomerInfoPanel extends JPanel {
     public String getCustomerAccountNumber(){return accountNumberField.getText().trim();}
     public String getCustomerEmail(){return emailField.getText().trim();}
     public boolean applyCustomerDiscount(){return applyCustomerDiscountBox.isSelected();}
-    public record Draft(CustomerOption customer,String name,String phone,String accountNumber,String email,boolean applyDiscount){}
-    public Draft draft(){return new Draft(selectedCustomer,getCustomerName(),getCustomerPhone(),getCustomerAccountNumber(),getCustomerEmail(),applyCustomerDiscount());}
+    public boolean isOneTimeCustomer() { return oneTimeCustomerBox.isSelected(); }
+
+    public record Draft(CustomerOption customer,String name,String phone,String accountNumber,String email,
+                        boolean applyDiscount,boolean oneTimeCustomer) {
+        public Draft(CustomerOption customer,String name,String phone,String accountNumber,String email,boolean applyDiscount) {
+            this(customer,name,phone,accountNumber,email,applyDiscount,false);
+        }
+    }
+    public Draft draft(){return new Draft(selectedCustomer,getCustomerName(),getCustomerPhone(),getCustomerAccountNumber(),getCustomerEmail(),applyCustomerDiscount(),isOneTimeCustomer());}
     public void restoreDraft(Draft draft){
-        clear();selectedCustomer=draft.customer();updatingSearch=true;
+        clear();
+        if (draft.oneTimeCustomer()) {
+            nameField.setText(draft.name());
+            setOneTimeCustomer(oneTimeCustomerBox.isVisible());
+            return;
+        }
+        selectedCustomer=draft.customer();updatingSearch=true;
         try{nameField.setText(draft.name());searchField.setText(selectedCustomer==null?draft.name():selectedCustomer.toString());phoneField.setText(draft.phone());accountNumberField.setText(draft.accountNumber());emailField.setText(draft.email());}
         finally{updatingSearch=false;}
         boolean available=selectedCustomer!=null&&selectedCustomer.customOrderDiscountEnabled();
@@ -72,7 +86,24 @@ public class CustomerInfoPanel extends JPanel {
         applyCustomerDiscountBox.setText(available&&selectedCustomer.customOrderDiscountPercent()!=null?"Apply customer custom-order discount ("+selectedCustomer.customOrderDiscountPercent().stripTrailingZeros().toPlainString()+"%)":"Apply customer custom-order discount");
     }
 
+    private void setOneTimeCustomer(boolean selected) {
+        oneTimeCustomerBox.setSelected(selected);
+        searchField.setEnabled(!selected);
+        phoneField.setEnabled(!selected);
+        if (selected) {
+            String name = getCustomerName();
+            clearCustomerFields();
+            nameField.setText(name);
+            nameField.requestFocusInWindow();
+        }
+    }
+
     public void clear() {
+        setOneTimeCustomer(false);
+        clearCustomerFields();
+    }
+
+    private void clearCustomerFields() {
         selectedCustomer = null;
         updatingSearch = true;
         searchField.setText("");
@@ -124,6 +155,11 @@ public class CustomerInfoPanel extends JPanel {
         gbc.gridx=3;gbc.weightx=.35;add(emailField,gbc);
         gbc.gridx=0;gbc.gridy=3;gbc.gridwidth=4;gbc.weightx=1;applyCustomerDiscountBox.setVisible(false);add(applyCustomerDiscountBox,gbc);gbc.gridwidth=1;
         gbc.gridx=0;gbc.gridy=4;gbc.gridwidth=4;phoneMatches.setLayout(new BoxLayout(phoneMatches,BoxLayout.Y_AXIS));phoneMatches.setVisible(false);add(phoneMatches,gbc);gbc.gridwidth=1;
+        gbc.gridx = 0; gbc.gridy = 5; gbc.gridwidth = 4;
+        oneTimeCustomerBox.setVisible("ADMIN".equalsIgnoreCase(managers.SessionManager.getCurrentRole()));
+        oneTimeCustomerBox.addActionListener(e -> setOneTimeCustomer(isOneTimeCustomer()));
+        add(oneTimeCustomerBox, gbc);
+        gbc.gridwidth = 1;
         if (trailingField != null) {
             gbc.gridx = 4;
             gbc.gridy = 1;
@@ -189,7 +225,7 @@ public class CustomerInfoPanel extends JPanel {
     }
 
     private void searchFromSearchField() {
-        if (updatingSearch) {
+        if (updatingSearch || isOneTimeCustomer()) {
             return;
         }
         String text = searchField.getText().trim();
@@ -216,7 +252,7 @@ public class CustomerInfoPanel extends JPanel {
     private record CustomerSearchSnapshot(List<CustomerOption> customers) { }
 
     private void showCustomerPopup() {
-        if (!searchField.isShowing()) {
+        if (isOneTimeCustomer() || !searchField.isShowing()) {
             return;
         }
         if (searchModel.isEmpty()) {
@@ -231,7 +267,7 @@ public class CustomerInfoPanel extends JPanel {
 
     private void lookupPhone(){
         String query=phoneField.getText().trim();long version=++phoneLookupVersion;
-        if(updatingSearch||query.isBlank())return;
+        if(updatingSearch||isOneTimeCustomer()||query.isBlank())return;
         try{utils.CustomerPhoneNumber.normalize(query);}catch(IllegalArgumentException e){return;}
         new SwingWorker<com.google.gson.JsonObject,Void>(){
             protected com.google.gson.JsonObject doInBackground()throws Exception{return phoneLookup.find(query);}
@@ -257,6 +293,7 @@ public class CustomerInfoPanel extends JPanel {
         selectCustomer(customer);
     }
     private void selectCustomer(CustomerOption customer){
+        if (isOneTimeCustomer()) return;
         selectedCustomer = customer;
         updatingSearch = true;
         searchField.setText(customer.toString());

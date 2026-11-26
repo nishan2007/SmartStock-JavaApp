@@ -1,0 +1,5 @@
+SmartStock 1.1.116 - photo reference sync recovery
+
+Photo reconciliation now waits when an item's image asset metadata has not reached the store yet, allowing synchronization to continue instead of failing a foreign-key check. Existing photo URLs and valid reference links are preserved. References are registered automatically once the metadata is available, including gallery, storefront and quotation images.
+
+Gallery positions remain stable when an earlier image is unavailable. Database foreign keys remain enforced. Includes the inventory merge review and store stock controls from 1.1.115. Application updates remain model-free.

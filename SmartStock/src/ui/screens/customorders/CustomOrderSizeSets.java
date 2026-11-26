@@ -23,7 +23,7 @@ final class CustomOrderSizeSets {
     }
     static List<Unit> expand(CustomItemOption item, OrderLineRequest shared,
                              List<CustomOrderSizeSetEditor.SizeQuantity> sizes, boolean pending, boolean round) {
-        if (!CustomOrderSizeSetEditor.supportsSizes(item) || sizes.isEmpty())
+        if ((shared.customerItem() == null && !CustomOrderSizeSetEditor.supportsSizes(item)) || sizes.isEmpty())
             throw new IllegalArgumentException("Select a per-item priced catalogue item and its sizes.");
         Set<Long> seen = new HashSet<>(); int total = 0;
         String colour = sizes.get(0).variant().effectiveColor();
@@ -41,7 +41,14 @@ final class CustomOrderSizeSets {
             BigDecimal original = base.add(shared.printCharge() == null ? BigDecimal.ZERO : shared.printCharge());
             BigDecimal percent = pending || shared.lineDiscountPercent() == null ? BigDecimal.ZERO : shared.lineDiscountPercent();
             var json = JSON.toJsonTree(shared).getAsJsonObject();
-            json.addProperty("customVariantId", variant.variantId()); json.addProperty("variantName", variant.name());
+            if(shared.customerItem()==null){
+                json.addProperty("customVariantId", variant.variantId()); json.addProperty("variantName", variant.name());
+            }else{
+                var supplied=shared.customerItem();
+                var sized=new services.CustomerSuppliedItem(supplied.itemType(),supplied.color(),variant.effectiveSize(),supplied.brand());
+                json.add("customerItem",JSON.toJsonTree(sized)); json.addProperty("customizationDetails",sized.details());
+                json.remove("customVariantId"); json.remove("variantName");
+            }
             json.addProperty("itemSize", variant.effectiveSize()); json.addProperty("itemColor", variant.effectiveColor());
             json.addProperty("baseItemPrice", base); json.addProperty("areaPrice", base); json.addProperty("originalBasePrice", configured);
             json.addProperty("originalLineTotal", original); json.addProperty("lineDiscountPercent", percent);

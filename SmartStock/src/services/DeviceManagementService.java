@@ -22,7 +22,7 @@ public final class DeviceManagementService {
         String sql = """
                 SELECT d.device_id::text AS device_id,
                        d.installation_id,
-                       COALESCE(d.device_name, '') AS device_name,
+                       CASE WHEN d.access_mode='DISPLAY' THEN '[Display] ' ELSE '' END || COALESCE(d.device_name, '') AS device_name,
                        COALESCE(d.receipt_device_code, '0001') AS receipt_device_code,
                        COALESCE(d.hostname, '') AS hostname,
                        COALESCE(d.os_name, '') AS os_name,

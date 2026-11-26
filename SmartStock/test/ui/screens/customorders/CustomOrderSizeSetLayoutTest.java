@@ -41,6 +41,8 @@ class CustomOrderSizeSetLayoutTest {
                 panel.orderItemBox.addItem(item);panel.variantBox.addItem(small);
                 panel.sizeSetEditor.configure(item,List.of(small,medium),small,v->v.fixedPrice().add(new BigDecimal("25")));
                 panel.sizeSetEditor.restore(editor.selections());
+                panel.itemPictures.showPictures(item,small,editor.selections(),false);
+                panel.areaLineComponents.forEach(component->component.setVisible(false));
                 Object[] cartRow=new Object[panel.orderLineModel.getColumnCount()];
                 cartRow[2]="Black dri-fit collar shirt VB";cartRow[3]="Black dri-fit collar shirt VB";
                 cartRow[32]="Small";cartRow[33]="Black";cartRow[34]=1;cartRow[21]="Back name / Text: Alice";

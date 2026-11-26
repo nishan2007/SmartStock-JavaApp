@@ -1,0 +1,3 @@
+SmartStock 1.1.122 - quotation custom-item search
+
+Find custom quotation items by typing a name or SKU, or scanning a barcode. Suggestions select the matching item and variant and load the catalog price. Existing item and variant dropdowns remain available.

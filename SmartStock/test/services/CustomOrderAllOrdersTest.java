@@ -34,13 +34,13 @@ class CustomOrderAllOrdersTest {
         assertEquals("%Alice%", parameters.get(5));
         assertEquals(Integer.MAX_VALUE, parameters.get(9));
         LanCustomOrderWorkflowService.lookupOrders(connection,7,"",100);
-        assertTrue(sql.get().contains("AND (status<>'DELIVERED' OR COALESCE(balance_due,0)>0 OR pricing_state='PENDING')"));
+        assertTrue(sql.get().contains("AND (status<>'DELIVERED' OR (COALESCE(balance_due,0)>0 AND COALESCE(payment_method,'')<>'ACCOUNT') OR pricing_state='PENDING')"));
         assertTrue(sql.get().contains("AND status<>'CANCELLED'"));
         assertEquals(7,parameters.get(1));
         LanCustomOrderWorkflowService.lookupOrders(connection,7,"Alice",100);
         assertFalse(sql.get().contains("status<>'DELIVERED'"));
         LanCustomOrderWorkflowService.currentAssignedOrders(connection,7,12);
-        assertTrue(sql.get().contains("status<>'DELIVERED' OR COALESCE(balance_due,0)>0"));
+        assertTrue(sql.get().contains("status<>'DELIVERED' OR (COALESCE(balance_due,0)>0 AND COALESCE(payment_method,'')<>'ACCOUNT')"));
         assertEquals(12,parameters.get(3));
     }
 }

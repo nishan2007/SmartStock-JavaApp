@@ -1,0 +1,2 @@
+SmartStock 1.1.127
+Fix existing iPhone home-screen apps not recognizing shared Mobile Management approval. Connect installed apps through the already paired Safari browser without another administrator QR. Keep the same device record, permissions, revocation and employee sign-in.

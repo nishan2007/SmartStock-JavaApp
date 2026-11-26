@@ -11,6 +11,8 @@ import javax.crypto.spec.PBEKeySpec;
 final class StudioSubmissionQueue {
     static final int MAX_BYTES=12*1024*1024;
     static final String RESET="RESET_TEMPLATE_QUEUE_CODE",PROCESS="PROCESS_TEMPLATE_SUBMISSIONS";
+    private static final UUID OREALLA_TEMPLATE=UUID.fromString("1025bcba-5b19-4e7d-a084-18f8840a3d38");
+    private static final Set<String> LINK_ACTIONS=Set.of("QUEUE_LINK","QUEUE_COPY_LINK","QUEUE_RESET","QUEUE_REVOKE");
     static String text(JsonObject body,String key){
         JsonElement value=body.get(key);if(value==null||value.isJsonNull())return "";
         if(!value.isJsonPrimitive())throw new IllegalArgumentException("Invalid "+key+".");return value.getAsString();
@@ -19,17 +21,31 @@ final class StudioSubmissionQueue {
     static JsonObject object(Object... pairs){JsonObject out=new JsonObject();for(int i=0;i<pairs.length;i+=2)out.add((String)pairs[i],new Gson().toJsonTree(pairs[i+1]));return out;}
     static void enabled(JsonObject head){
         JsonObject design=JsonParser.parseString(text(head,"content")).getAsJsonObject();
+        if(orealla(head,design))return;
+        if(StudioBadgeRecords.isRidersPermit(design))throw new IllegalStateException("Open the shared Orealla permit template to manage its website.");
         if(!design.has("savePrintRecords")||!design.get("savePrintRecords").getAsBoolean())throw new IllegalStateException("Save and enable print records for this template first.");
+    }
+    private static boolean orealla(JsonObject head,JsonObject design) {
+        return OREALLA_TEMPLATE.toString().equals(text(head,"id"))&&StudioBadgeRecords.isRidersPermit(design);
     }
     static JsonObject form(JsonObject head)throws Exception {
         enabled(head);JsonObject design=JsonParser.parseString(text(head,"content")).getAsJsonObject();
         JsonObject fields=new JsonObject(),photos=new JsonObject();
-        for(var layer:design.getAsJsonArray("elements")){
+        if(orealla(head,design)){
+            var labels=List.of("Name","Village","Eye color","Height","Sex","Date of birth","Issue date","Expiry date","Classes","Place of issue");
+            for(int i=0;i<labels.size();i++)fields.addProperty(StudioBadgeRecords.PERMIT_FIELDS.get(i),labels.get(i));
+            addPhoto(photos,StudioBadgeRecords.permitPhotoSlot(design));
+        } else for(var layer:design.getAsJsonArray("elements")){
             var e=layer.getAsJsonObject();String type=text(e,"type"),binding=text(e,"field");
             if(type.equals("TEXT")&&!binding.isBlank())fields.addProperty(binding,text(e,"label"));
-            if(type.equals("PHOTO")){UUID.fromString(text(e,"photoId"));photos.add(text(e,"photoId"),object("label",text(e,"label"),"width",e.get("width"),"height",e.get("height")));}
+            if(type.equals("PHOTO"))addPhoto(photos,e);
         }
         JsonObject schema=object("fields",fields,"photos",photos);schema.addProperty("schema",LanSecurity.sha256(schema.toString()));schema.addProperty("name",text(design,"name"));schema.addProperty("templateRevision",text(head,"sha256"));return schema;
+    }
+    private static void addPhoto(JsonObject photos,JsonObject layer){
+        uuid(layer,"photoId");
+        String id=text(layer,"photoId");
+        photos.add(id,object("label",text(layer,"label"),"width",layer.get("width"),"height",layer.get("height")));
     }
     static String password(String code,String salt)throws Exception {
         var spec=new PBEKeySpec(code.toCharArray(),Base64.getDecoder().decode(salt),600_000,256);
@@ -41,6 +57,9 @@ final class StudioSubmissionQueue {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(mac.doFinal(("studio-template-submission:"+store+":"+template+":"+seed).getBytes(StandardCharsets.UTF_8)));
     }
     static JsonObject normalized(JsonObject payload,JsonObject schema)throws Exception {
+        return normalized(payload,schema,false);
+    }
+    private static JsonObject normalized(JsonObject payload,JsonObject schema,boolean preservePortraitEdits)throws Exception {
         if(payload==null||!payload.keySet().equals(Set.of("values","photos"))||payload.toString().length()>MAX_BYTES)throw new IllegalArgumentException("Invalid submission size or fields.");
         if(!payload.get("values").isJsonObject()||!payload.get("photos").isJsonObject())throw new IllegalArgumentException("Use objects for submission fields and photos.");
         var fields=schema.getAsJsonObject("fields");var slots=schema.getAsJsonObject("photos");
@@ -61,7 +80,9 @@ final class StudioSubmissionQueue {
             double zoom=photo.has("zoom")?photo.get("zoom").getAsDouble():1,x=photo.has("offsetX")?photo.get("offsetX").getAsDouble():0,y=photo.has("offsetY")?photo.get("offsetY").getAsDouble():0;
             int turns=photo.has("turns")?photo.get("turns").getAsInt():0;
             if(!Double.isFinite(zoom+x+y)||zoom<.1||zoom>4||Math.abs(x)>4||Math.abs(y)>4||turns<0||turns>3)throw new IllegalArgumentException("Invalid photo framing.");
-            cleanPhotos.add(key,object("image",image,"zoom",zoom,"offsetX",x,"offsetY",y,"turns",turns));
+            var cleanPhoto=object("image",image,"zoom",zoom,"offsetX",x,"offsetY",y,"turns",turns);
+            if(preservePortraitEdits)StudioBadgeRecords.copyPermitPortraitEdits(photo,cleanPhoto);
+            cleanPhotos.add(key,cleanPhoto);
         }
         normalized.add("values",cleanValues);normalized.add("photos",cleanPhotos);return normalized;
     }
@@ -81,6 +102,8 @@ final class StudioSubmissionQueue {
     interface Website {WebsiteLink load()throws Exception;}
     static JsonObject staff(Connection c,int store,int actor,JsonObject head,JsonObject request,Website website)throws Exception {
         enabled(head);String action=text(request,"action");UUID template=uuid(head,"id");
+        if(template.equals(OREALLA_TEMPLATE)&&!LINK_ACTIONS.contains(action))
+            throw new IllegalArgumentException("Open Permit records to load and print website entries.");
         if(action.equals("QUEUE_RESET"))requirePermission(c,actor,RESET);
         else if(Set.of("QUEUE_LINK","QUEUE_COPY_LINK","QUEUE_REVOKE").contains(action))requirePermission(c,actor,"COMPANY_PREFERENCES","MANAGE_CUSTOM_ORDER_ITEMS");
         else requirePermission(c,actor,PROCESS);
@@ -107,7 +130,8 @@ final class StudioSubmissionQueue {
                     }
                 }
             }
-            return object("url",config.origin()+"/shop/template-submit#instance="+config.instanceId()+"&token="+token);
+            String page=template.equals(OREALLA_TEMPLATE)?"https://osv.deckers.gy/":config.origin()+"/shop/template-submit";
+            return object("url",page+"#instance="+config.instanceId()+"&token="+token);
         }
         if(action.equals("QUEUE_RESET")||action.equals("QUEUE_REVOKE")){
             String change=action.equals("QUEUE_RESET")?"code_hash=NULL,salt=NULL,failures=0,locked_until=NULL,":"enabled=FALSE,";
@@ -165,19 +189,43 @@ final class StudioSubmissionQueue {
         }return object("updated",true);
     }
     static JsonObject publicRequest(Connection c,JsonObject request)throws Exception {
-        return publicRequest(c,request,(store,id)->StudioTemplateStore.current().execute(store,object("action","GET","id",id.toString())));
+        return publicRequest(c,request,(store,id)->SmartDriveLibraryGateway.configured()
+                ?SmartDriveLibraryGateway.template(Set.of(),store,id,true)
+                :StudioTemplateStore.current().execute(store,object("action","GET","id",id.toString())));
     }
     interface TemplateReader {JsonObject read(int store,UUID template)throws Exception;}
+    static void authorizePermitRemoval(Connection c,JsonObject request)throws SQLException {
+        String token=text(request,"token"),session=text(request,"session");
+        if(!"OREALLA".equals(text(request,"portal"))||!token.matches("[A-Za-z0-9_-]{43}")||!session.matches("[A-Za-z0-9_-]{43}"))
+            throw new SecurityException("Sign in with your Orealla permit invitation.");
+        try(var query=c.prepareStatement("""
+            SELECT 1 FROM studio_template_submission_links l
+            JOIN studio_template_submission_sessions s ON s.location_id=l.location_id AND s.template_id=l.template_id
+                AND s.generation=l.generation
+            WHERE l.template_id=? AND l.enabled AND l.token_hash=? AND s.session_hash=? AND s.expires_at>now()
+            """)){
+            query.setObject(1,OREALLA_TEMPLATE);
+            query.setString(2,LanSecurity.sha256(token));
+            query.setString(3,LanSecurity.sha256(session));
+            try(var rows=query.executeQuery()){
+                if(!rows.next())throw new SecurityException("Sign in again to remove the photo background.");
+            }
+        }
+    }
     static JsonObject publicRequest(Connection c,JsonObject request,TemplateReader templates)throws Exception {
         String token=text(request,"token");if(!token.matches("[A-Za-z0-9_-]{43}"))throw new SecurityException("Invalid organization link.");
         c.setAutoCommit(false);
         try {
             JsonObject result;
-            try(var p=c.prepareStatement("SELECT location_id,template_id,code_hash,salt,generation,failures,locked_until FROM studio_template_submission_links WHERE token_hash=? AND enabled=TRUE FOR UPDATE")){
+            try(var p=c.prepareStatement("SELECT location_id,template_id,code_hash,salt,generation,failures,locked_until,updated_by FROM studio_template_submission_links WHERE token_hash=? AND enabled=TRUE FOR UPDATE")){
                 p.setString(1,LanSecurity.sha256(token));try(var r=p.executeQuery()){
                     if(!r.next())throw new SecurityException("This organization link is unavailable.");
                     int store=r.getInt(1),generation=r.getInt(5);UUID template=(UUID)r.getObject(2);String hash=r.getString(3),salt=r.getString(4);Timestamp locked=r.getTimestamp(7);
+                    boolean permit=template.equals(OREALLA_TEMPLATE);
+                    if("OREALLA".equals(text(request,"portal"))&&!permit)throw new SecurityException("Use the Orealla permit invitation.");
                     var head=templates.read(store,template);enabled(head);
+                    var design=JsonParser.parseString(text(head,"content")).getAsJsonObject();
+                    if(permit&&!orealla(head,design))throw new SecurityException("The Orealla permit template is unavailable.");
                     String action=text(request,"action");
                     if(action.equals("INFO")){result=object("setupRequired",hash==null,"name",text(head,"name"));}
                     else if(action.equals("SETUP")||action.equals("LOGIN")){
@@ -205,7 +253,12 @@ final class StudioSubmissionQueue {
                         if(action.equals("FORM"))result=object("form",schema);
                         else if(action.equals("SUBMIT")){
                             if(!text(schema,"schema").equals(text(request,"schema")))throw new IllegalStateException("Template fields changed. Refresh the form and review your entries.");
-                            UUID id=uuid(request,"submissionId");JsonObject payload=normalized(request.getAsJsonObject("payload"),schema);String digest=LanSecurity.sha256(payload.toString());
+                            UUID id=uuid(request,"submissionId");JsonObject payload=normalized(request.getAsJsonObject("payload"),schema,permit);
+                            if(permit){
+                                String number=StudioBadgeRecords.savePermit(c,store,r.getInt(8),template,design,id,payload);
+                                c.commit();return object("received",true,"reference",number,"permitNumber",number);
+                            }
+                            String digest=LanSecurity.sha256(payload.toString());
                             try(var previous=c.prepareStatement("SELECT request_hash FROM studio_template_submissions WHERE location_id=? AND template_id=? AND submission_id=?")){
                                 bind(previous,store,template);previous.setObject(3,id);try(var pr=previous.executeQuery()){if(pr.next()){if(!digest.equals(pr.getString(1)))throw new IllegalStateException("This submission reference was already used for different details.");c.commit();return object("received",true,"reference",id.toString());}}
                             }

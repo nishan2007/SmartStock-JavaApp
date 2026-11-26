@@ -17,7 +17,11 @@ public final class AiModelsDialog extends JDialog {
     private final JButton refresh = new JButton("Check model updates");
     private final Timer poll = new Timer(1500, e -> load(false));
     private boolean loading;
-    private final Row enhancement = new Row(null);
+    private final Row enhancement = new Row("Image enhancement · 2× / 4×", LanApiClient::installStudioEnhancementModel);
+    private final Row pdfOcr = new Row("PDF OCR", LanApiClient::installStudioPdfOcr);
+
+    @FunctionalInterface
+    private interface Installer { void install() throws Exception; }
 
     public AiModelsDialog(Component parent) {
         super(parent instanceof Window window ? window : SwingUtilities.getWindowAncestor(parent), "AI Models", ModalityType.MODELESS);
@@ -28,15 +32,17 @@ public final class AiModelsDialog extends JDialog {
         content.add(Box.createVerticalStrut(10));
         content.add(DeckersSwing.metaLabel("Downloaded once to the store server and reused across SmartStock updates."));
         for (StudioQuality quality : StudioQuality.values()) {
-            Row row = new Row(quality); rows.put(quality, row);
+            Row row = new Row(quality.toString(), () -> LanApiClient.installStudioModel(quality));
+            rows.put(quality, row);
             content.add(Box.createVerticalStrut(16)); content.add(row.panel);
         }
         content.add(Box.createVerticalStrut(16)); content.add(enhancement.panel);
+        content.add(Box.createVerticalStrut(16)); content.add(pdfOcr.panel);
         content.add(Box.createVerticalStrut(16)); content.add(message);
         content.add(Box.createVerticalStrut(12)); content.add(refresh);
         DeckersSwing.styleUtilityButton(refresh, DeckersPalette.PURPLE);
         refresh.addActionListener(e -> load(true));
-        setContentPane(content); pack(); setMinimumSize(new Dimension(650, 420));
+        setContentPane(content); pack(); setMinimumSize(new Dimension(650, getHeight()));
         setLocationRelativeTo(parent); setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         addWindowListener(new java.awt.event.WindowAdapter() {
             @Override public void windowClosed(java.awt.event.WindowEvent e) { poll.stop(); }
@@ -61,7 +67,9 @@ public final class AiModelsDialog extends JDialog {
                     }
                     if (data.has("enhancement")) enhancement.update(data.getAsJsonObject("enhancement"));
                     else enhancement.info.setText("Update the store server to enable enhancement.");
-                    message.setText("Models work offline after installation. Downloads continue if you close this screen.");
+                    if (data.has("pdfOcr")) pdfOcr.update(data.getAsJsonObject("pdfOcr"));
+                    else pdfOcr.info.setText("Update the store server to enable PDF OCR installation.");
+                    message.setText("Installed tools work offline. Downloads continue if you close this screen.");
                     poll.start();
                 } catch (Exception e) {
                     Throwable cause = e; while (cause.getCause() != null) cause = cause.getCause();
@@ -79,10 +87,10 @@ public final class AiModelsDialog extends JDialog {
         final JButton action = new JButton("Install");
         final JProgressBar progress = new JProgressBar(0, 100);
         boolean submitting;
-        Row(StudioQuality quality) {
+        Row(String title, Installer installer) {
             panel.setLayout(new BorderLayout(12, 8));
             JPanel labels = DeckersSwing.panel(); labels.setLayout(new BoxLayout(labels, BoxLayout.Y_AXIS));
-            labels.add(DeckersSwing.totalLabel(quality == null ? "Image enhancement · 2× / 4×" : quality.toString(), true)); labels.add(info); labels.add(status);
+            labels.add(DeckersSwing.totalLabel(title, true)); labels.add(info); labels.add(status);
             panel.add(labels, BorderLayout.CENTER); panel.add(action, BorderLayout.EAST); panel.add(progress, BorderLayout.SOUTH);
             progress.setStringPainted(true); progress.setString("Not installed"); action.setEnabled(false);
             DeckersSwing.styleUtilityButton(action, DeckersPalette.PURPLE);
@@ -90,8 +98,8 @@ public final class AiModelsDialog extends JDialog {
                 submitting = true; action.setEnabled(false);
                 new SwingWorker<Void, Void>() {
                     @Override protected Void doInBackground() throws Exception {
-                        if (quality == null) LanApiClient.installStudioEnhancementModel();
-                        else LanApiClient.installStudioModel(quality); return null;
+                        installer.install();
+                        return null;
                     }
                     @Override protected void done() {
                         submitting = false;
@@ -113,8 +121,11 @@ public final class AiModelsDialog extends JDialog {
             String state = job.get("state").getAsString();
             boolean busy = state.equals("CHECKING") || state.equals("DOWNLOADING");
             action.setText(model.get("action").getAsString());
-            action.setEnabled(!busy && !submitting && !action.getText().equals("Installed"));
-            status.setText(job.get("message").getAsString());
+            boolean enabled = !model.has("enabled") || model.get("enabled").getAsBoolean();
+            action.setEnabled(enabled && !busy && !submitting && !action.getText().equals("Installed"));
+            String jobMessage = job.get("message").getAsString();
+            status.setText(jobMessage.isBlank() && model.has("description")
+                    ? model.get("description").getAsString() : jobMessage);
             progress.setIndeterminate(state.equals("CHECKING"));
             long downloaded = job.get("downloadedBytes").getAsLong(), total = job.get("totalBytes").getAsLong();
             progress.setValue(total == 0 ? 0 : (int) (downloaded * 100 / total));

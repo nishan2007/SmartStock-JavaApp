@@ -42,9 +42,22 @@ final class ShirtSetupDialog {
         Map<String,JTextField> fields=new LinkedHashMap<>();Map<String,JComboBox<Choice>> presets=new LinkedHashMap<>();
         for(String area:ShirtDesignerService.AREAS){JsonObject a=config.getAsJsonObject("areas").getAsJsonObject(area);
             row=add(panel,row,area,new JLabel(area.equals("CHEST")?"Wearer's left chest; logo-size transfer":"Large print; full-sheet transfer"));
-            for(String key:List.of("widthIn","heightIn","x","y","w","h")){JTextField field=new JTextField(a.get(key).getAsString(),10);fields.put(area+"."+key,field);row=add(panel,row,key+(key.endsWith("In")?" (inches)":" (0–1 of mockup)"),field);}
+            for(String key:List.of("x","y","w","h")){JTextField field=new JTextField(a.get(key).getAsString(),10);fields.put(area+"."+key,field);row=add(panel,row,key+(key.endsWith("In")?" (inches)":" (0–1 of mockup)"),field);}
             for(String key:List.of("singlePresetId","fullPresetId")){JComboBox<Choice> combo=new JComboBox<>(choices.toArray(Choice[]::new));long id=a.get(key).getAsLong();choices.stream().filter(x->x.id()==id).findFirst().ifPresent(combo::setSelectedItem);presets.put(area+"."+key,combo);row=add(panel,row,key.startsWith("single")?"Single-color vinyl":"Full-color transfer",combo);}
         }
+        JButton positionAreas=new JButton("Position print areas…");
+        positionAreas.addActionListener(e->{try{
+            JsonObject draft=config.deepCopy();
+            for(var entry:fields.entrySet()){String[] parts=entry.getKey().split("\\.");draft.getAsJsonObject("areas").getAsJsonObject(parts[0]).addProperty(parts[1],Double.parseDouble(entry.getValue().getText().trim()));}
+            draft.addProperty("frontMockup",front.getText().trim());draft.addProperty("backMockup",back.getText().trim());
+            ShirtPrintAreaEditor editor=new ShirtPrintAreaEditor(draft);
+            while(JOptionPane.showConfirmDialog(owner,editor,"Position shirt print areas",JOptionPane.OK_CANCEL_OPTION,JOptionPane.PLAIN_MESSAGE)==JOptionPane.OK_OPTION){try{
+                JsonObject changed=editor.configuration();config.add("areas",changed.getAsJsonObject("areas").deepCopy());
+                for(var entry:fields.entrySet()){String[] parts=entry.getKey().split("\\.");entry.getValue().setText(changed.getAsJsonObject("areas").getAsJsonObject(parts[0]).get(parts[1]).getAsString());}
+                break;
+            }catch(IllegalArgumentException failure){JOptionPane.showMessageDialog(owner,failure.getMessage(),"Print areas",JOptionPane.ERROR_MESSAGE);}}
+        }catch(Exception failure){JOptionPane.showMessageDialog(owner,"Check the numeric print-area settings first. "+failure.getMessage(),"Print areas",JOptionPane.ERROR_MESSAGE);}});
+        basicRow=add(basic,basicRow,"Website print areas",positionAreas);
         JPanel advanced=panel;advanced.setVisible(false);JButton advancedToggle=new JButton("Print areas, pricing and colors…");advancedToggle.addActionListener(e->{advanced.setVisible(!advanced.isVisible());advanced.revalidate();});
         JPanel content=new JPanel();content.setLayout(new BoxLayout(content,BoxLayout.Y_AXIS));content.add(basic);content.add(advancedToggle);content.add(advanced);
         JScrollPane scroll=new JScrollPane(content);scroll.setPreferredSize(new Dimension(760,600));

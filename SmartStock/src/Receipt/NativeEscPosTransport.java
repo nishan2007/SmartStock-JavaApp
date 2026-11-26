@@ -9,6 +9,7 @@ import java.net.Socket;
 
 /** Sends an already-formatted ESC/POS job to a printer's raw TCP socket. */
 public final class NativeEscPosTransport {
+    private static long lastAttemptFinished;
     private NativeEscPosTransport() { }
 
     public static boolean isEnabled() throws PrintException {
@@ -28,18 +29,46 @@ public final class NativeEscPosTransport {
         return settings.endpoint();
     }
 
-    static void send(byte[] jobBytes, HardwareSettingsManager.NativeEthernetPrinterSettings settings)
+    static synchronized void send(byte[] jobBytes, HardwareSettingsManager.NativeEthernetPrinterSettings settings)
             throws PrintException {
+        send(jobBytes, settings, Socket::new);
+    }
+
+    static synchronized void send(byte[] jobBytes, HardwareSettingsManager.NativeEthernetPrinterSettings settings,
+                                  java.util.function.Supplier<Socket> sockets) throws PrintException {
         if (jobBytes == null || jobBytes.length == 0) {
             throw new PrintException("ESC/POS print job is empty.");
         }
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(settings.host(), settings.port()), settings.connectTimeoutMillis());
-            socket.getOutputStream().write(jobBytes);
-            socket.getOutputStream().flush();
-        } catch (IOException ex) {
-            throw new PrintException("Native Ethernet printer " + settings.endpoint() + " failed: "
-                    + safeMessage(ex));
+        // Small receipt printers often accept only one raw TCP client and need time
+        // to release it before the next copy. Serialize all native print callers.
+        for (int attempt = 0; attempt < 3; attempt++) {
+            boolean transmissionStarted = false;
+            try {
+                long remaining = 300_000_000L - (System.nanoTime() - lastAttemptFinished);
+                if (lastAttemptFinished != 0 && remaining > 0) {
+                    java.util.concurrent.TimeUnit.NANOSECONDS.sleep(remaining);
+                }
+                try (Socket socket = sockets.get()) {
+                    socket.connect(new InetSocketAddress(settings.host(), settings.port()), settings.connectTimeoutMillis());
+                    var output = socket.getOutputStream();
+                    // Never replay an uncertain/partially transmitted receipt.
+                    transmissionStarted = true;
+                    output.write(jobBytes);
+                    output.flush();
+                }
+                return;
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new PrintException("Ethernet printing interrupted before sending the receipt.");
+            } catch (IOException ex) {
+                if (transmissionStarted || attempt == 2) {
+                    throw new PrintException("Native Ethernet printer " + settings.endpoint() + " failed: "
+                            + safeMessage(ex) + (transmissionStarted
+                            ? ". Delivery is uncertain; check the printer before retrying." : ""), ex);
+                }
+            } finally {
+                lastAttemptFinished = System.nanoTime();
+            }
         }
     }
 

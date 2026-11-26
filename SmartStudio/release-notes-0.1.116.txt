@@ -1,0 +1,10 @@
+SmartStudio 0.1.116 for Windows
+
+- PDF Editor runs OCR and scanned-region correction on the SmartStock store server. Use OCR > Check server OCR after an administrator installs the server runtime.
+- Insert barcodes and QR codes into PDFs. Badge cards also support editable codes, tables and WordArt.
+- Add replaceable photo placeholders to business cards and labels, preserving the frame, rotation, zoom and relative crop.
+- Send a processed image straight from Image Studio to an open design, including a PDF. Updated inserts, alignment and layer commands are available from the relevant design ribbon.
+- Browse Orealla / Siparuta permit records in sortable columns, search across all saved fields, and preview and load a record into the badge for printing.
+- Includes the current badge Front/Back, photo, text and template-workspace improvements and the SmartStock 1.1.152 client.
+
+Update SmartStock on the store server first.

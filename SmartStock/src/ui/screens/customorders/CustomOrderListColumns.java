@@ -10,9 +10,12 @@ import java.util.*;
 
 /** Shared order-list headings and values prevent column offsets drifting between screens. */
 final class CustomOrderListColumns {
+    static String displayStatus(String status,String production){return "IN_PROGRESS".equals(status)&&"WAITING_FOR_APPROVAL".equals(production)?"WAITING_FOR_APPROVAL":status;}
     static String[] headings() {
         return new String[]{"ID","Order #","Status","Customer","Phone","Due","Total","Paid","Balance","Payment","Reference","Created"};
     }
+    static String[] workspaceHeadings(){List<String> names=new ArrayList<>(List.of(headings()));names.addAll(List.of("Assigned To","Taken By","Production","Delivery","Assigned User ID"));return names.toArray(String[]::new);}
+    static Object[] workspaceValues(OrderRow order){List<Object> values=new ArrayList<>(Arrays.asList(values(order,false)));values.add(order.assignedTo());values.add(order.takenBy());values.add(Objects.toString(order.productionStates(),""));values.add(Objects.toString(order.deliveryStates(),""));values.add(order.assignedUserId());return values.toArray();}
     static Object[] values(OrderRow order, boolean includeStaff) {
         List<Object> values=new ArrayList<>(List.of(order.orderId(),order.orderNumber(),order.status(),
                 order.customer(),order.phone(),order.dueDate()==null?"":order.dueDate(),
@@ -63,7 +66,8 @@ final class CustomOrderListColumns {
         };
         for(String heading:List.of("Due","Created")) {
             int modelColumn=((javax.swing.table.DefaultTableModel)table.getModel()).findColumn(heading);
-            table.getColumnModel().getColumn(table.convertColumnIndexToView(modelColumn)).setCellRenderer(renderer);
+            int view=table.convertColumnIndexToView(modelColumn);
+            if(view>=0)table.getColumnModel().getColumn(view).setCellRenderer(renderer);
         }
     }
     static String formatDate(Object value,ZoneId zone) {

@@ -44,7 +44,7 @@ public class OrdersManagerDashboard extends JFrame {
     private final DefaultTableModel actionQueueModel;
     private JTable actionQueueTable;
     private final JComboBox<EmployeeOption> assignEmployeeBox = new JComboBox<>();
-    private final JComboBox<String> assignStatusBox = new JComboBox<>(new String[]{"NEW", "ASSIGNED", "IN_PROGRESS", "READY", "COMPLETED"});
+    private final JComboBox<String> assignStatusBox = new JComboBox<>(services.CustomOrderProductionStages.codes());
     private final JTextArea selectedOrderDetailsArea = new JTextArea();
     private final DefaultTableModel exceptionModel;
     private final DefaultTableModel lowStockModel;
@@ -63,7 +63,7 @@ public class OrdersManagerDashboard extends JFrame {
         setLayout(new BorderLayout(14, 14));
         setJMenuBar(AppMenuBar.create(this, "OrdersManagerDashboard"));
 
-        actionQueueModel = readOnlyModel("ID", "Order #", "Status", "Due", "Customer", "Phone", "Store", "Assigned", "Balance");
+        actionQueueModel = readOnlyModel("ID", "Order #", "Status", "Due", "Customer", "Phone", "Store", "Assigned", "Balance", "Production");
         exceptionModel = readOnlyModel("Time", "Type", "Order #", "Customer", "Amount", "User", "Reason / Note");
         lowStockModel = readOnlyModel("Item", "Variant", "Qty", "Reorder At", "Stock");
         auditModel = readOnlyModel("Time", "Order #", "Action", "Field", "Old", "New", "User", "Device", "Reason");
@@ -137,6 +137,7 @@ public class OrdersManagerDashboard extends JFrame {
         JPanel panel = new JPanel(new BorderLayout(10, 10));
         actionQueueTable = new JTable(actionQueueModel);
         actionQueueTable.setRowHeight(27);
+        actionQueueTable.getColumnModel().getColumn(9).setCellRenderer(new javax.swing.table.DefaultTableCellRenderer(){public Component getTableCellRendererComponent(JTable table,Object value,boolean selected,boolean focus,int row,int column){return super.getTableCellRendererComponent(table,services.CustomOrderProductionStages.label(String.valueOf(value)),selected,focus,row,column);}});
         actionQueueTable.getTableHeader().setReorderingAllowed(false);
         actionQueueTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         TableColumnModel columns = actionQueueTable.getColumnModel();
@@ -157,7 +158,9 @@ public class OrdersManagerDashboard extends JFrame {
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.anchor = GridBagConstraints.WEST;
         addAssignmentField(assignmentPanel, gbc, 0, "Assign To:", assignEmployeeBox);
-        addAssignmentField(assignmentPanel, gbc, 1, "Status:", assignStatusBox);
+        addAssignmentField(assignmentPanel, gbc, 1, "Production:", assignStatusBox);
+        assignStatusBox.setRenderer(new DefaultListCellRenderer(){public Component getListCellRendererComponent(JList<?> list,Object value,int index,boolean selected,boolean focus){return super.getListCellRendererComponent(list,services.CustomOrderProductionStages.label(String.valueOf(value)),index,selected,focus);}});
+        assignStatusBox.setEnabled(PermissionManager.hasPermission("CUSTOM_ORDER_PRODUCTION_STEPS")||PermissionManager.hasPermission("CUSTOM_ORDER_OVERRIDES"));
 
         selectedOrderDetailsArea.setEditable(false);
         selectedOrderDetailsArea.setLineWrap(true);
@@ -245,7 +248,7 @@ public class OrdersManagerDashboard extends JFrame {
     private void applyDashboard(services.LanOrdersDashboardService.Dashboard dashboard) {
         var metrics=dashboard.metrics();
             overdueLabel.setText("Overdue Orders: "+metrics.overdue());dueTodayLabel.setText("Due Today: "+metrics.dueToday());readyLabel.setText("Ready Pickup: "+metrics.ready());assignedLabel.setText("Assigned Not Started: "+metrics.assigned());cancelledLabel.setText("Cancelled 7 Days: "+metrics.cancelled());unpaidLabel.setText("Unpaid Balance: "+CURRENCY.format(metrics.unpaid()));refundsLabel.setText("Refunds Today: "+CURRENCY.format(metrics.refunds()));lowStockLabel.setText("Low Stock Items: "+metrics.lowStock());
-            actionQueueModel.setRowCount(0);for(var row:dashboard.actions())actionQueueModel.addRow(new Object[]{row.orderId(),row.orderNumber(),row.status(),row.dueDate(),row.customer(),row.phone(),row.store(),row.assigned(),"PENDING".equals(row.pricingState())?"Price pending":CURRENCY.format(row.balance())});
+            actionQueueModel.setRowCount(0);for(var row:dashboard.actions())actionQueueModel.addRow(new Object[]{row.orderId(),row.orderNumber(),row.status(),row.dueDate(),row.customer(),row.phone(),row.store(),row.assigned(),"PENDING".equals(row.pricingState())?"Price pending":CURRENCY.format(row.balance()),row.productionStatus()});
             exceptionModel.setRowCount(0);for(var row:dashboard.exceptions())exceptionModel.addRow(new Object[]{formatTimestamp(new Timestamp(row.atEpochMillis())),row.type(),row.orderNumber(),row.customer(),CURRENCY.format(row.amount()),row.user(),row.reason()});
             lowStockModel.setRowCount(0);for(var row:dashboard.lowStock())lowStockModel.addRow(new Object[]{row.item(),row.variant(),row.quantity(),row.reorder(),row.status()});
             auditModel.setRowCount(0);for(var row:dashboard.audit())auditModel.addRow(new Object[]{formatTimestamp(new Timestamp(row.atEpochMillis())),row.orderNumber(),row.action(),row.field(),row.oldValue(),row.newValue(),row.user(),row.device(),row.reason()});
@@ -284,7 +287,8 @@ public class OrdersManagerDashboard extends JFrame {
         String balance = safeText(actionQueueModel.getValueAt(modelRow, 8));
 
         selectEmployeeByName(assigned);
-        assignStatusBox.setSelectedItem(status.isBlank() ? "NEW" : status);
+        assignStatusBox.setModel(new DefaultComboBoxModel<>(services.CustomOrderProductionStages.codes()));
+        String production=String.valueOf(actionQueueModel.getValueAt(modelRow,9));if("MIXED".equals(production))assignStatusBox.addItem("MIXED");assignStatusBox.setSelectedItem(production);
         selectedOrderDetailsArea.setText(
                 "Order: " + orderNumber + "\n"
                         + "Customer: " + customer + "\n"
@@ -309,13 +313,14 @@ public class OrdersManagerDashboard extends JFrame {
         long orderId = Long.parseLong(actionQueueModel.getValueAt(modelRow, 0).toString());
         EmployeeOption employee = (EmployeeOption) assignEmployeeBox.getSelectedItem();
         boolean assigned = employee != null && employee.userId() != null;
-        String status = assignStatusBox.getSelectedItem() == null ? "NEW" : assignStatusBox.getSelectedItem().toString();
+        String status = safeText(actionQueueModel.getValueAt(modelRow,2));
+        String productionStatus=assignStatusBox.isEnabled()&&services.CustomOrderProductionStages.CODES.contains(assignStatusBox.getSelectedItem())&&!java.util.Objects.equals(assignStatusBox.getSelectedItem(),actionQueueModel.getValueAt(modelRow,9))?String.valueOf(assignStatusBox.getSelectedItem()):null;
         if (assigned && "NEW".equals(status)) {
             status = "ASSIGNED";
         }
 
         String requestedStatus=status;Integer employeeId=assigned?employee.userId():null;String mutationKey=java.util.UUID.randomUUID().toString();
-        UiTaskRunner.submit(this,"orders-dashboard.assign",()->{services.LanApiClient.assignCustomOrder(orderId,employeeId,requestedStatus,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("orders-dashboard");
+        UiTaskRunner.submit(this,"orders-dashboard.assign",()->{services.LanApiClient.assignCustomOrderProduction(orderId,employeeId,requestedStatus,productionStatus,mutationKey);return Boolean.TRUE;},ignored->{SessionDataCache.invalidate("orders-dashboard");
             loadDashboard();
             JOptionPane.showMessageDialog(this, "Order assignment saved.");
         },ex->JOptionPane.showMessageDialog(this,"Failed to save assignment: "+ex.getMessage(),"Server Error",JOptionPane.ERROR_MESSAGE));

@@ -90,6 +90,7 @@ public class ReceiptFormatter {
         if(!receipt.getLoyaltySummary().isBlank())for(String line:receipt.getLoyaltySummary().split("\n")){while(line.length()>width){int cut=line.lastIndexOf(' ',width);if(cut<1)cut=width;appendCentered(builder,line.substring(0,cut),width);line=line.substring(cut).trim();}appendCentered(builder,line,width);}
         appendPair(builder, "Total", money(receipt.getTotalAmount()), width);
         if(settings.visibility().showPayment())appendPair(builder, "Payment", receipt.getPaymentMethod(), width);
+        if(!receipt.getTaskPaymentSummary().isBlank())for(String line:receipt.getTaskPaymentSummary().split("\n"))appendCentered(builder,line,width);
         if (settings.showPaymentStatus()) {
             appendPair(builder, "Status", receipt.getPaymentStatus(), width);
         }

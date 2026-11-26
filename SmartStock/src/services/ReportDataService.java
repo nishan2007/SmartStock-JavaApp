@@ -105,11 +105,13 @@ public final class ReportDataService {
             metrics.put("Average Sale", transactions == 0 ? BigDecimal.ZERO : net.divide(BigDecimal.valueOf(transactions), 2, java.math.RoundingMode.HALF_UP));
             if (includeAccounting) metrics.put("Paid Expenses", paidExpenses);
             metrics.put("Net Cash Movement", received.subtract(paidOut));
+            List<Point> minutesRevenue=loadMinutesRevenue(c,f);metrics.put("Phone Minutes Sales",minutesRevenue.stream().map(Point::value).reduce(BigDecimal.ZERO,BigDecimal::add));
             if (includeAccounting) metrics.put("Latest Balance C/F", latestCf);
 
             List<Series> revenue = new ArrayList<>();
             revenue.add(new Series("POS Sales", groupFacts(facts, f)));
             if (allRevenue) {
+                revenue.add(new Series("Phone Minutes",minutesRevenue));
                 revenue.add(new Series("Custom Orders", loadPaymentSeries(c, f, "custom_order_payments", "payment_amount", "custom_order_id", "payment_action", null)));
                 revenue.add(new Series("Invoices", loadPaymentSeries(c, f, "invoice_payments", "payment_amount", "invoice_id", "payment_action", "voided_at IS NULL")));
             }
@@ -132,7 +134,7 @@ public final class ReportDataService {
               si.quantity, COALESCE(SUM(sri.quantity),0),
               (si.quantity * si.unit_price - COALESCE(si.discount_amount,0)),
               COALESCE(si.discount_amount,0), COALESCE(SUM(sri.quantity*sri.unit_price),0),
-              (si.quantity * COALESCE(p.cost_price,0))
+              (si.quantity * COALESCE(si.merge_cost_price_snapshot,p.cost_price,0))
             FROM sales s JOIN sale_items si ON si.sale_id=s.sale_id
             LEFT JOIN products p ON p.product_id=si.product_id LEFT JOIN item_brands b ON b.brand_id=p.brand_id
             LEFT JOIN categories d ON d.category_id=p.category_id LEFT JOIN item_types it ON it.item_type_id=p.item_type_id
@@ -146,7 +148,7 @@ public final class ReportDataService {
         filter(q,p,"si.product_id",f.products()); filter(q,p,"p.brand_id",f.brands());
         filter(q,p,"p.category_id",f.departments()); filter(q,p,"p.item_type_id",f.itemTypes());
         filter(q,p,"s.user_id",f.employees()); filterStrings(q,p,"s.payment_method",f.paymentMethods());
-        q.append(" GROUP BY s.sale_id,p.product_id,p.name,si.item_name,si.is_misc_item,b.name,d.name,it.name,s.user_id,s.user_name,u.full_name,u.username,s.payment_method,s.created_at,si.sale_item_id,si.quantity,si.unit_price,si.discount_amount,p.cost_price ORDER BY s.created_at");
+        q.append(" GROUP BY s.sale_id,p.product_id,p.name,si.item_name,si.is_misc_item,b.name,d.name,it.name,s.user_id,s.user_name,u.full_name,u.username,s.payment_method,s.created_at,si.sale_item_id,si.quantity,si.unit_price,si.discount_amount,p.cost_price,si.merge_cost_price_snapshot ORDER BY s.created_at");
         List<SaleFact> out = new ArrayList<>();
         try (PreparedStatement ps=c.prepareStatement(q.toString())) { bind(ps,p); try(ResultSet r=ps.executeQuery()) {
             while(r.next()) out.add(new SaleFact(r.getInt(1),r.getInt(2),r.getString(3),r.getString(4),r.getString(5),r.getString(6),
@@ -191,13 +193,22 @@ public final class ReportDataService {
         out.sort(Comparator.comparing(EmployeeRow::net).reversed());return out;
     }
 
+    private static List<Point> loadMinutesRevenue(Connection c,Filters f)throws SQLException {
+        if(!f.products().isEmpty()||!f.brands().isEmpty()||!f.departments().isEmpty()||!f.itemTypes().isEmpty())return List.of();
+        StringBuilder q=new StringBuilder("SELECT activity.created_at AT TIME ZONE ?,activity.amount FROM (SELECT created_at,amount,location_id,user_id,CASE WHEN payment_method='CREDIT' THEN 'ACCOUNT' ELSE payment_method END payment_method FROM phone_minutes_sales UNION ALL SELECT reversed_at,-amount,location_id,reversed_by,CASE WHEN payment_method='CREDIT' THEN 'ACCOUNT' ELSE payment_method END FROM phone_minutes_sales WHERE reversed_at IS NOT NULL) activity WHERE activity.created_at>=? AND activity.created_at<?");
+        List<Object> params=new ArrayList<>(List.of(f.zone().getId(),Timestamp.from(f.from().toInstant()),Timestamp.from(f.to().toInstant())));
+        filter(q,params,"activity.location_id",f.locationId()==null?Set.of():Set.of(f.locationId()));filter(q,params,"activity.user_id",f.employees());filterStrings(q,params,"activity.payment_method",f.paymentMethods());
+        Map<LocalDateTime,BigDecimal> grouped=new TreeMap<>();try(var p=c.prepareStatement(q.toString())){bind(p,params);try(var r=p.executeQuery()){while(r.next())grouped.merge(key(r.getTimestamp(1).toLocalDateTime(),bucket(f)),r.getBigDecimal(2),BigDecimal::add);}}return points(grouped,bucket(f));
+    }
     private static List<CashRow> loadCash(Connection c, Filters f, boolean includeAccounting) throws SQLException {
         List<CashRow> out=new ArrayList<>();
         cashQuery(c,f,out,"SELECT created_at, 'IN','POS',payment_method,COALESCE(payment_reference,receipt_number,''),amount_paid FROM sales WHERE created_at>=? AND created_at<? AND payment_method<>'ACCOUNT' AND amount_paid>0","location_id");
-        cashQuery(c,f,out,"SELECT p.created_at,CASE WHEN p.payment_action IN ('REFUND','REVERSAL') THEN 'OUT' ELSE 'IN' END,'CUSTOM ORDER',p.payment_method,COALESCE(p.payment_reference,''),p.payment_amount FROM custom_order_payments p JOIN custom_orders o ON o.custom_order_id=p.custom_order_id WHERE p.created_at>=? AND p.created_at<? AND p.payment_method<>'ACCOUNT'","o.location_id");
-        cashQuery(c,f,out,"SELECT created_at,CASE WHEN payment_action IN ('REFUND','REVERSAL') THEN 'OUT' ELSE 'IN' END,'INVOICE',payment_method,COALESCE(payment_reference,''),payment_amount FROM invoice_payments WHERE created_at>=? AND created_at<? AND voided_at IS NULL AND payment_method<>'ACCOUNT'","location_id");
-        cashQuery(c,f,out,"SELECT created_at,'IN','ACCOUNT',COALESCE(payment_method,'ACCOUNT'),COALESCE(payment_reference,payment_id,''),ABS(amount) FROM customer_account_transactions WHERE created_at>=? AND created_at<? AND transaction_type='PAYMENT'","location_id");
+        cashQuery(c,f,out,"SELECT p.created_at,CASE WHEN p.payment_action IN ('REFUND','REVERSAL') THEN 'OUT' ELSE 'IN' END,'CUSTOM ORDER',p.payment_method,COALESCE(p.payment_reference,''),p.payment_amount FROM custom_order_payments p JOIN custom_orders o ON o.custom_order_id=p.custom_order_id WHERE p.created_at>=? AND p.created_at<? AND p.payment_method NOT IN ('ACCOUNT','ACCOUNT_CREDIT')","o.location_id");
+        cashQuery(c,f,out,"SELECT created_at,CASE WHEN payment_action IN ('REFUND','REVERSAL') THEN 'OUT' ELSE 'IN' END,'INVOICE',payment_method,COALESCE(payment_reference,''),payment_amount FROM invoice_payments WHERE created_at>=? AND created_at<? AND voided_at IS NULL AND payment_method NOT IN ('ACCOUNT','ACCOUNT_CREDIT')","location_id");
+        cashQuery(c,f,out,"SELECT created_at,'IN','ACCOUNT',COALESCE(payment_method,'ACCOUNT'),COALESCE(payment_reference,payment_id,''),ABS(amount) FROM customer_account_transactions WHERE created_at>=? AND created_at<? AND transaction_type='PAYMENT' AND COALESCE(payment_method,'')<>'ACCOUNT_CREDIT'","location_id");
         cashQuery(c,f,out,"SELECT deposited_at,'IN','CHEQUE DEPOSIT','CHEQUE',COALESCE(payment_reference,''),amount FROM cheque_bank_deposits WHERE deposited_at>=? AND deposited_at<?","location_id");
+        cashQuery(c,f,out,"SELECT created_at,'IN','PHONE MINUTES','CASH','MIN-'||minutes_id,amount FROM phone_minutes_sales WHERE created_at>=? AND created_at<? AND payment_method='CASH'","location_id");
+        cashQuery(c,f,out,"SELECT reversed_at,'OUT','MINUTES REFUND','CASH','MIN-'||minutes_id||'/REV',amount FROM phone_minutes_sales WHERE reversed_at>=? AND reversed_at<? AND payment_method='CASH'","location_id");
         if (includeAccounting) {
             cashDateQuery(c,f,out,"SELECT transaction_date,CASE WHEN transaction_direction='PAID' THEN 'OUT' ELSE 'IN' END,'BANK',CASE WHEN transaction_direction='PAID' THEN 'BANK PAID' ELSE 'BANK RECEIVED' END,COALESCE(payment_reference,''),amount FROM bank_transactions WHERE transaction_date>=? AND transaction_date<?","location_id");
             cashDateQuery(c,f,out,"SELECT expense_date,'OUT','EXPENSE',COALESCE(payment_method,'UNKNOWN'),COALESCE(payment_reference,''),amount FROM expenses WHERE expense_date>=? AND expense_date<? AND status='PAID'","location_id");

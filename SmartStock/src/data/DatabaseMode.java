@@ -3,7 +3,8 @@ package data;
 public enum DatabaseMode {
     SERVER,
     CLIENT,
-    REMOTE_ADMIN;
+    REMOTE_ADMIN,
+    DISPLAY;
 
     public static DatabaseMode from(String value) {
         if (value == null || value.isBlank()) {

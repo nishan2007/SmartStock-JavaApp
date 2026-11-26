@@ -25,9 +25,11 @@ import java.util.function.Consumer;
 public final class SmartStudio extends JFrame {
     private final CardLayout cards = new CardLayout();
     private final JPanel pages = new JPanel(cards);
-    private final JLabel company = new JLabel("Deckers"), motto = new JLabel("SmartStudio • Powered by SmartStock"), logo = new JLabel();
+    private final JLabel company = new JLabel("Deckers"), motto = new JLabel("SmartStudio • Powered by SmartStock"), logo = new JLabel(), workspaceLogo=new JLabel();
+    private final JLabel nfcState=new JLabel("Pair this computer to use a staff badge.");
     private final JLabel status = new JLabel("Connect to your store to get started.");
     private final JProgressBar progress = new JProgressBar();
+    private JPanel brandingHeader;
     private final JTextField host = new JTextField("127.0.0.1"), port = new JTextField("8443"), identifier = new JTextField();
     private final JPasswordField phrase = new JPasswordField(), password = new JPasswordField();
     private final Preview original = new Preview("Original image"), result = new Preview("Processed result");
@@ -44,6 +46,8 @@ public final class SmartStudio extends JFrame {
     private final JComboBox<String> previewZoom = new JComboBox<>(new String[]{"Fit", "100%", "200%"});
     private final JButton choose = button("Choose image", DeckersPalette.PURPLE), remove = button("Process image", DeckersPalette.ORANGE), save = button("Save PNG", DeckersPalette.PURPLE);
     private final JButton copy = button("Copy result", DeckersPalette.PURPLE);
+    private final JButton sendArtwork = button("Send to design…", DeckersPalette.PURPLE);
+    private final java.util.Set<String> openDesigns = new java.util.LinkedHashSet<>();
     private final JButton paste = button("Paste image", DeckersPalette.PURPLE);
     private byte[] sourceBytes, outputBytes;
     private String fileName = "image";
@@ -55,15 +59,21 @@ public final class SmartStudio extends JFrame {
     private BadgeCardsPanel badgeCards;
     private BusinessCardsPanel businessCards;
     private BusinessCardsPanel labels;
+    private BusinessCardsPanel vinyl;
     private BusinessCardsPanel banners;
     private BusinessCardsPanel billBooks;
     private PassportPhotosPanel passportPhotos;
     private StudioPhotoQueuePanel photoQueue;
+    private PdfEditorPanel pdfEditor;
     private Runnable chooseWorkspace=()->{};
     private Runnable imageReady = () -> { };
     private boolean checkOnly;
+    private Path pendingDocument;
+    private JFrame rolePermissions;
+    private java.util.function.Consumer<String> selectFileWorkspace=type->{};
 
     public static void main(String[] args) {
+        PublicationPrinting.configureNativePipeline();
         // Keep Studio sessions and credentials separate from the register.
         String home = System.getProperty("user.home");
         System.setProperty("smartstudio.register.home", home);
@@ -75,10 +85,11 @@ public final class SmartStudio extends JFrame {
         boolean checkImage = args.length == 3 && "--check-image".equals(args[0]);
         SwingUtilities.invokeLater(() -> {
             SmartStudio window = new SmartStudio(!(checkLaunch||checkImage));
+            if(args.length==1&&!args[0].startsWith("--"))window.pendingDocument=Path.of(args[0]).toAbsolutePath().normalize();
             if (!(checkLaunch||checkImage)) { window.setVisible(true); return; }
             window.checkOnly=true;
             if(checkImage) {
-                window.cards.show(window.pages,"studio");
+                window.showPage("studio");
                 window.imageReady=() -> {
                     try {
                         if(window.original.image==null||!window.remove.isEnabled())throw new IllegalStateException("The image workflow did not enable removal.");
@@ -89,11 +100,45 @@ public final class SmartStudio extends JFrame {
                 window.loadImage(Path.of(args[1]));return;
             }
             try {
-                window.cards.show(window.pages,"login");
+                window.showPage("login");
                 window.writePreview(Path.of(args[1]));
             } catch (Exception ex) { ex.printStackTrace(); System.exit(1); }
             finally { window.dispose(); }
         });
+    }
+
+    private void openPendingDocument() {
+        Path file=pendingDocument;
+        if(file==null||!signedIn)return;
+        pendingDocument=null;
+        try {
+            String extension=file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+            if(extension.endsWith(".sstbadge")) {
+                badgeCards.openDocument(file);
+                selectFileWorkspace.accept("Badge Cards");
+            } else if(extension.endsWith(".sspub")) {
+                String[] choices={"Business Cards","Labels","Bill Books","Banners","Vinyl Cut"};
+                String type=(String)JOptionPane.showInputDialog(this,"Choose the workspace for this design.",
+                        "Open SmartStudio file",JOptionPane.QUESTION_MESSAGE,null,choices,choices[0]);
+                if(type==null)return;
+                BusinessCardsPanel target=switch(type) {
+                    case "Labels"->labels;
+                    case "Bill Books"->billBooks;
+                    case "Banners"->banners;
+                    case "Vinyl Cut"->vinyl;
+                    default->businessCards;
+                };
+                target.openDocument(file);
+                selectFileWorkspace.accept(type);
+            } else throw new java.io.IOException("Choose a .sspub or .sstbadge SmartStudio file.");
+        } catch(Exception ex) {
+            JOptionPane.showMessageDialog(this,ex.getMessage(),"Open SmartStudio file",JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void showPage(String page){
+        brandingHeader.setVisible(!"studio".equals(page));
+        cards.show(pages,page);getContentPane().revalidate();
     }
 
     private void writePreview(Path path)throws Exception {
@@ -106,36 +151,41 @@ public final class SmartStudio extends JFrame {
         super("SmartStudio — Deckers");
         processingMode.setSelectedIndex(2); // Prefer DirectML; server retains CPU fallback.
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
-        setMinimumSize(new Dimension(820, 580)); setSize(1100, 760); setLocationRelativeTo(null);
+        Rectangle usable=GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        setMinimumSize(new Dimension(Math.min(820,usable.width),Math.min(440,usable.height)));
+        setSize(Math.min(1440,usable.width),Math.min(900,usable.height));setLocationRelativeTo(null);
         JPanel root = DeckersSwing.panel(); root.setLayout(new BorderLayout(8,8)); root.setBorder(BorderFactory.createEmptyBorder(8,10,8,10));
-        JPanel header = DeckersSwing.panel(); header.setLayout(new BorderLayout(16,0));
+        JPanel header = new JPanel(new BorderLayout(16,0)){
+            @Override protected void paintComponent(Graphics original){Graphics2D g=(Graphics2D)original.create();g.setPaint(new GradientPaint(0,0,new Color(0x59276B),getWidth(),getHeight(),StudioVisuals.PLUM));g.fillRect(0,0,getWidth(),getHeight());g.dispose();}
+        };brandingHeader=header;header.setBorder(BorderFactory.createEmptyBorder(8,14,8,14));
         var deckersLogo = DeckersLogoManager.loadDeckersLogoIcon(SmartStudio.class);
-        if (deckersLogo != null) logo.setIcon(new ImageIcon(DeckersLogoManager.scaleToFit(deckersLogo.getImage(),80,30)));
-        var studioIcon = SmartStudio.class.getResource("icons/SmartStudioIconLight.png");
-        if (studioIcon != null) {
-            Image image = new ImageIcon(studioIcon).getImage();
-            setIconImages(java.util.List.of(DeckersLogoManager.scaleToFit(image,16,16),
-                    DeckersLogoManager.scaleToFit(image,32,32),DeckersLogoManager.scaleToFit(image,48,48),
-                    DeckersLogoManager.scaleToFit(image,256,256)));
+        if (deckersLogo != null) setCompanyLogo(deckersLogo.getImage());else {logo.setText(company.getText());workspaceLogo.setText(company.getText());logo.setForeground(Color.WHITE);}
+        java.util.List<Image> appIcons=new java.util.ArrayList<>();
+        for(int size:new int[]{16,24,32,48,64,128,256}){
+            var resource=SmartStudio.class.getResource("icons/SmartStudio-"+size+".png");
+            if(resource!=null)appIcons.add(new ImageIcon(resource).getImage());
         }
+        if(!appIcons.isEmpty())setIconImages(appIcons);
         header.add(logo, BorderLayout.WEST);
-        JPanel titles = DeckersSwing.panel(); titles.setLayout(new GridLayout(2,1));
-        company.setFont(new Font("SansSerif",Font.BOLD,16)); company.setForeground(DeckersPalette.text());
-        motto.setForeground(DeckersPalette.muted()); titles.add(company); titles.add(motto); header.add(titles);
-        header.add(DeckersSwing.totalLabel("SmartStudio", true),BorderLayout.EAST); root.add(header,BorderLayout.NORTH);
+        JLabel applicationName=new JLabel("SmartStudio");applicationName.setFont(StudioVisuals.font(Font.PLAIN,17));applicationName.setForeground(Color.WHITE);header.add(applicationName,BorderLayout.EAST);root.add(header,BorderLayout.NORTH);
         pages.add(connectionPage(), "connect"); pages.add(loginPage(), "login"); pages.add(studioPage(), "studio"); root.add(pages);
         status.setForeground(DeckersPalette.muted());
         JPanel feedback=DeckersSwing.panel(); feedback.setLayout(new BorderLayout(12,0));
         progress.setIndeterminate(true);progress.setVisible(false);progress.setPreferredSize(new Dimension(140,18));
-        feedback.add(status);feedback.add(progress,BorderLayout.EAST);root.add(feedback,BorderLayout.SOUTH);setContentPane(root);
+        JLabel poweredBy=new JLabel("SmartStudio • Powered by SmartStock");poweredBy.setFont(StudioVisuals.font(Font.PLAIN,12));poweredBy.setForeground(new Color(0x71687F));
+        status.setFont(StudioVisuals.font(Font.PLAIN,12));status.setHorizontalAlignment(SwingConstants.RIGHT);
+        status.addPropertyChangeListener("text",e->status.setToolTipText(status.getText()));
+        feedback.setBackground(new Color(0xF5F3F7));feedback.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1,0,0,0,StudioVisuals.BORDER),BorderFactory.createEmptyBorder(4,6,4,6)));
+        feedback.add(poweredBy,BorderLayout.WEST);feedback.add(status);feedback.add(progress,BorderLayout.EAST);root.add(feedback,BorderLayout.SOUTH);setContentPane(root);StudioVisuals.styleTree(root);
         DatabaseConfig config = DatabaseConfig.load(); host.setText(config.serverHost());
         if (DatabaseConfig.hasConfigFile()) port.setText(String.valueOf(config.serverPort()));
         addWindowListener(new WindowAdapter() { @Override public void windowClosing(WindowEvent e) {
             if (busy) { status.setText("Please wait for the current operation to finish."); return; }
+            if (pdfEditor != null && !pdfEditor.discard()) return;
             if (badgeCards != null && !badgeCards.discard()) return;
             if (billBooks != null && !billBooks.discard()) return;
             if (businessCards != null && !businessCards.discard()) return;
-            if(labels!=null&&!labels.discard())return;if(banners!=null&&!banners.discard())return;
+            if(vinyl!=null&&!vinyl.discard())return;if(labels!=null&&!labels.discard())return;if(banners!=null&&!banners.discard())return;
             work("Closing…", () -> { LanApiClient.logoutWithoutWaiting(); return true; }, ignored -> dispose());
         }});
         if (checkConnection) work("Checking store connection…", () -> {
@@ -144,7 +194,7 @@ public final class SmartStudio extends JFrame {
             if(LanApiClient.isPaired())LanApiClient.verifyStudioPairing();
             return LanApiClient.isPaired() ? LanApiClient.studioBranding() : null;
         }, brand -> {
-            if (brand != null) { applyBrand(brand); cards.show(pages,"login"); status.setText("Sign in with your SmartStock staff account."); }
+            if (brand != null) { applyBrand(brand); showPage("login"); status.setText("Sign in with your SmartStock staff account."); }
             else {
                 DatabaseConfig saved = DatabaseConfig.load();
                 host.setText(saved.serverHost());
@@ -157,6 +207,7 @@ public final class SmartStudio extends JFrame {
     @Override public void dispose() {
         if(badgeListener!=null)badgeListener.stop();
         if(badgeCards!=null)stopTemplateLibraries();
+        if(pdfEditor!=null)pdfEditor.shutdown();
         super.dispose();
     }
 
@@ -184,17 +235,17 @@ public final class SmartStudio extends JFrame {
                     return paired ? LanApiClient.studioBranding() : null;
                 } finally { Arrays.fill(code,'\0'); }
             }, brand -> {
-                if (brand != null) { applyBrand(brand); cards.show(pages,"login"); status.setText("Connected. Sign in with your SmartStock staff account."); }
+                if (brand != null) { applyBrand(brand); showPage("login"); status.setText("Connected. Sign in with your SmartStock staff account."); }
                 else status.setText("Enable Allow Studio on this computer's Device Management row, then click check approval.");
             });
         });
         form.add(discover); form.add(Box.createVerticalStrut(12)); form.add(pair);
-        JButton offline=button("Work offline — cached templates",DeckersPalette.PURPLE);offline.addActionListener(e->{useTemplateLibraries(true);chooseWorkspace.run();cards.show(pages,"studio");status.setText("OFFLINE — edits are temporary and cannot be saved.");});form.add(offline);return centered(form);
+        JButton offline=button("Work offline — cached templates",DeckersPalette.PURPLE);offline.addActionListener(e->{useTemplateLibraries(true);chooseWorkspace.run();showPage("studio");status.setText("OFFLINE — edits are temporary and cannot be saved.");});form.add(offline);return centered(form);
     }
 
     private JPanel loginPage() {
-        JPanel form = form("Staff sign in", "Use the same account you use in SmartStock.");
-        field(form,"Username, Email, or Badge ID",identifier); field(form,"Password or Employee PIN",password);
+        JPanel form = StudioLoginPanel.card();
+
         JButton login = button("Sign in",DeckersPalette.ORANGE);
         login.addActionListener(e -> {
             String user = capturedBadge==null?identifier.getText().trim():capturedBadge; char[] secret = password.getPassword(); password.setText("");
@@ -209,14 +260,14 @@ public final class SmartStudio extends JFrame {
             }, data -> {
                 signedIn = true;
                 capturedBadge=null;identifier.setText("");identifier.setEditable(true);
-                applyBrand(data.brand);useTemplateLibraries(false); chooseWorkspace.run(); cards.show(pages,"studio");
+                applyBrand(data.brand);useTemplateLibraries(false); chooseWorkspace.run(); showPage("studio");openPendingDocument();
                 status.setText("Signed in as " + data.session.user().fullName() + " • Choose a template or image workspace.");
             });
         });
         password.addActionListener(e -> login.doClick()); form.add(login);
         JButton tap=button("NFC reader listens automatically",DeckersPalette.PURPLE);
         Consumer<StudioBadgeCapture.Captured> acceptBadge=data->{
-            capturedBadge=data.identifier();identifier.setText("NFC badge detected");identifier.setEditable(false);password.setText("");
+            nfcState.setText("Staff badge detected");capturedBadge=data.identifier();identifier.setText("NFC badge detected");identifier.setEditable(false);password.setText("");
             LanApiClient.BadgeStatus policy=data.policy();
             if(!policy.pinRequired())login.doClick();
             else if(!policy.pinConfigured())setupBadgePin(capturedBadge);
@@ -225,25 +276,27 @@ public final class SmartStudio extends JFrame {
         tap.addActionListener(event->{lastAutomaticBadge=null;lastBadgeError=null;password.requestFocusInWindow();});form.add(tap);
         badgeListener=new javax.swing.Timer(750,event->{
             if(!form.isShowing()||signedIn||busy||badgeReadPending)return;
-            Integer location=DatabaseConfig.load().locationId();if(location==null)return;
+            Integer location=DatabaseConfig.load().locationId();if(location==null){nfcState.setText("Pair this computer to use a staff badge.");return;}
             badgeReadPending=true;
             String previousBadge=lastAutomaticBadge;
             new SwingWorker<StudioBadgeCapture.Captured,Void>(){
+                private boolean readerPresent;
                 protected StudioBadgeCapture.Captured doInBackground()throws Exception{
-                    return StudioBadgeCapture.poll(location,previousBadge);
+                    readerPresent=services.PcscNfcService.hasReader();
+                    return readerPresent?StudioBadgeCapture.poll(location,previousBadge):null;
                 }
                 protected void done(){
                     badgeReadPending=false;
                     if(!form.isShowing()||signedIn||busy)return;
                     try{
-                        var data=get();if(data==null)return;
+                        var data=get();if(data==null){nfcState.setText(readerPresent?"NFC reader detected · tap your staff badge":"No NFC reader detected · use the fields above");return;}
                         lastBadgeError=null;
                         if(data.identifier().equals(lastAutomaticBadge))return;
                         lastAutomaticBadge=data.identifier();acceptBadge.accept(data);
                     }catch(Exception failure){
                         Throwable cause=failure.getCause()==null?failure:failure.getCause();
-                        if(cause instanceof services.PcscNfcService.NoCardPresentException){lastAutomaticBadge=null;return;}
-                        String message=cause.getMessage();
+                        if(cause instanceof services.PcscNfcService.NoCardPresentException){lastAutomaticBadge=null;nfcState.setText("NFC reader detected · tap your staff badge");return;}
+                        String message=cause.getMessage();nfcState.setText("NFC needs attention · use the fields above");
                         if(!java.util.Objects.equals(lastBadgeError,message)){lastBadgeError=message;status.setText("NFC: "+message);}
                     }
                 }
@@ -252,9 +305,9 @@ public final class SmartStudio extends JFrame {
         JButton manual=button("Use username and password",DeckersPalette.PURPLE);
         manual.addActionListener(event->{capturedBadge=null;identifier.setText("");identifier.setEditable(true);password.setText("");identifier.requestFocusInWindow();status.setText("Enter your staff username and password.");});form.add(manual);
 
-        JButton offline=button("Work offline — cached templates",DeckersPalette.PURPLE);offline.addActionListener(e->{useTemplateLibraries(true);chooseWorkspace.run();cards.show(pages,"studio");status.setText("OFFLINE — edits are temporary and cannot be saved.");});form.add(offline);
-        JButton back = button("Connection settings",DeckersPalette.PURPLE); back.addActionListener(e -> cards.show(pages,"connect")); form.add(Box.createVerticalStrut(12)); form.add(back);
-        return centered(form);
+        JButton offline=button("Work offline — cached templates",DeckersPalette.PURPLE);offline.addActionListener(e->{useTemplateLibraries(true);chooseWorkspace.run();showPage("studio");status.setText("OFFLINE — edits are temporary and cannot be saved.");});form.add(offline);
+        JButton back = button("Connection settings",DeckersPalette.PURPLE); back.addActionListener(e -> showPage("connect")); form.add(Box.createVerticalStrut(12)); form.add(back);
+        return new StudioLoginPanel(form,identifier,password,login,tap,manual,offline,back,nfcState);
     }
 
     private void setupBadgePin(String badge) {
@@ -272,7 +325,7 @@ public final class SmartStudio extends JFrame {
                 return new LoginData(session,LanApiClient.studioBranding());
             }catch(Exception ex){LanApiClient.logoutWithoutWaiting();throw ex;}
             finally{Arrays.fill(passwordValue,'\0');Arrays.fill(pinValue,'\0');}
-        },data->{signedIn=true;capturedBadge=null;identifier.setText("");identifier.setEditable(true);applyBrand(data.brand);useTemplateLibraries(false);chooseWorkspace.run();cards.show(pages,"studio");status.setText("Signed in as "+data.session.user().fullName());});
+        },data->{signedIn=true;capturedBadge=null;identifier.setText("");identifier.setEditable(true);applyBrand(data.brand);useTemplateLibraries(false);chooseWorkspace.run();showPage("studio");openPendingDocument();status.setText("Signed in as "+data.session.user().fullName());});
     }
 
     private JPanel studioPage() {
@@ -291,7 +344,7 @@ public final class SmartStudio extends JFrame {
         JPanel options = DeckersSwing.panel(); options.setLayout(new BoxLayout(options, BoxLayout.Y_AXIS));
         JPanel processOptions = DeckersSwing.panel(); processOptions.setLayout(new FlowLayout(FlowLayout.LEFT,12,6));
         JPanel viewOptions = DeckersSwing.panel(); viewOptions.setLayout(new FlowLayout(FlowLayout.LEFT,12,6));
-        options.add(processOptions); options.add(viewOptions);
+        options.add(processOptions);
         removeBackground.setOpaque(false); removeBackground.setForeground(DeckersPalette.text());
         processOptions.add(removeBackground); processOptions.add(DeckersSwing.metaLabel("Enhance")); processOptions.add(enhancement);
         JPanel runtimeOptions=DeckersSwing.panel();runtimeOptions.setLayout(new FlowLayout(FlowLayout.LEFT,12,6));
@@ -344,13 +397,23 @@ public final class SmartStudio extends JFrame {
         JPanel previews = new JPanel(new GridLayout(1,1)); previews.setOpaque(false);
         JScrollPane originalScroll=new JScrollPane(original),resultScroll=new JScrollPane(result);previews.add(originalScroll);
         StudioWorkspaceShell imageShell=new StudioWorkspaceShell(previews);
-        tools.remove(remove);tools.remove(save);tools.remove(copy);tools.remove(print);imageShell.addTools(tools);
-        JPanel imageOutput=DeckersSwing.panel();imageOutput.setLayout(new GridLayout(0,1));imageOutput.add(save);imageOutput.add(copy);imageOutput.add(print);imageShell.addTools(StudioWorkspaceShell.menu("Output",imageOutput));
+        imageShell.title("Image Studio");
+        imageShell.quickAction(choose);imageShell.quickAction(remove);imageShell.quickAction(paste);
+        imageShell.ribbon().add("Home","Source",choose);
+        imageShell.ribbon().add("Home","Clipboard",paste);
+        imageShell.ribbon().add("Home","Clipboard",copy);
+        imageShell.ribbon().add("Home","Output",sendArtwork);
+        imageShell.quickAction(sendArtwork);
+        imageShell.addTools(save);imageShell.addTools(print);
         JComboBox<String> imageView=new JComboBox<>(new String[]{"Original","Result","Compare"});imageView.setToolTipText("Image preview view");
         imageView.addActionListener(e->{previews.removeAll();int view=imageView.getSelectedIndex();previews.setLayout(new GridLayout(1,view==2?2:1,12,0));if(view!=1)previews.add(originalScroll);if(view!=0)previews.add(resultScroll);previews.revalidate();previews.repaint();});
-        imageShell.addTools(imageView);
+        imageShell.ribbon().add("View","Preview",StudioRibbon.field("Preview",imageView,130));
+        imageShell.ribbon().task("View","Preview","Display settings",viewOptions);
         StudioWorkspaceShell.stack(processOptions);StudioWorkspaceShell.stack(runtimeOptions);StudioWorkspaceShell.stack(viewOptions);
-        options.add(remove);imageShell.addSection("Image tools",new JScrollPane(options));imageShell.showInspector(true);
+        imageShell.ribbon().add("Home","Process",remove);
+        imageShell.ribbon().add("Home","Process",StudioRibbon.shortcut(cancelImage,cancelImage.getText()));
+        imageShell.ribbon().task("Process","Settings","Processing settings",options);
+
         panel.add(imageShell);panel.add(DeckersSwing.metaLabel("Processing stays on the store server • Inspect faces and lettering before printing."),BorderLayout.SOUTH);
         choose.addActionListener(e -> selectImage()); remove.addActionListener(e -> {
             StudioQuality selected = (StudioQuality) quality.getSelectedItem(); boolean cleanup = cleanEdges.isSelected();
@@ -380,31 +443,62 @@ public final class SmartStudio extends JFrame {
                 showError(new IllegalStateException("The clipboard is busy. Please try Copy result again."));
             }
         });
+        sendArtwork.addActionListener(e->sendImageToDesign());
         save.addActionListener(e -> saveImage()); logout.addActionListener(e -> signOut()); updateButtons();
         badgeCards = new BadgeCardsPanel();
         businessCards = new BusinessCardsPanel();
-        billBooks=new BusinessCardsPanel(false,false,true);labels=new BusinessCardsPanel(true);banners=new BusinessCardsPanel(false,true);
+        billBooks=new BusinessCardsPanel(false,false,true);labels=new BusinessCardsPanel(true);vinyl=new BusinessCardsPanel(true,false,false,true);banners=new BusinessCardsPanel(false,true);
         CardLayout editorLayout=new CardLayout();JPanel sections=DeckersSwing.panel();sections.setLayout(editorLayout);
-        passportPhotos=new PassportPhotosPanel();sections.add(passportPhotos,"Passport Pictures");sections.add(panel,"Image Studio");sections.add(badgeCards,"Badge Cards");sections.add(businessCards,"Business Cards");sections.add(labels,"Labels");sections.add(banners,"Banners");sections.add(billBooks,"Bill Books");
-        JPanel chooser=DeckersSwing.panel();chooser.setLayout(new GridBagLayout());
-        JPanel choices=DeckersSwing.panel();choices.setLayout(new GridLayout(0,1,12,12));
-        choices.add(DeckersSwing.totalLabel("Choose your workspace",true));
-        JLabel active=new JLabel("Choose a template or image workspace");
+        passportPhotos=new PassportPhotosPanel();sections.add(passportPhotos,"Passport Pictures");sections.add(panel,"Image Studio");sections.add(badgeCards,"Badge Cards");sections.add(businessCards,"Business Cards");sections.add(labels,"Labels");sections.add(vinyl,"Vinyl Cut");sections.add(banners,"Banners");sections.add(billBooks,"Bill Books");
+        pdfEditor=new PdfEditorPanel();sections.add(pdfEditor,"PDF Editor");
+        JLabel active=new JLabel("Choose a template, image or PDF workspace");
         final String[] selected={"Choose"};
         photoQueue=new StudioPhotoQueuePanel(photo->{selected[0]="Passport Pictures";active.setText("Passport Pictures");editorLayout.show(sections,"Passport Pictures");passportPhotos.useQueued(photo);});
         sections.add(photoQueue,"Photo Queue");
-        for(String type:new String[]{"Photo Queue","Badge Cards","Business Cards","Labels","Banners","Bill Books","Passport Pictures","Image Studio"})choices.add(StudioWorkspaceShell.button(type,()->{if(type.equals("Badge Cards")&&!badgeCards.chooseTemplate())return;if(type.equals("Business Cards")&&!businessCards.chooseTemplate())return;if(type.equals("Labels")&&!labels.chooseTemplate())return;if(type.equals("Bill Books")&&!billBooks.chooseTemplate())return;if(type.equals("Banners")&&!banners.chooseTemplate())return;selected[0]=type;active.setText(type);editorLayout.show(sections,type);}));
-        choices.add(DeckersSwing.metaLabel("Open or change designs using the Template menu inside your workspace."));
-        chooser.add(choices);sections.add(chooser,"Choose");editorLayout.show(sections,"Choose");
+        passportPhotos.setPhotoQueueChooser(()->{selected[0]="Photo Queue";active.setText("Photo Queue");editorLayout.show(sections,"Photo Queue");});
+        StudioWorkspaceChooser chooser=new StudioWorkspaceChooser(type->{if(type.equals("Badge Cards")&&!badgeCards.chooseTemplate())return;if(type.equals("Business Cards")&&!businessCards.chooseTemplate())return;if(type.equals("Labels")&&!labels.chooseTemplate())return;if(type.equals("Bill Books")&&!billBooks.chooseTemplate())return;if(type.equals("Banners")&&!banners.chooseTemplate())return;selectFileWorkspace.accept(type);});
+        JScrollPane workspaceChoices=new JScrollPane(chooser);workspaceChoices.setBorder(BorderFactory.createEmptyBorder());workspaceChoices.getViewport().setBackground(StudioVisuals.BACKGROUND);sections.add(workspaceChoices,"Choose");editorLayout.show(sections,"Choose");
         chooseWorkspace=()->editorLayout.show(sections,"Choose");
-        JPanel navigation=DeckersSwing.panel();navigation.setLayout(new BorderLayout(8,0));
+        selectFileWorkspace=type->{
+            if(type.equals("Badge Cards")||type.equals("PDF Editor")||publicationEditor(type)!=null)
+                openDesigns.add(type);
+            selected[0]=type;active.setText(type);editorLayout.show(sections,type);
+        };
+        for(String type:java.util.List.of("Badge Cards","Business Cards","Labels","Banners","Bill Books","Vinyl Cut")){
+            JComponent editor=type.equals("Badge Cards")?badgeCards:publicationEditor(type);
+            editor.addPropertyChangeListener("closeWorkspace",e->{
+                openDesigns.remove(type);
+                selected[0]="Choose";active.setText("Choose a template, image or PDF workspace");chooseWorkspace.run();
+            });
+        }
+        JPanel navigation=new JPanel(new BorderLayout(8,0)){
+            @Override protected void paintComponent(Graphics original){
+                Graphics2D g=(Graphics2D)original.create();g.setPaint(new GradientPaint(0,0,new Color(0x59276B),getWidth(),getHeight(),StudioVisuals.PLUM));g.fillRect(0,0,getWidth(),getHeight());g.dispose();
+            }
+        };
         JPanel change=DeckersSwing.panel();change.setLayout(new FlowLayout(FlowLayout.LEFT,8,0));
-        change.add(StudioWorkspaceShell.button("Change template / workspace",()->editorLayout.show(sections,"Choose")));change.add(active);navigation.add(change);
-        JPanel account=DeckersSwing.panel();account.setLayout(new GridLayout(0,1));account.add(updates);JButton fonts=button("Shared fonts…",DeckersPalette.PURPLE);fonts.addActionListener(e->SharedFontLibrary.show(this));account.add(fonts);account.add(logout);navigation.add(StudioWorkspaceShell.menu("Account",account),BorderLayout.EAST);
+        workspaceLogo.setForeground(Color.WHITE);workspaceLogo.setFont(StudioVisuals.font(Font.BOLD,18));change.add(workspaceLogo);
+        change.setOpaque(false);active.setForeground(Color.WHITE);active.setFont(new Font(Font.SANS_SERIF,Font.PLAIN,15));
+        navigation.setBackground(StudioVisuals.PLUM);navigation.setBorder(BorderFactory.createEmptyBorder(4,8,4,8));
+        change.add(StudioWorkspaceShell.button("Workspaces",()->editorLayout.show(sections,"Choose")));change.add(active);navigation.add(change);
+        JPanel account=DeckersSwing.panel();account.setLayout(new GridLayout(0,1));account.add(updates);JButton fonts=button("Shared fonts…",DeckersPalette.PURPLE);fonts.addActionListener(e->SharedFontLibrary.show(this));account.add(fonts);
+        JButton permissions=button("Role permissions…",DeckersPalette.PURPLE);
+        permissions.addActionListener(e->{
+            if(!signedIn){JOptionPane.showMessageDialog(this,"Sign in to manage role permissions.");return;}
+            if(rolePermissions!=null&&rolePermissions.isDisplayable()){rolePermissions.toFront();return;}
+            // The server checks ROLE_MANAGEMENT before opening and on every read/save.
+            work("Checking role-management access…",LanApiClient::loadRoleAdminState,ignored->{
+                if(!signedIn)return;
+                rolePermissions=new ui.screens.Roles_Permission(false);
+                rolePermissions.setLocationRelativeTo(this);
+                rolePermissions.setVisible(true);
+            });
+        });
+        account.add(permissions);account.add(logout);navigation.add(StudioWorkspaceShell.menu("Account",account),BorderLayout.EAST);
         JPanel workspace = DeckersSwing.panel(); workspace.setLayout(new BorderLayout(8,8)); workspace.add(navigation,BorderLayout.NORTH); workspace.add(sections);
         workspace.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke(KeyEvent.VK_P,InputEvent.CTRL_DOWN_MASK),"print");
         workspace.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke(KeyEvent.VK_P,Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx()),"print");
-        workspace.getActionMap().put("print",new AbstractAction(){public void actionPerformed(ActionEvent e){if(!chooser.isVisible()){if(selected[0].equals("Badge Cards"))badgeCards.printCard();else if(selected[0].equals("Business Cards"))businessCards.printCards();else if(selected[0].equals("Labels"))labels.printCards();else if(selected[0].equals("Bill Books"))billBooks.printCards();else if(selected[0].equals("Banners"))banners.printCards();else if(selected[0].equals("Passport Pictures"))passportPhotos.printPhotos();else if(!selected[0].equals("Photo Queue"))printImage();}}});
+        workspace.getActionMap().put("print",new AbstractAction(){public void actionPerformed(ActionEvent e){if(!workspaceChoices.isVisible()){if(selected[0].equals("PDF Editor"))pdfEditor.printDocument();else if(selected[0].equals("Badge Cards"))badgeCards.printCard();else if(selected[0].equals("Business Cards"))businessCards.printCards();else if(selected[0].equals("Labels"))labels.printCards();else if(selected[0].equals("Vinyl Cut"))vinyl.printCards();else if(selected[0].equals("Bill Books"))billBooks.printCards();else if(selected[0].equals("Banners"))banners.printCards();else if(selected[0].equals("Passport Pictures"))passportPhotos.printPhotos();else if(!selected[0].equals("Photo Queue"))printImage();}}});
         return workspace;
     }
 
@@ -432,6 +526,7 @@ public final class SmartStudio extends JFrame {
             work("Downloading and verifying SmartStudio update…",()->StudioUpdates.download(release), installer -> {
                 if(JOptionPane.showConfirmDialog(this,"The update is verified and ready.\nSmartStudio will close for installation.\nInstall now?",
                         "SmartStudio update",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION){status.setText("Update downloaded. Check for updates when ready to install.");return;}
+                if(pdfEditor!=null&&!pdfEditor.discard())return;
                 work("Starting SmartStudio update…",()->{StudioUpdates.install(installer,release);LanApiClient.logoutWithoutWaiting();return true;}, ignored->{
                     dispose();System.exit(0);
                 });
@@ -463,8 +558,9 @@ public final class SmartStudio extends JFrame {
     }
 
     private void useTemplateLibraries(boolean offline){SharedFontLibrary.start(offline);badgeCards.useSharedLibrary(offline);businessCards.useSharedLibrary(offline);labels.useSharedLibrary(offline);banners.useSharedLibrary(offline);billBooks.useSharedLibrary(offline);}
-    private void stopTemplateLibraries(){SharedFontLibrary.stop();if(badgeCards!=null)badgeCards.stopSharedLibrary();if(businessCards!=null)businessCards.stopSharedLibrary();if(labels!=null)labels.stopSharedLibrary();if(banners!=null)banners.stopSharedLibrary();if(billBooks!=null)billBooks.stopSharedLibrary();}
-    private void signOut() {photoQueue.reset();passportPhotos.reset();capturedBadge=null;identifier.setText("");identifier.setEditable(true);stopTemplateLibraries(); work("Signing out…",() -> { LanApiClient.logout(); return true; }, ignored -> { signedIn=false; sourceBytes=null; outputBytes=null; original.image=null; result.image=null; badgeCards.resetFields(); businessCards.resetFields(); labels.resetFields(); banners.resetFields(); billBooks.resetFields(); original.repaint(); result.repaint(); cards.show(pages,"login"); status.setText("Signed out."); }); }
+    private void stopTemplateLibraries(){if(rolePermissions!=null){rolePermissions.dispose();rolePermissions=null;}ui.helpers.SessionDataCache.invalidate("roles.");SharedFontLibrary.stop();if(badgeCards!=null)badgeCards.stopSharedLibrary();if(businessCards!=null)businessCards.stopSharedLibrary();if(labels!=null)labels.stopSharedLibrary();if(vinyl!=null)vinyl.closeProduction();if(labels!=null)labels.closeProduction();if(banners!=null)banners.stopSharedLibrary();if(billBooks!=null)billBooks.stopSharedLibrary();}
+    private void signOut() {if((labels!=null&&labels.productionBusy())||(vinyl!=null&&vinyl.productionBusy())){status.setText("Wait for print/cut sending to finish before signing out.");return;}if(pdfEditor!=null){if(!pdfEditor.discard())return;pdfEditor.reset();}badgeCards.clearFileHistory();for(BusinessCardsPanel editor:new BusinessCardsPanel[]{businessCards,labels,banners,billBooks,vinyl})editor.clearFileHistory();photoQueue.reset();passportPhotos.reset();capturedBadge=null;identifier.setText("");identifier.setEditable(true);stopTemplateLibraries(); work("Signing out…",() -> { LanApiClient.logout(); return true; }, ignored -> { signedIn=false; openDesigns.clear(); sourceBytes=null; outputBytes=null; original.image=null; result.image=null; badgeCards.resetFields(); businessCards.resetFields(); labels.resetFields();vinyl.resetFields(); banners.resetFields(); billBooks.resetFields(); original.repaint(); result.repaint(); showPage("login"); status.setText("Signed out."); }); }
+
     private void applyBrand(JsonObject brand) {
         company.setText(brand.get("name").getAsString()); motto.setText(brand.get("motto").getAsString());
         boolean bestAvailable = brand.has("studioBestQualityAvailable") && brand.get("studioBestQualityAvailable").getAsBoolean();
@@ -476,7 +572,20 @@ public final class SmartStudio extends JFrame {
         quality.setModel(new DefaultComboBoxModel<>(bestAvailable ? StudioQuality.values() : new StudioQuality[]{StudioQuality.FAST}));
         quality.setSelectedItem(bestAvailable ? StudioQuality.BEST : StudioQuality.FAST);
         quality.setToolTipText(bestAvailable ? "Best quality can take longer on the store server." : "Ask an administrator to install Best quality in SmartStock: Status > AI Models.");
-        if (brand.has("logo")) try { byte[] bytes=java.util.Base64.getDecoder().decode(brand.get("logo").getAsString().split(",",2)[1]); var image=ImageIO.read(new ByteArrayInputStream(bytes)); if(image!=null) logo.setIcon(new ImageIcon(DeckersLogoManager.scaleToFit(image,160,60))); } catch (Exception ignored) { }
+        boolean companyLogoLoaded=false;
+        if (brand.has("logo")) try {
+            String encoded=brand.get("logo").getAsString();int comma=encoded.indexOf(',');
+            byte[] bytes=java.util.Base64.getDecoder().decode(comma>=0?encoded.substring(comma+1):encoded);
+            var image=ImageIO.read(new ByteArrayInputStream(bytes));if(image!=null){setCompanyLogo(image);companyLogoLoaded=true;}
+        } catch (Exception ignored) { }
+        if(!companyLogoLoaded){logo.setIcon(null);workspaceLogo.setIcon(null);logo.setText(company.getText());workspaceLogo.setText(company.getText());logo.setForeground(Color.WHITE);}
+        logo.setToolTipText(company.getText());workspaceLogo.setToolTipText(company.getText());
+    }
+    private void setCompanyLogo(Image image){
+        logo.setText("");workspaceLogo.setText("");
+        logo.setIcon(new ImageIcon(DeckersLogoManager.scaleToFit(image,160,40)));
+        workspaceLogo.setIcon(new ImageIcon(DeckersLogoManager.scaleToFit(image,140,32)));
+        logo.getAccessibleContext().setAccessibleName("Company logo");workspaceLogo.getAccessibleContext().setAccessibleName("Company logo");
     }
     private <T> void work(String message, Callable<T> task, Consumer<T> done) {
         if(busy)return; busy=true; status.setText(message);status.setForeground(DeckersPalette.muted());progress.setVisible(true);setEnabledTree(pages,false); updateButtons();
@@ -493,6 +602,39 @@ public final class SmartStudio extends JFrame {
         long seconds=info.get("remainingSeconds").getAsLong();
         status.setText((note.isBlank()?"Enhancing":note)+(device.isBlank()?"":" • "+device)+(total==0?"":" • "+info.get("percent").getAsInt()+"% ("+done+"/"+total+" tiles)")+(seconds<0?"":" • about "+Math.max(1,(seconds+59)/60)+" min remaining"));
     }
+    private BusinessCardsPanel publicationEditor(String type){
+        return switch(type){
+            case "Business Cards" -> businessCards;
+            case "Labels" -> labels;
+            case "Banners" -> banners;
+            case "Bill Books" -> billBooks;
+            case "Vinyl Cut" -> vinyl;
+            default -> null;
+        };
+    }
+
+    private void sendImageToDesign(){
+        if(busy||outputBytes==null||result.image==null)return;
+        var targets=new java.util.ArrayList<>(openDesigns);
+        if(!pdfEditor.canInsertArtwork())targets.remove("PDF Editor");
+        if(targets.isEmpty()){
+            JOptionPane.showMessageDialog(this,"Open a design workspace, then return to Image Studio to send this result.");
+            return;
+        }
+        String destination=targets.size()==1?targets.get(0):(String)JOptionPane.showInputDialog(this,
+                "Choose the open design to receive the image.","Send to design",JOptionPane.PLAIN_MESSAGE,null,
+                targets.toArray(String[]::new),targets.get(targets.size()-1));
+        if(destination==null)return;
+        try{
+            var image=new StudioImageFile.Loaded(outputBytes,result.image,fileName+" (processed)");
+            if(destination.equals("PDF Editor"))pdfEditor.insertArtwork(image.image());
+            else if(destination.equals("Badge Cards"))badgeCards.receiveArtwork(image);
+            else publicationEditor(destination).receiveArtwork(image);
+            selectFileWorkspace.accept(destination);
+            status.setText("Image sent to "+destination+".");
+        }catch(Exception ex){showError(ex);}
+    }
+
     private void pasteImage() {
         if(busy || !signedIn)return;
         try {
@@ -507,12 +649,13 @@ public final class SmartStudio extends JFrame {
         if(checkOnly){ex.printStackTrace();dispose();System.exit(1);return;}
         if (ex instanceof LanApiClient.LanApiException api && (api.code().contains("SESSION") || api.code().equals("LOGIN_REQUIRED"))) {
             stopTemplateLibraries();
-            signedIn=false; sourceBytes=null; outputBytes=null; original.image=null; result.image=null; cards.show(pages,"login");
-            badgeCards.resetFields(); businessCards.resetFields(); labels.resetFields(); banners.resetFields(); billBooks.resetFields();
+            openDesigns.clear();
+            signedIn=false; sourceBytes=null; outputBytes=null; original.image=null; result.image=null; showPage("login");
+            badgeCards.resetFields(); businessCards.resetFields(); labels.resetFields();vinyl.resetFields(); banners.resetFields(); billBooks.resetFields();
         }
         String message=ex.getMessage()==null?"The operation could not finish. Check your store connection.":ex.getMessage();
         status.setText(message.split("\\R",2)[0]);status.setForeground(DeckersPalette.CORAL);
-        if(ex instanceof LanApiClient.LanApiException api && (api.code().equals("STUDIO_PAIRING_REQUIRED")||api.code().startsWith("DEVICE_")))cards.show(pages,"connect");
+        if(ex instanceof LanApiClient.LanApiException api && (api.code().equals("STUDIO_PAIRING_REQUIRED")||api.code().startsWith("DEVICE_")))showPage("connect");
         JOptionPane.showMessageDialog(this,message,"SmartStudio",JOptionPane.ERROR_MESSAGE);
     }
     private void updateButtons() {
@@ -523,9 +666,10 @@ public final class SmartStudio extends JFrame {
         quality.setEnabled(!busy&&removeBackground.isSelected()); cleanEdges.setEnabled(!busy&&removeBackground.isSelected());
         remove.setEnabled(!busy&&sourceBytes!=null&&(removeBackground.isSelected()||enhancement.getSelectedIndex()>0));
         save.setEnabled(!busy&&outputBytes!=null); copy.setEnabled(!busy&&outputBytes!=null);
+        sendArtwork.setEnabled(!busy&&outputBytes!=null&&result.image!=null);
     }
     private static void setEnabledTree(Container parent,boolean enabled) { for(Component c:parent.getComponents()) { c.setEnabled(enabled); if(c instanceof Container child)setEnabledTree(child,enabled); } }
-    private static JButton button(String text,Color accent) { JButton b=new JButton(text); DeckersSwing.styleUtilityButton(b,accent); return b; }
+    private static JButton button(String text,Color accent) { JButton b=new JButton(text); DeckersSwing.styleUtilityButton(b,accent); StudioWorkspaceShell.styleButton(b); return b; }
     private static JPanel form(String title,String description) { JPanel p=DeckersSwing.panel(); p.setLayout(new BoxLayout(p,BoxLayout.Y_AXIS)); p.setPreferredSize(new Dimension(490,440)); DeckersSwing.styleBand(p,DeckersPalette.ORANGE,new Insets(22,22,22,22)); JLabel heading=DeckersSwing.totalLabel(title,true); p.add(heading); p.add(Box.createVerticalStrut(12)); p.add(new JLabel(description)); p.add(Box.createVerticalStrut(18)); return p; }
     private static void field(JPanel panel,String label,JTextField field) { panel.add(DeckersSwing.metaLabel(label)); panel.add(Box.createVerticalStrut(6)); DeckersSwing.styleField(field); field.setMaximumSize(new Dimension(Integer.MAX_VALUE,36)); panel.add(field); panel.add(Box.createVerticalStrut(14)); }
     private static JPanel centered(JPanel form) { JPanel p=DeckersSwing.panel(); p.setLayout(new GridBagLayout()); p.add(form); return p; }

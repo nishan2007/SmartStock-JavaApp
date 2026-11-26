@@ -1,0 +1,5 @@
+SmartStudio 0.1.96 - direct banner printing
+
+Direct banner printing retains the custom paper selected in the printer dialog instead of reopening page setup and potentially resetting it. Banners can print on larger paper and automatically rotate when they fit in the opposite orientation. Artwork keeps its actual physical size; smaller paper is still rejected.
+
+Includes the badge printing correction from 0.1.95. Save open designs before updating. Physical C4600S and Magicard printing require verification on the connected computer.

@@ -36,7 +36,7 @@ try{
  await page.waitForFunction(before=>document.querySelector('.shirt-preview > canvas').toDataURL()!==before,before);
  assert.equal(latest.areas.FRONT.layers[0].presetId,11);assert.equal(latest.areas.FRONT.layers[0].type,'IMAGE');
  await page.getByRole('button',{name:'Large back',exact:true}).click();await page.getByLabel('Print material',{exact:true}).selectOption('1');await page.getByLabel('Choose an add-on').selectOption('10');await page.getByRole('button',{name:'Add 3in line',exact:true}).click();await page.getByLabel('Text',{exact:true}).fill('FIRST LINE');
- await page.getByRole('button',{name:'Add 3in line',exact:true}).click();await page.getByLabel('Text',{exact:true}).fill('SECOND LINE');await page.getByLabel('Element vinyl color').selectOption('#ff0000');
+ await page.getByRole('button',{name:'Add 3in line',exact:true}).click();await page.getByLabel('Text',{exact:true}).fill('SECOND LINE');await page.getByLabel('Material color').selectOption('#ff0000');
  await page.waitForFunction(()=>document.querySelector('.shirt-estimate strong')?.textContent?.includes('1,250'));
  assert.equal(latest.areas.BACK.layers.length,2);assert.ok(latest.areas.BACK.layers[1].y>latest.areas.BACK.layers[0].y+latest.areas.BACK.layers[0].h);assert.equal(latest.areas.BACK.layers[1].w,.3);assert.equal(latest.areas.BACK.layers[1].vinylColor,'#ff0000');
  await page.getByRole('button',{name:'Delete layer',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.shirt-estimate strong')?.textContent?.includes('1,200'));await page.getByRole('button',{name:'Undo',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.shirt-estimate strong')?.textContent?.includes('1,250'));
